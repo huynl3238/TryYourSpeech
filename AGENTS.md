@@ -86,12 +86,26 @@ Nếu user yêu cầu một tính năng trong danh sách này, phải đề xu�
 
 - OpenAI Whisper API: transcription, dùng làm reference text.
 - Azure Cognitive Services Speech SDK: Pronunciation Assessment ở word/phoneme level.
-- Gemini 1.5 Flash (`@google/generative-ai`): grammar, vocabulary, IELTS band feedback bằng tiếng Việt.
+- Gemini Flash model hiện hành: grammar, vocabulary, IELTS band feedback bằng tiếng Việt.
+  - Mặc định MVP: `gemini-2.5-flash`.
+  - Trước khi implement hoặc nâng package, kiểm tra docs/lifecycle hiện tại của Gemini để tránh dùng model đã deprecated.
 
 ### Local Infrastructure
 
 - Docker Compose: PostgreSQL + Redis.
 - Backend và frontend chạy trực tiếp bằng `npm run dev`.
+- PostgreSQL local phải khớp với `.env`: host `localhost`, port `5432`, database `ielts_speaking`, user `postgres`, password `postgres`.
+- Redis local phải khớp với `.env`: `redis://localhost:6379`.
+
+### Backend dependencies cần có khi làm AI/audio
+
+Các package này chưa chắc đã được cài sẵn trong repo. Khi implement phần tương ứng, kiểm tra `backend/package.json` trước và chỉ cài package thật sự cần dùng:
+
+- `openai` cho Whisper/transcription.
+- `microsoft-cognitiveservices-speech-sdk` cho Azure Pronunciation Assessment.
+- SDK Gemini hiện hành theo docs chính thức. Nếu dùng `@google/generative-ai`, phải kiểm tra package còn phù hợp với model/API hiện tại.
+- `multer` cho multipart upload.
+- `fluent-ffmpeg` cho conversion, kèm binary `ffmpeg` có sẵn trong môi trường local.
 
 ---
 
@@ -130,6 +144,8 @@ VITE_BACKEND_WS_URL=ws://localhost:3001
 Không hardcode bất kỳ giá trị nào ở trên vào code. Backend dùng `process.env.X`, frontend dùng `import.meta.env.VITE_X`.
 
 Frontend không đọc `ICE_SERVERS` trực tiếp. Frontend gọi `GET /api/config` để lấy WebRTC config từ backend.
+
+Nếu `docker-compose.yml` khác các giá trị trên, phải sửa `docker-compose.yml` hoặc `.env` cho khớp trước khi code feature phụ thuộc PostgreSQL/Redis. Không để tài liệu, Docker và fallback trong code lệch nhau.
 
 ---
 
@@ -221,7 +237,7 @@ Nếu tính năng đã nằm trong MVP và cách làm đã được quy định 
 | Event | Data | Mô tả |
 |---|---|---|
 | `waiting` | — | Đang chờ đối tác |
-| `matched` | `{ roomId, isInitiator, partnerName }` | Đã ghép cặp |
+| `matched` | `{ roomId, sessionId, userId, partnerId, role, isInitiator, partnerName }` | Đã ghép cặp |
 | `signal` | `{ type, payload }` | Relay từ đối tác |
 | `session_start` | `{ timestamp }` | Cả hai ready, bắt đầu session |
 | `partner_disconnected` | — | Đối tác mất kết nối |
@@ -232,6 +248,20 @@ Nếu tính năng đã nằm trong MVP và cách làm đã được quy định 
 - `ice-candidate` — ICE candidate
 
 Không tự tưởng tượng socket event mới nếu chưa đối chiếu file này.
+
+### Matchmaking và DB trong MVP
+
+Matchmaking ban đầu vẫn là FIFO in-memory. Khi hai user được match:
+
+1. Backend tạo hoặc lưu `users` từ `{ displayName, band }`.
+2. Backend chọn một topic/questions cho session.
+3. Backend tạo `sessions`.
+4. Backend tạo toàn bộ `turns` cho session theo thứ tự cố định.
+5. Backend emit `matched` cho hai client với cùng `sessionId`, `roomId`, role `A` hoặc `B`, và `userId` riêng của từng client.
+
+`role` chỉ dùng trong session hiện tại để xác định thứ tự nói/nghe. Không dùng `socket.id` làm user id trong database. `socket.id` chỉ là id kết nối tạm thời.
+
+Nếu chưa implement DB cho socket, có thể giữ payload cũ tạm thời, nhưng trước khi làm audio upload, review hoặc results phải nâng socket contract lên payload đầy đủ ở trên.
 
 ---
 
@@ -287,6 +317,8 @@ Matchmaking ban đầu dùng FIFO đơn giản. Nếu thêm rule theo band, ch�
 
 Không làm bài test đầu vào tự động nếu user chưa xác nhận.
 
+Khi match thành công, backend phải tạo `users`, `sessions` và `turns` trước khi client bắt đầu luyện nói. Client không tự generate `sessionId`, `userId`, `turnId` hoặc `questionId`.
+
 ### Phase 3 — Luyện nói
 
 Hệ thống hiển thị câu hỏi IELTS cho cả hai. Nguồn câu hỏi MVP lấy từ backend, không hardcode trong frontend. Backend có thể seed sẵn `topics` và `questions` vào PostgreSQL, sau đó trả một bộ câu hỏi qua API.
@@ -306,6 +338,8 @@ Cấu trúc IELTS Speaking trong MVP:
 
 Tổng thời gian luyện nói ước tính 18–22 phút.
 
+Turn order phải lấy từ backend qua session detail. Mỗi turn có `turnId`, `questionId`, `speakerId`, `speakerRole`, `turnIndex`, `durationMs`, `partNumber` và optional `prepDurationMs`.
+
 ### Phase 4 — Review
 
 Sau khi luyện nói xong, mỗi người nghe lại audio của đối phương trong tối đa 5 phút:
@@ -314,6 +348,8 @@ Sau khi luyện nói xong, mỗi người nghe lại audio của đối phương
 - Bấm "Hoàn tất" để gửi đánh giá cho đối phương.
 
 Remote audio chỉ dùng local để review, không upload trong MVP.
+
+Review audio của đối phương dùng Blob local map theo `turnId`. Nếu tab bị refresh/đóng trong review, remote Blob có thể mất; MVP chấp nhận điều này và hiển thị thông báo rõ ràng. Không upload remote audio lên server nếu user chưa xác nhận đổi scope.
 
 ### Phase 5 — AI chấm điểm
 
@@ -361,6 +397,12 @@ Client B:
 
 Khi bắt đầu một turn, client tạo recorder phù hợp với vai trò hiện tại. Khi hết turn, stop recorder và lưu Blob theo `turnId`.
 
+Client lưu audio như sau:
+
+- `localAudioByTurnId`: audio của chính user, dùng để upload.
+- `remoteAudioByTurnId`: audio của đối phương, chỉ dùng local review.
+- Mỗi note lưu `turnId` và `timestampMs` tính từ lúc bắt đầu turn đó, không tính từ đầu session.
+
 Ghi remote stream từ WebRTC track khi người đối phương đang nói:
 
 ```js
@@ -373,6 +415,8 @@ peerConnection.ontrack = (event) => {
 ```
 
 Remote Blob không upload trong MVP. Chỉ dùng local để review audio của đối phương. Chỉ upload audio của chính user theo từng `turnId` để AI chấm.
+
+Khi browser không support `audio/webm;codecs=opus`, fallback sang MIME type đầu tiên được `MediaRecorder.isTypeSupported()` chấp nhận. Không hardcode một MIME type duy nhất mà không kiểm tra support.
 
 ### Audio conversion server-side
 
@@ -404,28 +448,52 @@ Response:
 }
 ```
 
-### `GET /api/questions/session`
+### `GET /api/sessions/:sessionId`
 
-Trả một bộ câu hỏi IELTS cho một session luyện nói. MVP lấy từ dữ liệu seed trong PostgreSQL.
+Trả session detail sau khi backend đã match 2 user và tạo turns. Frontend dùng endpoint này để render câu hỏi, timer và xác định thứ tự nói/nghe. Không hardcode questions hoặc turns ở frontend.
 
 Response:
 
 ```json
 {
+  "session": {
+    "id": "uuid",
+    "status": "active",
+    "userAId": "uuid",
+    "userBId": "uuid"
+  },
   "topic": {
     "id": "uuid",
     "name": "Education"
   },
-  "questions": [
+  "participants": [
     {
       "id": "uuid",
+      "displayName": "An",
+      "band": 6.5,
+      "role": "A"
+    }
+  ],
+  "turns": [
+    {
+      "id": "uuid",
+      "turnIndex": 1,
+      "speakerId": "uuid",
+      "speakerRole": "A",
+      "questionId": "uuid",
       "partNumber": 1,
       "questionText": "Do you work or study?",
-      "cueCard": null
+      "cueCard": null,
+      "durationMs": 45000,
+      "prepDurationMs": 0
     }
   ]
 }
 ```
+
+### `GET /api/questions/session`
+
+Endpoint cũ này chỉ được dùng tạm nếu chưa có session persistence. Khi đã có `sessions` và `turns`, ưu tiên `GET /api/sessions/:sessionId`.
 
 ### `POST /api/audio/upload`
 
@@ -452,7 +520,7 @@ Response thành công:
 }
 ```
 
-Nếu xử lý AI đồng bộ trong MVP, có thể trả thêm `aiResult`. Nếu xử lý async, frontend cần có trạng thái loading và retry hợp lý.
+MVP ưu tiên xử lý AI async hoặc bán async: upload trả `status: "processing"`, frontend chuyển sang màn hình loading/result và poll `GET /api/results/:sessionId?userId=...`. Nếu chọn xử lý đồng bộ để đơn giản hóa, vẫn phải lưu trạng thái lỗi vào database để retry được.
 
 ### `POST /api/peer-notes/batch`
 
@@ -483,6 +551,77 @@ Response:
 }
 ```
 
+Server phải chống duplicate khi client retry. Cách đơn giản cho MVP: client gửi thêm optional `clientNoteId`, server tạo unique constraint `(listener_id, turn_id, client_note_id)` khi field này tồn tại.
+
+### `POST /api/review/complete`
+
+Đánh dấu một user đã hoàn tất review peer notes.
+
+Request:
+
+```json
+{
+  "sessionId": "uuid",
+  "userId": "uuid"
+}
+```
+
+Response:
+
+```json
+{
+  "sessionId": "uuid",
+  "userId": "uuid",
+  "bothCompleted": false
+}
+```
+
+Nếu `bothCompleted` là `false`, frontend hiển thị trạng thái chờ đối tác. Khi cả hai hoàn tất, session chuyển sang `processing` hoặc cho phép upload/processing các audio turn còn lại.
+
+### `GET /api/results/:sessionId`
+
+Trả kết quả AI và peer notes cho màn hình kết quả.
+
+Query:
+
+| Query | Bắt buộc | Mô tả |
+|---|---:|---|
+| `userId` | Có | User đang xem kết quả của chính mình |
+
+Response tối thiểu:
+
+```json
+{
+  "sessionId": "uuid",
+  "status": "processing",
+  "turnResults": [
+    {
+      "turnId": "uuid",
+      "questionText": "Do you work or study?",
+      "audioUrl": "/uploads/audio/turn-id.webm",
+      "aiStatus": "completed",
+      "transcript": "I am currently studying...",
+      "scores": {
+        "fluency": 6.0,
+        "lexical": 6.5,
+        "grammar": 6.0,
+        "pronunciation": 5.5
+      },
+      "pronunciationDetail": [],
+      "geminiFeedback": {},
+      "peerNotes": [
+        {
+          "timestampMs": 12345,
+          "errorType": "pronunciation",
+          "noteText": "Âm cuối chưa rõ"
+        }
+      ],
+      "error": null
+    }
+  ]
+}
+```
+
 ---
 
 ## AI Pipeline và gotchas
@@ -501,7 +640,8 @@ Response:
 
 - Package: `microsoft-cognitiveservices-speech-sdk`.
 - Dùng Whisper transcript làm reference text.
-- Bật `enableMiscue: true` để phát hiện từ bị bỏ hoặc thêm.
+- Với audio ngắn dưới 30 giây, có thể dùng chế độ once/short recognition và bật `enableMiscue: true` nếu SDK hỗ trợ trong flow đó.
+- Với turn dài hơn 30 giây (Part 1, Part 2, Part 3 của app đều có thể vượt 30 giây), dùng continuous pronunciation assessment. Lưu ý continuous mode có giới hạn/caveat với miscue; nếu `enableMiscue` không hoạt động trong continuous mode, MVP chấp nhận lưu omission/insertion bằng cách so sánh transcript/reference ở mức đơn giản hoặc bỏ qua miscue chi tiết.
 - Output cần ưu tiên:
   - Word-level accuracy.
   - Phoneme-level score.
@@ -521,8 +661,8 @@ Không import trực tiếp bằng `import sdk from 'microsoft-cognitiveservices
 
 ### Gemini
 
-- Package: `@google/generative-ai`.
-- Model: `gemini-1.5-flash`.
+- Package: dùng SDK Gemini hiện hành theo docs chính thức tại thời điểm implement.
+- Model mặc định MVP: `gemini-2.5-flash`, trừ khi docs hiện hành khuyến nghị model khác.
 - Input: transcript + Azure scores + câu hỏi gốc + peer notes.
 - Output: band score 4 tiêu chí, nhận xét và gợi ý bằng tiếng Việt.
 - Free tier có thể gặp rate limit 429. Trong MVP, chỉ cần xử lý lỗi rõ ràng và trả `{ error: "..." }`. Không làm retry phức tạp trừ khi user yêu cầu.
@@ -533,16 +673,29 @@ Không import trực tiếp bằng `import sdk from 'microsoft-cognitiveservices
 
 Dùng event `session_start` từ server làm tín hiệu bắt đầu chung. Ở frontend, dùng `performance.now()` tại thời điểm nhận event để tính elapsed time trong tab hiện tại. Không dùng `Date.now() - serverTimestamp` để tính note timestamp vì clock của client và server có thể lệch.
 
+Có 2 loại mốc thời gian:
+
+- `sessionElapsedMs`: tính từ lúc client nhận `session_start`, dùng để điều khiển UI tổng thể/debug.
+- `turnElapsedMs`: tính từ lúc turn hiện tại bắt đầu trên client, dùng cho `peer_notes.timestamp_ms` và seek audio review.
+
+Vì audio được ghi thành từng Blob theo `turnId`, peer note bắt buộc lưu timestamp relative to turn. Khi review:
+
+```js
+audioElement.currentTime = note.timestampMs / 1000;
+```
+
+Không dùng timestamp tính từ đầu session để seek vào audio của một turn riêng lẻ.
+
 ```js
 socket.on('session_start', ({ timestamp }) => {
   const serverStartTime = timestamp; // Date.now() từ server, dùng để hiển thị/debug nếu cần
   const sessionStartLocalTime = performance.now();
 
-  // Khi listener bấm TAB:
-  // timestamp_ms = performance.now() - sessionStartLocalTime
+  // Khi bắt đầu mỗi turn:
+  // currentTurnStartLocalTime = performance.now()
 
-  // Khi review seek audio:
-  // audioElement.currentTime = note.timestamp_ms / 1000
+  // Khi listener bấm TAB trong turn:
+  // timestamp_ms = performance.now() - currentTurnStartLocalTime
 });
 ```
 
@@ -553,7 +706,7 @@ socket.on('session_start', ({ timestamp }) => {
 ```text
 Trạng thái: ĐANG NGHE, timeline đang chạy
   TAB
-    → capture timestamp_ms = performance.now() - sessionStartLocalTime
+    → capture timestamp_ms = performance.now() - currentTurnStartLocalTime
     → hiện popup nhỏ chọn loại lỗi
 
 Chọn loại lỗi (phím số):
@@ -581,7 +734,8 @@ CREATE TABLE users (
   id           UUID PRIMARY KEY,
   display_name VARCHAR(100) NOT NULL,
   band         DECIMAL(2,1),           -- band tự khai báo, ví dụ 6.5
-  created_at   TIMESTAMP DEFAULT NOW()
+  created_at   TIMESTAMP DEFAULT NOW(),
+  CHECK (band IS NULL OR (band >= 0 AND band <= 9))
 );
 
 -- Ngân hàng chủ đề
@@ -596,46 +750,65 @@ CREATE TABLE questions (
   topic_id      UUID REFERENCES topics(id),
   part_number   SMALLINT NOT NULL,     -- 1, 2, 3
   question_text TEXT NOT NULL,
-  cue_card      JSONB                  -- chỉ Part 2: { prompt, bullet_points[] }
+  cue_card      JSONB,                 -- chỉ Part 2: { prompt, bullet_points[] }
+  CHECK (part_number IN (1, 2, 3))
 );
 CREATE INDEX idx_questions_topic_id ON questions(topic_id);
 
 -- Phiên luyện tập
 CREATE TABLE sessions (
-  id          UUID PRIMARY KEY,
-  user_a_id   UUID REFERENCES users(id),
-  user_b_id   UUID REFERENCES users(id),
-  topic_id    UUID REFERENCES topics(id),
-  status      VARCHAR(20) DEFAULT 'active',  -- 'active' | 'reviewing' | 'completed'
-  started_at  TIMESTAMP DEFAULT NOW(),
-  ended_at    TIMESTAMP
+  id                     UUID PRIMARY KEY,
+  user_a_id              UUID REFERENCES users(id),
+  user_b_id              UUID REFERENCES users(id),
+  topic_id               UUID REFERENCES topics(id),
+  status                 VARCHAR(20) DEFAULT 'matched',
+  user_a_review_done_at  TIMESTAMP,
+  user_b_review_done_at  TIMESTAMP,
+  started_at             TIMESTAMP,
+  ended_at               TIMESTAMP,
+  created_at             TIMESTAMP DEFAULT NOW(),
+  CHECK (status IN ('matched', 'active', 'reviewing', 'processing', 'completed', 'abandoned'))
 );
 CREATE INDEX idx_sessions_user_a_id ON sessions(user_a_id);
 CREATE INDEX idx_sessions_user_b_id ON sessions(user_b_id);
 
 -- Từng lượt nói (mỗi câu hỏi = 2 turns: A nói + B nói)
 CREATE TABLE turns (
-  id          UUID PRIMARY KEY,
-  session_id  UUID REFERENCES sessions(id),
-  speaker_id  UUID REFERENCES users(id),
-  question_id UUID REFERENCES questions(id),
-  part_number SMALLINT NOT NULL,
-  audio_url   VARCHAR(500),           -- path đến file audio sau khi upload
-  duration_ms INTEGER,
-  created_at  TIMESTAMP DEFAULT NOW()
+  id               UUID PRIMARY KEY,
+  session_id       UUID REFERENCES sessions(id),
+  speaker_id       UUID REFERENCES users(id),
+  speaker_role     VARCHAR(1) NOT NULL,       -- 'A' | 'B'
+  question_id      UUID REFERENCES questions(id),
+  part_number      SMALLINT NOT NULL,
+  turn_index       INTEGER NOT NULL,           -- thứ tự toàn session, bắt đầu từ 1
+  duration_ms      INTEGER NOT NULL,
+  prep_duration_ms INTEGER DEFAULT 0,
+  audio_url        VARCHAR(500),               -- path đến file audio sau khi upload
+  upload_status    VARCHAR(20) DEFAULT 'pending',
+  created_at       TIMESTAMP DEFAULT NOW(),
+  UNIQUE (session_id, turn_index),
+  CHECK (speaker_role IN ('A', 'B')),
+  CHECK (part_number IN (1, 2, 3)),
+  CHECK (duration_ms > 0),
+  CHECK (prep_duration_ms >= 0),
+  CHECK (upload_status IN ('pending', 'uploaded', 'failed'))
 );
 CREATE INDEX idx_turns_session_id  ON turns(session_id);
 CREATE INDEX idx_turns_speaker_id  ON turns(speaker_id);
 
 -- Ghi chú của listener trong lúc nghe
 CREATE TABLE peer_notes (
-  id           UUID PRIMARY KEY,
-  turn_id      UUID REFERENCES turns(id),
-  listener_id  UUID REFERENCES users(id),
-  timestamp_ms INTEGER NOT NULL,      -- mốc thời gian trên timeline
-  error_type   VARCHAR(20) NOT NULL,  -- 'pronunciation' | 'grammar' | 'vocabulary' | 'fluency'
-  note_text    TEXT,                  -- có thể null nếu bỏ qua khi nghe
-  created_at   TIMESTAMP DEFAULT NOW()
+  id             UUID PRIMARY KEY,
+  turn_id        UUID REFERENCES turns(id),
+  listener_id    UUID REFERENCES users(id),
+  client_note_id VARCHAR(100),              -- optional id từ client để chống duplicate khi retry
+  timestamp_ms   INTEGER NOT NULL,          -- mốc thời gian relative to turn, không phải đầu session
+  error_type     VARCHAR(20) NOT NULL,      -- 'pronunciation' | 'grammar' | 'vocabulary' | 'fluency'
+  note_text      TEXT,                      -- có thể null nếu bỏ qua khi nghe
+  created_at     TIMESTAMP DEFAULT NOW(),
+  CHECK (timestamp_ms >= 0),
+  CHECK (error_type IN ('pronunciation', 'grammar', 'vocabulary', 'fluency')),
+  UNIQUE (listener_id, turn_id, client_note_id)
 );
 CREATE INDEX idx_peer_notes_turn_id ON peer_notes(turn_id);
 
@@ -643,6 +816,7 @@ CREATE INDEX idx_peer_notes_turn_id ON peer_notes(turn_id);
 CREATE TABLE ai_results (
   id                   UUID PRIMARY KEY,
   turn_id              UUID UNIQUE REFERENCES turns(id),  -- mỗi turn chỉ có 1 ai_result
+  status               VARCHAR(20) DEFAULT 'processing',
   whisper_transcript   TEXT,
   fluency_score        DECIMAL(3,1),
   lexical_score        DECIMAL(3,1),
@@ -650,13 +824,33 @@ CREATE TABLE ai_results (
   pronunciation_score  DECIMAL(3,1),
   pronunciation_detail JSONB,         -- word-level từ Azure
   gemini_feedback      JSONB,         -- nhận xét + gợi ý từ Gemini
-  created_at           TIMESTAMP DEFAULT NOW()
+  error_message        TEXT,
+  created_at           TIMESTAMP DEFAULT NOW(),
+  updated_at           TIMESTAMP DEFAULT NOW(),
+  CHECK (status IN ('processing', 'completed', 'failed'))
 );
 ```
 
 ---
 
 ## Edge Cases cần xử lý
+
+### User không cấp quyền camera/microphone
+
+- Hiển thị lỗi tiếng Việt rõ ràng và cho phép thử lại.
+- Không emit `peer_connected` nếu chưa có local media stream cần thiết.
+- Nếu MVP chỉ cần audio, video permission fail không được làm hỏng audio flow.
+
+### WebRTC không kết nối được
+
+- Nếu ICE state là `failed`, `disconnected` quá lâu, hoặc không nhận remote track sau một timeout hợp lý, hiển thị lỗi và cho phép user quay lại tìm đối tác.
+- Local development chấp nhận chỉ dùng STUN. Không tự thêm TURN production nếu user chưa xác nhận.
+
+### MediaRecorder không hỗ trợ MIME type
+
+- Kiểm tra `MediaRecorder.isTypeSupported('audio/webm;codecs=opus')`.
+- Nếu không hỗ trợ, fallback sang MIME type browser hỗ trợ.
+- Nếu browser không hỗ trợ MediaRecorder, hiển thị lỗi rõ ràng.
 
 ### Disconnect giữa session
 
@@ -678,6 +872,23 @@ CREATE TABLE ai_results (
 
 - Hiển thị lỗi rõ ràng, cho phép retry.
 - Không mất peer notes đã lưu khi upload thất bại.
+- Nếu chỉ một số turn upload fail, giữ trạng thái theo từng turn; không bắt user upload lại toàn bộ session.
+
+### AI pipeline thất bại một phần
+
+- Nếu Whisper thành công nhưng Azure hoặc Gemini fail, lưu `ai_results.status = 'failed'` kèm `error_message`.
+- Không xóa audio đã upload khi AI fail.
+- Results page hiển thị turn nào đang `processing`, turn nào `failed`, và cho phép retry nếu endpoint retry được implement.
+
+### Refresh hoặc đóng tab trong review
+
+- Remote audio Blob có thể mất vì không upload server trong MVP.
+- Peer notes đã lưu trong state trước khi submit có thể mất nếu chưa gửi server. Cần cảnh báo user khi rời trang trong review nếu còn note chưa submit.
+
+### Retry peer notes
+
+- `POST /api/peer-notes/batch` phải xử lý duplicate bằng `clientNoteId` hoặc cơ chế tương đương.
+- Retry request không được tạo nhiều note giống nhau.
 
 ---
 

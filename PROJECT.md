@@ -56,9 +56,13 @@ Các app tự luyện nói với AI một mình không tạo được áp lực 
 
 Không thay bằng chỉ Azure vì Azure cần reference text để hoạt động chính xác.
 
+Với IELTS turn dài 45–120 giây, Azure cần được triển khai bằng continuous pronunciation assessment thay vì chỉ nhận diện một lượt ngắn. Miscue detection có thể bị giới hạn trong continuous mode, nên MVP ưu tiên điểm phát âm/fluency/word detail trước; omission/insertion chi tiết có thể xử lý đơn giản hơn hoặc để sau nếu SDK không hỗ trợ tốt.
+
 ### Dùng Gemini cho grammar/vocabulary, không dùng Azure
 
 Azure Pronunciation Assessment chỉ tốt ở phát âm. Grammar và vocabulary cần LLM hiểu ngữ cảnh câu trả lời và câu hỏi gốc. Gemini Flash đủ tốt, rẻ, và có thể output tiếng Việt.
+
+Model mặc định cho MVP là `gemini-2.5-flash`, không dùng cố định `gemini-1.5-flash` vì lifecycle model thay đổi theo thời gian. Trước khi implement hoặc nâng cấp SDK, kiểm tra docs Gemini hiện hành và cập nhật model nếu Google đã khuyến nghị model mới hơn.
 
 ### Không dùng TypeScript
 
@@ -80,9 +84,23 @@ Remote audio chỉ dùng để review trong vài phút ngay sau phiên. Upload l
 
 Làm bài test band đầu vào tự động phức tạp hơn nhiều và không phải core flow. MVP dùng band tự khai báo, sau này mới bổ sung placement test nếu cần.
 
-### Timestamp đồng bộ từ server
+### Timestamp đồng bộ từ server, peer note tính theo turn
 
-`Date.now()` của hai client có thể lệch nhau vài giây. Dùng timestamp từ `session_start` event của server làm mốc chung để tính `timestamp_ms` của peer notes — đảm bảo khi review seek audio sẽ đúng vị trí.
+`Date.now()` của hai client có thể lệch nhau vài giây. Dùng `session_start` event từ server làm tín hiệu bắt đầu chung cho UI session.
+
+Tuy nhiên audio được ghi thành từng file/Blob theo `turnId`, nên `timestamp_ms` của peer notes phải tính từ lúc turn hiện tại bắt đầu, không tính từ đầu session. Khi review một Blob của một turn, app seek bằng:
+
+```js
+audioElement.currentTime = note.timestampMs / 1000;
+```
+
+Nếu lưu timestamp từ đầu session, app phải lưu thêm `turn_start_ms` để quy đổi. MVP chọn cách đơn giản hơn: peer note timestamp luôn relative to turn.
+
+### Backend là nguồn sự thật cho session và turns
+
+Client không tự tạo `sessionId`, `userId`, `turnId` hoặc `questionId`. Khi Socket.IO match thành công, backend tạo user/session/turns trong PostgreSQL rồi gửi lại thông tin cần thiết cho hai client. Cách này giúp upload audio, peer notes và AI results luôn map về cùng một dữ liệu.
+
+Socket chỉ chịu trách nhiệm realtime matchmaking/signaling. Database chịu trách nhiệm lưu session lifecycle, turns, review completion, audio upload status và AI results.
 
 ---
 
@@ -106,7 +124,11 @@ Không chỉ hiện điểm số — phải chỉ rõ từ nào sai, phoneme nà
 | Rủi ro | Mức độ | Cách xử lý trong MVP |
 |---|---|---|
 | Azure SDK lỗi với ESM | Cao | Dùng `createRequire` — xem AGENTS.md |
-| Whisper file > 25MB | Trung bình | Kiểm tra size trước khi upload, log cảnh báo |
+| Azure Pronunciation Assessment với turn > 30 giây | Cao | Dùng continuous mode cho turn dài; chấp nhận caveat với miscue trong MVP |
+| Whisper file > 25MB | Trung bình | Ghi audio theo từng turn, kiểm tra size trước khi gửi OpenAI |
 | Gemini rate limit 429 | Thấp (free tier) | Trả lỗi rõ ràng, không retry phức tạp |
 | WebRTC fail khi không có TURN | Trung bình | Local dev dùng STUN, production cần TURN — làm sau MVP |
-| Hai client lệch timer | Cao nếu không xử lý | Dùng server timestamp làm gốc |
+| Hai client lệch timer | Cao nếu không xử lý | Dùng `session_start` từ server; peer note timestamp tính theo turn local |
+| Env Docker và backend lệch nhau | Cao | Giữ `.env`, Docker Compose và fallback code cùng port/password |
+| Refresh tab trong review làm mất remote audio | Trung bình | MVP chấp nhận vì remote Blob không upload; cảnh báo user nếu rời trang |
+| Upload/AI fail một phần | Trung bình | Lưu status theo từng turn, không bắt user làm lại toàn bộ session |
