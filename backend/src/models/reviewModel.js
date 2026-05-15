@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import pool from '../config/db.js';
+import { maybeStartSessionProcessing } from './processingModel.js';
 
 const ERROR_TYPES = new Set(['pronunciation', 'grammar', 'vocabulary', 'fluency']);
 
@@ -181,19 +182,6 @@ function getReviewColumnForUser(session, userId) {
   return null;
 }
 
-async function hasAllLocalAudioUploaded(client, sessionId) {
-  const result = await client.query(
-    `
-      SELECT COUNT(*)::int AS pending_count
-      FROM turns
-      WHERE session_id = $1 AND upload_status <> 'uploaded'
-    `,
-    [sessionId]
-  );
-
-  return result.rows[0].pending_count === 0;
-}
-
 export async function completeReview({ sessionId, userId }) {
   if (!isNonEmptyString(sessionId)) {
     throw new Error('sessionId is required');
@@ -237,16 +225,7 @@ export async function completeReview({ sessionId, userId }) {
       updatedSession.user_a_review_done_at !== null &&
       updatedSession.user_b_review_done_at !== null;
 
-    if (bothCompleted && await hasAllLocalAudioUploaded(client, sessionId)) {
-      await client.query(
-        `
-          UPDATE sessions
-          SET status = 'processing'
-          WHERE id = $1 AND status = 'reviewing'
-        `,
-        [sessionId]
-      );
-    }
+    await maybeStartSessionProcessing(client, sessionId);
 
     await client.query('COMMIT');
 
