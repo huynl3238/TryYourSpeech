@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { checkDbConnection } from '../config/db.js';
 import { checkRedisConnection } from '../config/redis.js';
+import { completeReview, savePeerNotesBatch } from '../models/reviewModel.js';
 import { getSessionDetail } from '../models/sessionModel.js';
 
 const router = Router();
@@ -61,6 +62,26 @@ router.get('/sessions/:sessionId', async (req, res) => {
   } catch (err) {
     console.error('Failed to get session detail:', err.message);
     res.status(500).json({ error: 'Không thể tải phiên luyện tập' });
+  }
+});
+
+router.post('/peer-notes/batch', async (req, res) => {
+  try {
+    const result = await savePeerNotesBatch(req.body);
+    res.json(result);
+  } catch (err) {
+    console.warn('Failed to save peer notes:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.post('/review/complete', async (req, res) => {
+  try {
+    const result = await completeReview(req.body);
+    res.json(result);
+  } catch (err) {
+    console.warn('Failed to complete review:', err.message);
+    res.status(400).json({ error: err.message });
   }
 });
 
