@@ -80,7 +80,7 @@ export async function maybeStartSessionProcessing(client, sessionId) {
   );
 
   await createMissingAiResults(client, sessionId);
-  prepareAiPipeline(sessionId);
+  const pipeline = await prepareAiPipeline(client, sessionId);
 
-  return 'processing';
+  return pipeline.status;
 }
