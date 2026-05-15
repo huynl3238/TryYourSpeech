@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import app from '../src/app.js';
+import redis from '../src/config/redis.js';
 
 function listen(appInstance) {
   return new Promise((resolve) => {
@@ -31,6 +32,33 @@ test('result and review endpoints reject malformed request identifiers', async (
     assert.equal(reviewResponse.status, 400);
     assert.equal(reviewBody.error, 'request body is invalid');
   } finally {
+    server.close();
+  }
+});
+
+test('health endpoint reports AI config names without exposing secret values', async () => {
+  const originalOpenAiKey = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = 'secret-value';
+
+  const server = await listen(app);
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    const response = await fetch(`${baseUrl}/api/health`);
+    const body = await response.json();
+
+    assert.ok(body.services.ai);
+    assert.deepEqual(body.services.ai.configured, ['OPENAI_API_KEY']);
+    assert.ok(body.services.ai.missing.includes('GEMINI_API_KEY'));
+    assert.equal(JSON.stringify(body).includes('secret-value'), false);
+  } finally {
+    if (originalOpenAiKey === undefined) {
+      delete process.env.OPENAI_API_KEY;
+    } else {
+      process.env.OPENAI_API_KEY = originalOpenAiKey;
+    }
+
+    redis.disconnect();
     server.close();
   }
 });

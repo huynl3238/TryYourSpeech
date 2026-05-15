@@ -10,6 +10,7 @@ import { checkRedisConnection } from '../config/redis.js';
 import { completeReview, savePeerNotesBatch } from '../models/reviewModel.js';
 import { getResultsForUser, retryFailedResults } from '../models/resultsModel.js';
 import { getSessionDetail } from '../models/sessionModel.js';
+import { getAiConfigStatus } from '../models/aiPipelineModel.js';
 import { convertWebmToWav } from '../services/audioConversion.js';
 
 const router = Router();
@@ -199,6 +200,7 @@ router.get('/health', async (_req, res) => {
     checkDbConnection(),
     checkRedisConnection(),
   ]);
+  const ai = getAiConfigStatus();
 
   const isHealthy = database.ok && redis.ok;
 
@@ -207,6 +209,7 @@ router.get('/health', async (_req, res) => {
     services: {
       database,
       redis,
+      ai,
     },
   });
 });
