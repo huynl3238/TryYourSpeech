@@ -32,29 +32,8 @@ async function markProcessingResultsFailed(client, sessionId, errorMessage) {
   );
 }
 
-async function markSessionCompletedIfAllResultsTerminal(client, sessionId) {
-  await client.query(
-    `
-      UPDATE sessions
-      SET status = 'completed',
-          ended_at = NOW()
-      WHERE id = $1
-        AND status = 'processing'
-        AND NOT EXISTS (
-          SELECT 1
-          FROM turns tr
-          JOIN ai_results ar ON ar.turn_id = tr.id
-          WHERE tr.session_id = $1
-            AND ar.status NOT IN ('completed', 'failed')
-        )
-    `,
-    [sessionId]
-  );
-}
-
 async function failSessionProcessing(client, sessionId, errorMessage) {
   await markProcessingResultsFailed(client, sessionId, errorMessage);
-  await markSessionCompletedIfAllResultsTerminal(client, sessionId);
 
   return {
     started: false,

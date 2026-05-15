@@ -1,5 +1,9 @@
 import { randomUUID } from 'crypto';
 import { prepareAiPipeline } from './aiPipelineModel.js';
+import {
+  getSessionStatus,
+  markSessionCompletedIfAllResultsTerminal,
+} from './sessionLifecycleModel.js';
 
 async function hasBothReviewsCompleted(client, sessionId) {
   const result = await client.query(
@@ -81,6 +85,15 @@ export async function maybeStartSessionProcessing(client, sessionId) {
 
   await createMissingAiResults(client, sessionId);
   const pipeline = await prepareAiPipeline(client, sessionId);
+  const completedStatus = await markSessionCompletedIfAllResultsTerminal(client, sessionId);
 
-  return pipeline.status;
+  if (pipeline.status) {
+    return pipeline.status;
+  }
+
+  if (completedStatus) {
+    return completedStatus;
+  }
+
+  return await getSessionStatus(client, sessionId);
 }
