@@ -32,19 +32,142 @@ async function markProcessingResultsFailed(client, sessionId, errorMessage) {
   );
 }
 
-async function failSessionProcessing(client, sessionId, errorMessage) {
-  await markProcessingResultsFailed(client, sessionId, errorMessage);
+async function getProcessingTurns(client, sessionId) {
+  const result = await client.query(
+    `
+      SELECT
+        tr.id AS turn_id,
+        tr.audio_url,
+        tr.question_id,
+        tr.part_number,
+        tr.duration_ms,
+        q.question_text,
+        q.cue_card,
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'timestampMs', pn.timestamp_ms,
+              'errorType', pn.error_type,
+              'noteText', pn.note_text
+            )
+            ORDER BY pn.timestamp_ms
+          ) FILTER (WHERE pn.id IS NOT NULL),
+          '[]'
+        ) AS peer_notes
+      FROM turns tr
+      JOIN ai_results ar ON ar.turn_id = tr.id
+      JOIN questions q ON q.id = tr.question_id
+      LEFT JOIN peer_notes pn ON pn.turn_id = tr.id
+      WHERE tr.session_id = $1
+        AND ar.status = 'processing'
+      GROUP BY
+        tr.id,
+        tr.turn_index,
+        tr.audio_url,
+        tr.question_id,
+        tr.part_number,
+        tr.duration_ms,
+        q.question_text,
+        q.cue_card
+      ORDER BY tr.turn_index
+    `,
+    [sessionId]
+  );
+
+  return result.rows;
+}
+
+async function markTurnResultFailed(client, turnId, errorMessage) {
+  await client.query(
+    `
+      UPDATE ai_results
+      SET status = 'failed',
+          error_message = $2,
+          updated_at = NOW()
+      WHERE turn_id = $1
+        AND status = 'processing'
+    `,
+    [turnId, errorMessage]
+  );
+}
+
+async function markTurnResultCompleted(client, turnId, result) {
+  await client.query(
+    `
+      UPDATE ai_results
+      SET status = 'completed',
+          whisper_transcript = $2,
+          fluency_score = $3,
+          lexical_score = $4,
+          grammar_score = $5,
+          pronunciation_score = $6,
+          pronunciation_detail = $7,
+          gemini_feedback = $8,
+          error_message = NULL,
+          updated_at = NOW()
+      WHERE turn_id = $1
+        AND status = 'processing'
+    `,
+    [
+      turnId,
+      result.transcript,
+      result.scores.fluency,
+      result.scores.lexical,
+      result.scores.grammar,
+      result.scores.pronunciation,
+      JSON.stringify(result.pronunciationDetail),
+      JSON.stringify(result.geminiFeedback),
+    ]
+  );
+}
+
+function createPendingStep(name) {
+  return async () => {
+    throw new Error(`${name} step is not implemented yet`);
+  };
+}
+
+const transcribeTurnAudio = createPendingStep('Transcription');
+const assessPronunciation = createPendingStep('Pronunciation assessment');
+const generateSpeakingFeedback = createPendingStep('Speaking feedback');
+
+async function runTurnPipeline(_client, turn) {
+  const transcript = await transcribeTurnAudio(turn);
+  const pronunciationResult = await assessPronunciation(turn, transcript);
+  const feedback = await generateSpeakingFeedback(turn, transcript, pronunciationResult);
+  const feedbackScores = feedback?.scores || {};
+
+  return {
+    transcript,
+    scores: {
+      fluency: feedbackScores.fluency ?? pronunciationResult?.fluencyScore ?? null,
+      lexical: feedbackScores.lexical ?? null,
+      grammar: feedbackScores.grammar ?? null,
+      pronunciation: feedbackScores.pronunciation ?? pronunciationResult?.pronunciationScore ?? null,
+    },
+    pronunciationDetail: pronunciationResult?.detail || [],
+    geminiFeedback: feedback || {},
+  };
+}
+
+async function failProcessingTurns(client, sessionId, errorMessage) {
+  const turns = await getProcessingTurns(client, sessionId);
+
+  for (const turn of turns) {
+    await markTurnResultFailed(client, turn.turn_id, errorMessage);
+  }
 
   return {
     started: false,
     status: 'failed',
     reason: errorMessage,
+    processedTurns: turns.length,
   };
 }
 
 async function failSessionBecauseAiConfigMissing(client, sessionId, missingConfigNames) {
   const errorMessage = getMissingConfigError(missingConfigNames);
-  const result = await failSessionProcessing(client, sessionId, errorMessage);
+  const result = await failProcessingTurns(client, sessionId, errorMessage);
 
   console.warn(`${errorMessage}. Session ${sessionId} was completed with failed AI results.`);
 
@@ -52,11 +175,25 @@ async function failSessionBecauseAiConfigMissing(client, sessionId, missingConfi
 }
 
 async function failSessionBecauseWorkerIsMissing(client, sessionId) {
-  const result = await failSessionProcessing(client, sessionId, AI_WORKER_NOT_IMPLEMENTED_ERROR);
+  const turns = await getProcessingTurns(client, sessionId);
+
+  for (const turn of turns) {
+    try {
+      const result = await runTurnPipeline(client, turn);
+      await markTurnResultCompleted(client, turn.turn_id, result);
+    } catch (err) {
+      await markTurnResultFailed(client, turn.turn_id, err.message || AI_WORKER_NOT_IMPLEMENTED_ERROR);
+    }
+  }
 
   console.warn(`Session ${sessionId} was completed because the AI worker is not implemented yet.`);
 
-  return result;
+  return {
+    started: false,
+    status: 'failed',
+    reason: AI_WORKER_NOT_IMPLEMENTED_ERROR,
+    processedTurns: turns.length,
+  };
 }
 
 export async function prepareAiPipeline(client, sessionId) {
