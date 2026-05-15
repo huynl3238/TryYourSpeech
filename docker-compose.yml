@@ -3,11 +3,11 @@ services:
     image: postgres:16-alpine
     container_name: ielts_postgres
     ports:
-      - "5433:5432"
+      - "5432:5432"
     environment:
       POSTGRES_DB: ielts_speaking
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: your_password
+      POSTGRES_PASSWORD: postgres
     volumes:
       - pg_data:/var/lib/postgresql/data
 

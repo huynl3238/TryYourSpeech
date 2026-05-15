@@ -251,7 +251,19 @@ Không tự tưởng tượng socket event mới nếu chưa đối chiếu file
 
 ### Matchmaking và DB trong MVP
 
-Matchmaking ban đầu vẫn là FIFO in-memory. Khi hai user được match:
+Matchmaking hiện tại dùng **Band Difference Matching** in-memory. Khi user gửi `find_match`, backend tìm người đang chờ có band gần nhất và chỉ ghép nếu chênh lệch band không quá `1.0`.
+
+Quy tắc MVP:
+
+- User bắt buộc gửi `{ displayName, band }`.
+- Backend parse `band` thành số từ `0` đến `9`.
+- Chỉ xét candidate có band hợp lệ.
+- Chỉ ghép nếu `Math.abs(user.band - candidate.band) <= 1.0`.
+- Nếu có nhiều candidate phù hợp, chọn người có band gần nhất.
+- Nếu band difference bằng nhau, chọn người chờ lâu hơn.
+- Nếu không có candidate phù hợp, user tiếp tục ở hàng chờ và nhận event `waiting`.
+
+Khi hai user được match:
 
 1. Backend tạo hoặc lưu `users` từ `{ displayName, band }`.
 2. Backend chọn một topic/questions cho session.
@@ -261,7 +273,17 @@ Matchmaking ban đầu vẫn là FIFO in-memory. Khi hai user được match:
 
 `role` chỉ dùng trong session hiện tại để xác định thứ tự nói/nghe. Không dùng `socket.id` làm user id trong database. `socket.id` chỉ là id kết nối tạm thời.
 
-Nếu chưa implement DB cho socket, có thể giữ payload cũ tạm thời, nhưng trước khi làm audio upload, review hoặc results phải nâng socket contract lên payload đầy đủ ở trên.
+Khi bắt đầu implement matchmaking gắn database, dùng payload `matched` mới ở trên ngay. Không tiếp tục mở rộng payload cũ vì audio upload, peer notes và results đều cần `sessionId`, `userId`, `partnerId` và `role`.
+
+### Chọn topic/questions trong MVP
+
+Khi tạo session, backend chọn random 1 topic có đủ câu hỏi tối thiểu:
+
+- Part 1: 4 câu.
+- Part 2: 1 cue card.
+- Part 3: 3 câu.
+
+Nếu chưa có topic nào đủ dữ liệu, API/socket phải trả lỗi rõ ràng `{ error: "Chưa có đủ câu hỏi để tạo phiên luyện tập" }`. Không hardcode questions ở frontend để né lỗi seed data.
 
 ---
 
@@ -311,9 +333,10 @@ Chưa làm hệ thống đánh giá band đầu vào tự động trong MVP.
 
 Người dùng bấm "Tìm đối tác". Hệ thống ghép cặp 2 người đang chờ.
 
-Matchmaking ban đầu dùng FIFO đơn giản. Nếu thêm rule theo band, chỉ áp dụng rule đơn giản:
-- Ưu tiên ghép người chênh nhau từ 1 đến 2 band.
-- Nếu hàng đợi ít người, có thể nới lỏng điều kiện sau một khoảng chờ.
+Matchmaking MVP dùng Band Difference Matching:
+- Ưu tiên ghép người có band gần nhau nhất.
+- Chỉ ghép nếu chênh lệch band không quá `1.0`.
+- Nếu chưa có người phù hợp, user tiếp tục chờ thay vì ghép đại với người chênh band quá xa.
 
 Không làm bài test đầu vào tự động nếu user chưa xác nhận.
 
@@ -351,9 +374,18 @@ Remote audio chỉ dùng local để review, không upload trong MVP.
 
 Review audio của đối phương dùng Blob local map theo `turnId`. Nếu tab bị refresh/đóng trong review, remote Blob có thể mất; MVP chấp nhận điều này và hiển thị thông báo rõ ràng. Không upload remote audio lên server nếu user chưa xác nhận đổi scope.
 
+Khi vào review phase, client bắt đầu upload audio của chính mình ở background theo từng turn. User vẫn có thể review audio đối phương trong lúc upload chạy. Upload audio và review peer notes là hai luồng độc lập nhưng cùng map theo `turnId`.
+
 ### Phase 5 — AI chấm điểm
 
-Sau khi user hoàn tất review, client upload audio của chính mình theo từng `turn`. Server xử lý mỗi turn độc lập:
+AI processing chỉ bắt đầu khi đủ 2 điều kiện:
+
+1. Audio của speaking turn đã upload thành công.
+2. Cả hai user đã hoàn tất review bằng `POST /api/review/complete`.
+
+Nếu user bấm hoàn tất review trước khi audio upload xong, session vẫn chờ các upload còn thiếu. Nếu audio upload xong trước khi cả hai review complete, backend chỉ lưu file/metadata và chưa gọi AI.
+
+Khi đủ điều kiện, server xử lý mỗi turn độc lập:
 
 1. Nhận `audio/webm`.
 2. Convert sang WAV 16kHz mono bằng `fluent-ffmpeg`.
@@ -516,11 +548,12 @@ Response thành công:
 {
   "turnId": "uuid",
   "audioUrl": "/uploads/audio/turn-id.webm",
-  "status": "processing"
+  "status": "uploaded",
+  "aiStatus": "pending"
 }
 ```
 
-MVP ưu tiên xử lý AI async hoặc bán async: upload trả `status: "processing"`, frontend chuyển sang màn hình loading/result và poll `GET /api/results/:sessionId?userId=...`. Nếu chọn xử lý đồng bộ để đơn giản hóa, vẫn phải lưu trạng thái lỗi vào database để retry được.
+Nếu cả hai user đã hoàn tất review trước đó, upload endpoint có thể bắt đầu AI ngay và trả `aiStatus: "processing"`. Nếu chưa, chỉ lưu audio và trả `aiStatus: "pending"`. Frontend chuyển sang màn hình loading/result và poll `GET /api/results/:sessionId?userId=...`.
 
 ### `POST /api/peer-notes/batch`
 
@@ -534,6 +567,7 @@ Request:
   "listenerId": "uuid",
   "notes": [
     {
+      "clientNoteId": "uuid",
       "turnId": "uuid",
       "timestampMs": 12345,
       "errorType": "pronunciation",
@@ -551,7 +585,7 @@ Response:
 }
 ```
 
-Server phải chống duplicate khi client retry. Cách đơn giản cho MVP: client gửi thêm optional `clientNoteId`, server tạo unique constraint `(listener_id, turn_id, client_note_id)` khi field này tồn tại.
+`clientNoteId` là bắt buộc. Client generate bằng `crypto.randomUUID()` khi note được tạo. Server dùng unique constraint `(listener_id, turn_id, client_note_id)` để retry request không tạo duplicate.
 
 ### `POST /api/review/complete`
 
@@ -576,7 +610,9 @@ Response:
 }
 ```
 
-Nếu `bothCompleted` là `false`, frontend hiển thị trạng thái chờ đối tác. Khi cả hai hoàn tất, session chuyển sang `processing` hoặc cho phép upload/processing các audio turn còn lại.
+Nếu `bothCompleted` là `false`, frontend hiển thị trạng thái chờ đối tác. Khi cả hai hoàn tất, backend kiểm tra audio upload: nếu tất cả turns cần chấm đã upload thì chuyển session sang `processing`; nếu còn thiếu audio thì giữ `reviewing` và chờ các upload còn lại.
+
+`POST /api/review/complete` không thay thế `POST /api/peer-notes/batch`. Frontend phải submit peer notes trước, sau đó mới gọi review complete. Nếu không có note nào, vẫn gọi review complete với session/user tương ứng.
 
 ### `GET /api/results/:sessionId`
 
@@ -621,6 +657,31 @@ Response tối thiểu:
   ]
 }
 ```
+
+---
+
+## Session Lifecycle
+
+Backend là nguồn sự thật cho `sessions.status`. Frontend không tự quyết định trạng thái session ngoài việc gọi đúng socket/API.
+
+| Transition | Trigger | Backend xử lý |
+|---|---|---|
+| `matched` | Hai user được ghép cặp | Tạo `users`, `sessions`, `turns`; emit `matched` |
+| `matched → active` | Cả hai client emit `peer_connected`; backend emit `session_start` | Set `started_at = NOW()`, `status = 'active'` |
+| `active → reviewing` | Client bắt đầu gửi upload audio hoặc peer notes sau khi session luyện nói kết thúc | Set `status = 'reviewing'` nếu session đang `active` |
+| `reviewing → processing` | Cả hai user đã `review/complete` và tất cả turns cần chấm đã upload audio | Bắt đầu AI pipeline cho các turns có audio |
+| `processing → completed` | Mọi `ai_results` của session đã ở trạng thái terminal `completed` hoặc `failed` | Set `ended_at = NOW()`, `status = 'completed'` |
+| `matched/active/reviewing → abandoned` | Một user disconnect trước khi session hoàn tất | Emit `partner_disconnected`, set `ended_at = NOW()`, `status = 'abandoned'` |
+
+Upload audio có thể xảy ra trong review phase. Thứ tự frontend khuyến nghị:
+
+1. Vừa vào review: upload audio của chính mình ở background.
+2. User review audio đối phương và bổ sung notes.
+3. Frontend gọi `POST /api/peer-notes/batch`.
+4. Frontend gọi `POST /api/review/complete`.
+5. Backend chỉ chạy AI khi cả hai đã complete review và audio cần thiết đã upload.
+
+Nếu một số turn upload fail, session không được chuyển `processing` cho đến khi user retry thành công hoặc backend có rule bỏ qua turn đó. MVP ưu tiên yêu cầu retry upload.
 
 ---
 
@@ -758,6 +819,7 @@ CREATE INDEX idx_questions_topic_id ON questions(topic_id);
 -- Phiên luyện tập
 CREATE TABLE sessions (
   id                     UUID PRIMARY KEY,
+  room_id                VARCHAR(100),             -- Socket.IO room id hiện tại, dùng để debug/map runtime nếu cần
   user_a_id              UUID REFERENCES users(id),
   user_b_id              UUID REFERENCES users(id),
   topic_id               UUID REFERENCES topics(id),
@@ -801,7 +863,7 @@ CREATE TABLE peer_notes (
   id             UUID PRIMARY KEY,
   turn_id        UUID REFERENCES turns(id),
   listener_id    UUID REFERENCES users(id),
-  client_note_id VARCHAR(100),              -- optional id từ client để chống duplicate khi retry
+  client_note_id VARCHAR(100) NOT NULL,     -- id từ client để chống duplicate khi retry
   timestamp_ms   INTEGER NOT NULL,          -- mốc thời gian relative to turn, không phải đầu session
   error_type     VARCHAR(20) NOT NULL,      -- 'pronunciation' | 'grammar' | 'vocabulary' | 'fluency'
   note_text      TEXT,                      -- có thể null nếu bỏ qua khi nghe
@@ -830,6 +892,8 @@ CREATE TABLE ai_results (
   CHECK (status IN ('processing', 'completed', 'failed'))
 );
 ```
+
+PostgreSQL không tự cập nhật `updated_at`. MVP không cần trigger riêng; backend phải set `updated_at = NOW()` tường minh trong mọi câu `UPDATE ai_results ...`.
 
 ---
 
@@ -887,7 +951,7 @@ CREATE TABLE ai_results (
 
 ### Retry peer notes
 
-- `POST /api/peer-notes/batch` phải xử lý duplicate bằng `clientNoteId` hoặc cơ chế tương đương.
+- `POST /api/peer-notes/batch` phải xử lý duplicate bằng `clientNoteId`.
 - Retry request không được tạo nhiều note giống nhau.
 
 ---

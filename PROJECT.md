@@ -84,6 +84,16 @@ Remote audio chỉ dùng để review trong vài phút ngay sau phiên. Upload l
 
 Làm bài test band đầu vào tự động phức tạp hơn nhiều và không phải core flow. MVP dùng band tự khai báo, sau này mới bổ sung placement test nếu cần.
 
+### Ghép cặp theo band difference
+
+MVP không dùng recommendation system phức tạp hoặc machine learning. Cơ chế ghép cặp hiện tại là rule-based matching dựa trên độ gần band:
+
+- Chỉ ghép 2 người nếu chênh lệch band không quá `1.0`.
+- Nếu có nhiều người phù hợp, chọn người có band gần nhất.
+- Nếu vẫn bằng nhau, chọn người chờ lâu hơn.
+
+Cách này đủ đơn giản để triển khai sớm, nhưng tốt hơn FIFO vì tránh ghép người có trình độ quá xa nhau trong một buổi luyện speaking.
+
 ### Timestamp đồng bộ từ server, peer note tính theo turn
 
 `Date.now()` của hai client có thể lệch nhau vài giây. Dùng `session_start` event từ server làm tín hiệu bắt đầu chung cho UI session.
@@ -101,6 +111,10 @@ Nếu lưu timestamp từ đầu session, app phải lưu thêm `turn_start_ms` 
 Client không tự tạo `sessionId`, `userId`, `turnId` hoặc `questionId`. Khi Socket.IO match thành công, backend tạo user/session/turns trong PostgreSQL rồi gửi lại thông tin cần thiết cho hai client. Cách này giúp upload audio, peer notes và AI results luôn map về cùng một dữ liệu.
 
 Socket chỉ chịu trách nhiệm realtime matchmaking/signaling. Database chịu trách nhiệm lưu session lifecycle, turns, review completion, audio upload status và AI results.
+
+Session lifecycle trong MVP được giữ đơn giản: `matched` khi ghép cặp xong, `active` khi hai bên WebRTC ready, `reviewing` khi bắt đầu upload/review sau luyện nói, `processing` khi cả hai hoàn tất review và audio đã upload đủ, `completed` khi AI pipeline kết thúc, `abandoned` khi disconnect trước khi hoàn tất.
+
+Audio của chính user được upload ở background trong review phase. AI không chạy ngay khi upload nếu peer review chưa hoàn tất, vì Gemini cần dùng peer notes làm input.
 
 ---
 

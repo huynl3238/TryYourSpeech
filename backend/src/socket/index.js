@@ -1,21 +1,69 @@
 import { randomUUID } from 'crypto';
 
-// ─── State ────────────────────────────────────────────────────────────────────
+const MAX_BAND_DIFFERENCE = 1.0;
 
-const waitingQueue = [];    // [{ socketId, displayName }]
-const rooms = new Map();    // roomId → { userA, userB, readyUsers: Set }
-const userRoom = new Map(); // socketId → roomId
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+const waitingQueue = [];    // [{ socketId, displayName, band, joinedAt }]
+const rooms = new Map();    // roomId -> { userA, userB, readyUsers: Set }
+const userRoom = new Map(); // socketId -> roomId
 
 function removeFromQueue(socketId) {
-  const idx = waitingQueue.findIndex(u => u.socketId === socketId);
-  if (idx !== -1) waitingQueue.splice(idx, 1);
+  const idx = waitingQueue.findIndex((user) => user.socketId === socketId);
+
+  if (idx !== -1) {
+    waitingQueue.splice(idx, 1);
+  }
+}
+
+function parseBand(band) {
+  const parsedBand = Number.parseFloat(band);
+
+  if (Number.isNaN(parsedBand) || parsedBand < 0 || parsedBand > 9) {
+    return null;
+  }
+
+  return parsedBand;
+}
+
+function getBandDifference(userA, userB) {
+  if (userA.band === null || userB.band === null) {
+    return null;
+  }
+
+  return Math.abs(userA.band - userB.band);
+}
+
+function findBestBandMatch(user) {
+  let bestMatch = null;
+
+  for (const candidate of waitingQueue) {
+    const bandDifference = getBandDifference(user, candidate);
+
+    if (bandDifference === null || bandDifference > MAX_BAND_DIFFERENCE) {
+      continue;
+    }
+
+    if (!bestMatch) {
+      bestMatch = { user: candidate, bandDifference };
+      continue;
+    }
+
+    const isCloserBand = bandDifference < bestMatch.bandDifference;
+    const isSameBandDiffAndWaitingLonger =
+      bandDifference === bestMatch.bandDifference &&
+      candidate.joinedAt < bestMatch.user.joinedAt;
+
+    if (isCloserBand || isSameBandDiffAndWaitingLonger) {
+      bestMatch = { user: candidate, bandDifference };
+    }
+  }
+
+  return bestMatch?.user || null;
 }
 
 function getPartnerSocketId(roomId, mySocketId) {
   const room = rooms.get(roomId);
   if (!room) return null;
+
   return room.userA.socketId === mySocketId
     ? room.userB.socketId
     : room.userA.socketId;
@@ -32,41 +80,53 @@ function createRoom(userA, userB) {
 function deleteRoom(roomId) {
   const room = rooms.get(roomId);
   if (!room) return;
+
   userRoom.delete(room.userA.socketId);
   userRoom.delete(room.userB.socketId);
   rooms.delete(roomId);
 }
 
-// ─── Handlers ─────────────────────────────────────────────────────────────────
+function emitMatched(io, userA, userB, roomId) {
+  io.to(userA.socketId).emit('matched', {
+    roomId,
+    isInitiator: true,
+    partnerName: userB.displayName,
+  });
 
-function handleFindMatch(io, socket, { displayName }) {
+  io.to(userB.socketId).emit('matched', {
+    roomId,
+    isInitiator: false,
+    partnerName: userA.displayName,
+  });
+}
+
+function handleFindMatch(io, socket, { displayName, band }) {
   if (userRoom.has(socket.id)) return;
-  if (waitingQueue.some(u => u.socketId === socket.id)) return;
+  if (waitingQueue.some((user) => user.socketId === socket.id)) return;
 
-  const user = { socketId: socket.id, displayName };
-  waitingQueue.push(user);
-  console.log(`[Queue] +${displayName} | size: ${waitingQueue.length}`);
+  const user = {
+    socketId: socket.id,
+    displayName,
+    band: parseBand(band),
+    joinedAt: Date.now(),
+  };
 
-  if (waitingQueue.length >= 2) {
-    const userA = waitingQueue.shift(); // initiator
-    const userB = waitingQueue.shift();
-    const roomId = createRoom(userA, userB);
+  const matchedUser = findBestBandMatch(user);
 
-    io.to(userA.socketId).emit('matched', {
-      roomId,
-      isInitiator: true,
-      partnerName: userB.displayName
-    });
-    io.to(userB.socketId).emit('matched', {
-      roomId,
-      isInitiator: false,
-      partnerName: userA.displayName
-    });
+  if (matchedUser) {
+    removeFromQueue(matchedUser.socketId);
+    const roomId = createRoom(matchedUser, user);
+    emitMatched(io, matchedUser, user, roomId);
 
-    console.log(`[Match] ${userA.displayName} ↔ ${userB.displayName} | room: ${roomId}`);
-  } else {
-    socket.emit('waiting');
+    console.log(
+      `[Match] ${matchedUser.displayName} (${matchedUser.band}) matched with ${user.displayName} (${user.band}) | room: ${roomId}`
+    );
+    return;
   }
+
+  waitingQueue.push(user);
+  console.log(`[Queue] +${displayName} (${user.band}) | size: ${waitingQueue.length}`);
+  socket.emit('waiting');
 }
 
 function handleCancelFindMatch(socket) {
@@ -74,7 +134,6 @@ function handleCancelFindMatch(socket) {
   console.log(`[Queue] -${socket.id} cancelled`);
 }
 
-// Relay thẳng signal WebRTC (offer / answer / ice-candidate) sang partner
 function handleSignal(io, socket, data) {
   const roomId = userRoom.get(socket.id);
   if (!roomId) return;
@@ -83,8 +142,6 @@ function handleSignal(io, socket, data) {
   if (partnerSocketId) io.to(partnerSocketId).emit('signal', data);
 }
 
-// Client báo WebRTC P2P đã kết nối thành công
-// Khi cả 2 báo xong → emit session_start với cùng 1 timestamp để sync timer
 function handlePeerConnected(io, socket) {
   const roomId = userRoom.get(socket.id);
   if (!roomId) return;
@@ -112,8 +169,6 @@ function handleDisconnect(io, socket) {
 
   deleteRoom(roomId);
 }
-
-// ─── Setup ────────────────────────────────────────────────────────────────────
 
 export function setupSocket(io) {
   io.on('connection', (socket) => {
