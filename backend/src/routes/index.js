@@ -8,6 +8,7 @@ import { saveAudioUpload, validateAudioUpload } from '../models/audioModel.js';
 import { checkDbConnection } from '../config/db.js';
 import { checkRedisConnection } from '../config/redis.js';
 import { completeReview, savePeerNotesBatch } from '../models/reviewModel.js';
+import { getResultsForUser } from '../models/resultsModel.js';
 import { getSessionDetail } from '../models/sessionModel.js';
 
 const router = Router();
@@ -162,6 +163,25 @@ router.get('/sessions/:sessionId', async (req, res) => {
   } catch (err) {
     console.error('Failed to get session detail:', err.message);
     res.status(500).json({ error: 'Không thể tải phiên luyện tập' });
+  }
+});
+
+router.get('/results/:sessionId', async (req, res) => {
+  try {
+    const results = await getResultsForUser({
+      sessionId: req.params.sessionId,
+      userId: req.query.userId,
+    });
+
+    if (!results) {
+      res.status(404).json({ error: 'Session not found' });
+      return;
+    }
+
+    res.json(results);
+  } catch (err) {
+    console.warn('Failed to get results:', err.message);
+    res.status(400).json({ error: err.message });
   }
 });
 

@@ -1,4 +1,5 @@
 import pool from '../config/db.js';
+import { maybeStartSessionProcessing } from './processingModel.js';
 
 function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
@@ -57,54 +58,6 @@ async function markSessionReviewing(client, sessionId) {
     `,
     [sessionId]
   );
-}
-
-async function hasAllAudioUploaded(client, sessionId) {
-  const result = await client.query(
-    `
-      SELECT COUNT(*)::int AS pending_count
-      FROM turns
-      WHERE session_id = $1 AND upload_status <> 'uploaded'
-    `,
-    [sessionId]
-  );
-
-  return result.rows[0].pending_count === 0;
-}
-
-async function getReviewState(client, sessionId) {
-  const result = await client.query(
-    `
-      SELECT user_a_review_done_at, user_b_review_done_at
-      FROM sessions
-      WHERE id = $1
-    `,
-    [sessionId]
-  );
-
-  return result.rows[0];
-}
-
-async function maybeStartProcessing(client, sessionId) {
-  const reviewState = await getReviewState(client, sessionId);
-  const bothCompleted =
-    reviewState.user_a_review_done_at !== null &&
-    reviewState.user_b_review_done_at !== null;
-
-  if (!bothCompleted || !(await hasAllAudioUploaded(client, sessionId))) {
-    return 'pending';
-  }
-
-  await client.query(
-    `
-      UPDATE sessions
-      SET status = 'processing'
-      WHERE id = $1 AND status = 'reviewing'
-    `,
-    [sessionId]
-  );
-
-  return 'processing';
 }
 
 function validateUploadInput({ sessionId, turnId, speakerId, questionId, durationMs }) {
@@ -210,7 +163,7 @@ export async function saveAudioUpload({
       [audioUrl, turnId]
     );
 
-    const aiStatus = await maybeStartProcessing(client, sessionId);
+    const aiStatus = await maybeStartSessionProcessing(client, sessionId);
 
     await client.query('COMMIT');
 
