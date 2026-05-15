@@ -18,6 +18,7 @@ const tempDirectory = join(uploadsDirectory, 'tmp');
 const audioDirectory = join(uploadsDirectory, 'audio');
 const maxAudioFileSize = 25 * 1024 * 1024;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const errorTypes = new Set(['pronunciation', 'grammar', 'vocabulary', 'fluency']);
 
 const upload = multer({
   dest: tempDirectory,
@@ -63,9 +64,49 @@ function isValidUuid(value) {
   return typeof value === 'string' && uuidPattern.test(value);
 }
 
+function isRequestObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function requireRequestObject(value) {
+  if (!isRequestObject(value)) {
+    throw new Error('request body is invalid');
+  }
+}
+
 function requireUuid(value, fieldName) {
   if (!isValidUuid(value)) {
     throw new Error(`${fieldName} is invalid`);
+  }
+}
+
+function requireNonEmptyString(value, fieldName) {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`${fieldName} is required`);
+  }
+}
+
+function requireNonNegativeInteger(value, fieldName) {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(`${fieldName} must be a non-negative integer`);
+  }
+}
+
+function validateNotePayload(note) {
+  if (!isRequestObject(note)) {
+    throw new Error('note is invalid');
+  }
+
+  requireUuid(note.turnId, 'note.turnId');
+  requireNonEmptyString(note.clientNoteId, 'note.clientNoteId');
+  requireNonNegativeInteger(note.timestampMs, 'note.timestampMs');
+
+  if (!errorTypes.has(note.errorType)) {
+    throw new Error('note.errorType is invalid');
+  }
+
+  if (note.noteText !== undefined && note.noteText !== null && typeof note.noteText !== 'string') {
+    throw new Error('note.noteText is invalid');
   }
 }
 
@@ -78,11 +119,7 @@ function validatePeerNotesPayload({ sessionId, listenerId, notes }) {
   }
 
   for (const note of notes) {
-    if (!note || typeof note !== 'object') {
-      throw new Error('note is invalid');
-    }
-
-    requireUuid(note.turnId, 'note.turnId');
+    validateNotePayload(note);
   }
 }
 
@@ -229,6 +266,8 @@ router.post('/audio/upload', uploadSingleAudio, async (req, res) => {
       throw new Error('audio is required');
     }
 
+    requireRequestObject(req.body);
+
     const { turnId, sessionId, speakerId, questionId } = req.body;
     const durationMs = parsePositiveInteger(req.body.durationMs);
 
@@ -276,6 +315,7 @@ router.post('/audio/upload', uploadSingleAudio, async (req, res) => {
 
 router.post('/peer-notes/batch', async (req, res) => {
   try {
+    requireRequestObject(req.body);
     validatePeerNotesPayload(req.body);
 
     const result = await savePeerNotesBatch(req.body);
@@ -288,6 +328,7 @@ router.post('/peer-notes/batch', async (req, res) => {
 
 router.post('/review/complete', async (req, res) => {
   try {
+    requireRequestObject(req.body);
     requireUuid(req.body.sessionId, 'sessionId');
     requireUuid(req.body.userId, 'userId');
 

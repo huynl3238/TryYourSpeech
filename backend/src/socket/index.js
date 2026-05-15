@@ -6,6 +6,8 @@ import {
 } from '../models/sessionModel.js';
 
 const MAX_BAND_DIFFERENCE = 1.0;
+const MAX_DISPLAY_NAME_LENGTH = 100;
+const SIGNAL_TYPES = new Set(['offer', 'answer', 'ice-candidate']);
 
 const waitingQueue = [];    // [{ socketId, displayName, band, joinedAt }]
 const rooms = new Map();    // roomId -> { userA, userB, readyUsers: Set, sessionId }
@@ -20,13 +22,62 @@ function removeFromQueue(socketId) {
 }
 
 function parseBand(band) {
-  const parsedBand = Number.parseFloat(band);
+  if (band === null || band === undefined || band === '') {
+    return null;
+  }
 
-  if (Number.isNaN(parsedBand) || parsedBand < 0 || parsedBand > 9) {
+  if (typeof band === 'string' && band.trim().length === 0) {
+    return null;
+  }
+
+  const parsedBand = Number(band);
+
+  if (!Number.isFinite(parsedBand) || parsedBand < 0 || parsedBand > 9) {
     return null;
   }
 
   return parsedBand;
+}
+
+function normalizeDisplayName(displayName) {
+  if (typeof displayName !== 'string') {
+    return null;
+  }
+
+  const trimmedName = displayName.trim();
+
+  if (trimmedName.length === 0 || trimmedName.length > MAX_DISPLAY_NAME_LENGTH) {
+    return null;
+  }
+
+  return trimmedName;
+}
+
+function validateMatchRequest(data) {
+  if (!data || typeof data !== 'object') {
+    return { error: 'Thông tin tìm đối tác không hợp lệ' };
+  }
+
+  const displayName = normalizeDisplayName(data.displayName);
+  if (!displayName) {
+    return { error: 'Tên hiển thị không hợp lệ' };
+  }
+
+  const band = parseBand(data.band);
+  if (band === null) {
+    return { error: 'Band hiện tại phải là số từ 0 đến 9' };
+  }
+
+  return { displayName, band };
+}
+
+function isValidSignal(data) {
+  return (
+    data &&
+    typeof data === 'object' &&
+    SIGNAL_TYPES.has(data.type) &&
+    Object.prototype.hasOwnProperty.call(data, 'payload')
+  );
 }
 
 function getBandDifference(userA, userB) {
@@ -111,14 +162,20 @@ function emitMatched(io, userA, userB, roomId, session) {
   });
 }
 
-async function handleFindMatch(io, socket, { displayName, band }) {
+async function handleFindMatch(io, socket, data) {
   if (userRoom.has(socket.id)) return;
   if (waitingQueue.some((user) => user.socketId === socket.id)) return;
 
+  const matchRequest = validateMatchRequest(data);
+  if (matchRequest.error) {
+    socket.emit('match_error', { error: matchRequest.error });
+    return;
+  }
+
   const user = {
     socketId: socket.id,
-    displayName,
-    band: parseBand(band),
+    displayName: matchRequest.displayName,
+    band: matchRequest.band,
     joinedAt: Date.now(),
   };
 
@@ -145,7 +202,7 @@ async function handleFindMatch(io, socket, { displayName, band }) {
   }
 
   waitingQueue.push(user);
-  console.log(`[Queue] +${displayName} (${user.band}) | size: ${waitingQueue.length}`);
+  console.log(`[Queue] +${user.displayName} (${user.band}) | size: ${waitingQueue.length}`);
   socket.emit('waiting');
 }
 
@@ -155,6 +212,11 @@ function handleCancelFindMatch(socket) {
 }
 
 function handleSignal(io, socket, data) {
+  if (!isValidSignal(data)) {
+    console.warn(`[Signal] Invalid signal from ${socket.id}`);
+    return;
+  }
+
   const roomId = userRoom.get(socket.id);
   if (!roomId) return;
 
