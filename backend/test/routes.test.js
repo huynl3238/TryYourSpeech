@@ -64,3 +64,22 @@ test('peer notes endpoint rejects malformed notes before database access', async
     server.close();
   }
 });
+
+test('result retry endpoint rejects malformed identifiers before database access', async () => {
+  const server = await listen(app);
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    const response = await fetch(`${baseUrl}/api/results/bad/retry`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ userId: 'bad', turnId: 'bad' }),
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 400);
+    assert.equal(body.error, 'sessionId is invalid');
+  } finally {
+    server.close();
+  }
+});

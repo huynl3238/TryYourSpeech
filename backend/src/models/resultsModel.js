@@ -1,4 +1,9 @@
 import pool from '../config/db.js';
+import { prepareAiPipeline } from './aiPipelineModel.js';
+import {
+  getSessionStatus,
+  markSessionCompletedIfAllResultsTerminal,
+} from './sessionLifecycleModel.js';
 
 function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
@@ -51,6 +56,10 @@ async function getSession(client, sessionId) {
 
 function isUserInSession(session, userId) {
   return session.user_a_id === userId || session.user_b_id === userId;
+}
+
+function canRetryResults(session) {
+  return session.status === 'processing' || session.status === 'completed';
 }
 
 async function getTurnResults(client, sessionId, userId) {
@@ -138,6 +147,124 @@ export async function getResultsForUser({ sessionId, userId }) {
       status: session.status,
       turnResults,
     };
+  } finally {
+    client.release();
+  }
+}
+
+async function getRetryableTurnIds(client, { sessionId, userId, turnId }) {
+  const params = [sessionId, userId];
+  const turnFilter = turnId ? 'AND tr.id = $3' : '';
+
+  if (turnId) {
+    params.push(turnId);
+  }
+
+  const result = await client.query(
+    `
+      SELECT tr.id
+      FROM turns tr
+      JOIN ai_results ar ON ar.turn_id = tr.id
+      WHERE tr.session_id = $1
+        AND tr.speaker_id = $2
+        AND ar.status = 'failed'
+        ${turnFilter}
+      ORDER BY tr.turn_index
+    `,
+    params
+  );
+
+  return result.rows.map((row) => row.id);
+}
+
+async function resetAiResultForRetry(client, turnId) {
+  await client.query(
+    `
+      UPDATE ai_results
+      SET status = 'processing',
+          whisper_transcript = NULL,
+          fluency_score = NULL,
+          lexical_score = NULL,
+          grammar_score = NULL,
+          pronunciation_score = NULL,
+          pronunciation_detail = NULL,
+          gemini_feedback = NULL,
+          error_message = NULL,
+          updated_at = NOW()
+      WHERE turn_id = $1
+        AND status = 'failed'
+    `,
+    [turnId]
+  );
+}
+
+async function markSessionProcessingForRetry(client, sessionId) {
+  await client.query(
+    `
+      UPDATE sessions
+      SET status = 'processing',
+          ended_at = NULL
+      WHERE id = $1
+        AND status IN ('processing', 'completed')
+    `,
+    [sessionId]
+  );
+}
+
+export async function retryFailedResults({ sessionId, userId, turnId }) {
+  if (!isNonEmptyString(sessionId)) {
+    throw new Error('sessionId is required');
+  }
+
+  if (!isNonEmptyString(userId)) {
+    throw new Error('userId is required');
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const session = await getSession(client, sessionId);
+    if (!session) {
+      throw new Error('Session not found');
+    }
+
+    if (!isUserInSession(session, userId)) {
+      throw new Error('User is not in this session');
+    }
+
+    if (!canRetryResults(session)) {
+      throw new Error('Session is not available for result retry');
+    }
+
+    const turnIds = await getRetryableTurnIds(client, { sessionId, userId, turnId });
+    if (turnIds.length === 0) {
+      throw new Error('No failed AI results to retry');
+    }
+
+    await markSessionProcessingForRetry(client, sessionId);
+
+    for (const retryTurnId of turnIds) {
+      await resetAiResultForRetry(client, retryTurnId);
+    }
+
+    const pipeline = await prepareAiPipeline(client, sessionId);
+    const completedStatus = await markSessionCompletedIfAllResultsTerminal(client, sessionId);
+    const sessionStatus = completedStatus || await getSessionStatus(client, sessionId);
+
+    await client.query('COMMIT');
+
+    return {
+      sessionId,
+      userId,
+      retried: turnIds.length,
+      aiStatus: pipeline.status || sessionStatus,
+      sessionStatus,
+    };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
   } finally {
     client.release();
   }

@@ -8,7 +8,7 @@ import { saveAudioUpload, validateAudioUpload } from '../models/audioModel.js';
 import { checkDbConnection } from '../config/db.js';
 import { checkRedisConnection } from '../config/redis.js';
 import { completeReview, savePeerNotesBatch } from '../models/reviewModel.js';
-import { getResultsForUser } from '../models/resultsModel.js';
+import { getResultsForUser, retryFailedResults } from '../models/resultsModel.js';
 import { getSessionDetail } from '../models/sessionModel.js';
 import { convertWebmToWav } from '../services/audioConversion.js';
 
@@ -252,6 +252,29 @@ router.get('/results/:sessionId', async (req, res) => {
     res.json(results);
   } catch (err) {
     console.warn('Failed to get results:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.post('/results/:sessionId/retry', async (req, res) => {
+  try {
+    requireUuid(req.params.sessionId, 'sessionId');
+    requireRequestObject(req.body);
+    requireUuid(req.body.userId, 'userId');
+
+    if (req.body.turnId !== undefined) {
+      requireUuid(req.body.turnId, 'turnId');
+    }
+
+    const result = await retryFailedResults({
+      sessionId: req.params.sessionId,
+      userId: req.body.userId,
+      turnId: req.body.turnId,
+    });
+
+    res.json(result);
+  } catch (err) {
+    console.warn('Failed to retry results:', err.message);
     res.status(400).json({ error: err.message });
   }
 });
