@@ -10,6 +10,7 @@ import { checkRedisConnection } from '../config/redis.js';
 import { completeReview, savePeerNotesBatch } from '../models/reviewModel.js';
 import { getResultsForUser } from '../models/resultsModel.js';
 import { getSessionDetail } from '../models/sessionModel.js';
+import { convertWebmToWav } from '../services/audioConversion.js';
 
 const router = Router();
 const uploadsDirectory = fileURLToPath(new URL('../../uploads', import.meta.url));
@@ -187,6 +188,7 @@ router.get('/results/:sessionId', async (req, res) => {
 
 router.post('/audio/upload', uploadSingleAudio, async (req, res) => {
   let finalPath = null;
+  let wavPath = null;
   let replacement = null;
 
   try {
@@ -212,7 +214,9 @@ router.post('/audio/upload', uploadSingleAudio, async (req, res) => {
     await mkdir(audioDirectory, { recursive: true });
 
     finalPath = join(audioDirectory, `${turnId}.webm`);
+    wavPath = join(tempDirectory, `${turnId}-${randomUUID()}.wav`);
     replacement = await replaceUploadedFile(req.file.path, finalPath);
+    await convertWebmToWav(finalPath, wavPath);
 
     const result = await saveAudioUpload({
       sessionId,
@@ -227,9 +231,12 @@ router.post('/audio/upload', uploadSingleAudio, async (req, res) => {
     res.json(result);
   } catch (err) {
     await deleteFileIfExists(req.file?.path);
+    await deleteFileIfExists(wavPath);
     await restorePreviousFile(finalPath, replacement);
     console.warn('Failed to upload audio:', err.message);
     res.status(400).json({ error: err.message });
+  } finally {
+    await deleteFileIfExists(wavPath);
   }
 });
 
