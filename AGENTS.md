@@ -238,6 +238,7 @@ Nếu tính năng đã nằm trong MVP và cách làm đã được quy định 
 |---|---|---|
 | `waiting` | — | Đang chờ đối tác |
 | `matched` | `{ roomId, sessionId, userId, partnerId, role, isInitiator, partnerName }` | Đã ghép cặp |
+| `match_error` | `{ error }` | Không thể ghép cặp/tạo session |
 | `signal` | `{ type, payload }` | Relay từ đối tác |
 | `session_start` | `{ timestamp }` | Cả hai ready, bắt đầu session |
 | `partner_disconnected` | — | Đối tác mất kết nối |

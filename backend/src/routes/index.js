@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { checkDbConnection } from '../config/db.js';
 import { checkRedisConnection } from '../config/redis.js';
+import { getSessionDetail } from '../models/sessionModel.js';
 
 const router = Router();
 
@@ -45,6 +46,22 @@ router.get('/health', async (_req, res) => {
       redis,
     },
   });
+});
+
+router.get('/sessions/:sessionId', async (req, res) => {
+  try {
+    const sessionDetail = await getSessionDetail(req.params.sessionId);
+
+    if (!sessionDetail) {
+      res.status(404).json({ error: 'Không tìm thấy phiên luyện tập' });
+      return;
+    }
+
+    res.json(sessionDetail);
+  } catch (err) {
+    console.error('Failed to get session detail:', err.message);
+    res.status(500).json({ error: 'Không thể tải phiên luyện tập' });
+  }
 });
 
 export default router;

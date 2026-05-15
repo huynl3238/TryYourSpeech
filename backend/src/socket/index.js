@@ -1,9 +1,14 @@
 import { randomUUID } from 'crypto';
+import {
+  createMatchedSession,
+  markSessionAbandoned,
+  markSessionActive,
+} from '../models/sessionModel.js';
 
 const MAX_BAND_DIFFERENCE = 1.0;
 
 const waitingQueue = [];    // [{ socketId, displayName, band, joinedAt }]
-const rooms = new Map();    // roomId -> { userA, userB, readyUsers: Set }
+const rooms = new Map();    // roomId -> { userA, userB, readyUsers: Set, sessionId }
 const userRoom = new Map(); // socketId -> roomId
 
 function removeFromQueue(socketId) {
@@ -69,12 +74,10 @@ function getPartnerSocketId(roomId, mySocketId) {
     : room.userA.socketId;
 }
 
-function createRoom(userA, userB) {
-  const roomId = randomUUID();
-  rooms.set(roomId, { userA, userB, readyUsers: new Set() });
+function createRoom(roomId, userA, userB, sessionId) {
+  rooms.set(roomId, { userA, userB, readyUsers: new Set(), sessionId });
   userRoom.set(userA.socketId, roomId);
   userRoom.set(userB.socketId, roomId);
-  return roomId;
 }
 
 function deleteRoom(roomId) {
@@ -86,21 +89,29 @@ function deleteRoom(roomId) {
   rooms.delete(roomId);
 }
 
-function emitMatched(io, userA, userB, roomId) {
+function emitMatched(io, userA, userB, roomId, session) {
   io.to(userA.socketId).emit('matched', {
     roomId,
+    sessionId: session.sessionId,
+    userId: session.userA.id,
+    partnerId: session.userB.id,
+    role: 'A',
     isInitiator: true,
     partnerName: userB.displayName,
   });
 
   io.to(userB.socketId).emit('matched', {
     roomId,
+    sessionId: session.sessionId,
+    userId: session.userB.id,
+    partnerId: session.userA.id,
+    role: 'B',
     isInitiator: false,
     partnerName: userA.displayName,
   });
 }
 
-function handleFindMatch(io, socket, { displayName, band }) {
+async function handleFindMatch(io, socket, { displayName, band }) {
   if (userRoom.has(socket.id)) return;
   if (waitingQueue.some((user) => user.socketId === socket.id)) return;
 
@@ -115,12 +126,21 @@ function handleFindMatch(io, socket, { displayName, band }) {
 
   if (matchedUser) {
     removeFromQueue(matchedUser.socketId);
-    const roomId = createRoom(matchedUser, user);
-    emitMatched(io, matchedUser, user, roomId);
 
-    console.log(
-      `[Match] ${matchedUser.displayName} (${matchedUser.band}) matched with ${user.displayName} (${user.band}) | room: ${roomId}`
-    );
+    try {
+      const roomId = randomUUID();
+      const session = await createMatchedSession(roomId, matchedUser, user);
+      createRoom(roomId, matchedUser, user, session.sessionId);
+      emitMatched(io, matchedUser, user, roomId, session);
+
+      console.log(
+        `[Match] ${matchedUser.displayName} (${matchedUser.band}) matched with ${user.displayName} (${user.band}) | room: ${roomId}`
+      );
+    } catch (err) {
+      waitingQueue.unshift(matchedUser);
+      console.error('Failed to create matched session:', err.message);
+      socket.emit('match_error', { error: err.message });
+    }
     return;
   }
 
@@ -142,7 +162,7 @@ function handleSignal(io, socket, data) {
   if (partnerSocketId) io.to(partnerSocketId).emit('signal', data);
 }
 
-function handlePeerConnected(io, socket) {
+async function handlePeerConnected(io, socket) {
   const roomId = userRoom.get(socket.id);
   if (!roomId) return;
 
@@ -151,13 +171,14 @@ function handlePeerConnected(io, socket) {
 
   if (room.readyUsers.size === 2) {
     const timestamp = Date.now();
+    await markSessionActive(room.sessionId);
     io.to(room.userA.socketId).emit('session_start', { timestamp });
     io.to(room.userB.socketId).emit('session_start', { timestamp });
     console.log(`[Session] Room ${roomId} started at ${timestamp}`);
   }
 }
 
-function handleDisconnect(io, socket) {
+async function handleDisconnect(io, socket) {
   console.log(`[Socket] Disconnected: ${socket.id}`);
   removeFromQueue(socket.id);
 
@@ -167,6 +188,11 @@ function handleDisconnect(io, socket) {
   const partnerSocketId = getPartnerSocketId(roomId, socket.id);
   if (partnerSocketId) io.to(partnerSocketId).emit('partner_disconnected');
 
+  const room = rooms.get(roomId);
+  if (room?.sessionId) {
+    await markSessionAbandoned(room.sessionId);
+  }
+
   deleteRoom(roomId);
 }
 
@@ -174,10 +200,23 @@ export function setupSocket(io) {
   io.on('connection', (socket) => {
     console.log(`[Socket] Connected: ${socket.id}`);
 
-    socket.on('find_match', (data) => handleFindMatch(io, socket, data));
+    socket.on('find_match', (data) => {
+      handleFindMatch(io, socket, data).catch((err) => {
+        console.error('find_match failed:', err.message);
+        socket.emit('match_error', { error: 'Không thể tìm đối tác lúc này' });
+      });
+    });
     socket.on('cancel_find_match', () => handleCancelFindMatch(socket));
     socket.on('signal', (data) => handleSignal(io, socket, data));
-    socket.on('peer_connected', () => handlePeerConnected(io, socket));
-    socket.on('disconnect', () => handleDisconnect(io, socket));
+    socket.on('peer_connected', () => {
+      handlePeerConnected(io, socket).catch((err) => {
+        console.error('peer_connected failed:', err.message);
+      });
+    });
+    socket.on('disconnect', () => {
+      handleDisconnect(io, socket).catch((err) => {
+        console.error('disconnect handling failed:', err.message);
+      });
+    });
   });
 }
