@@ -10,6 +10,16 @@ function getMissingAiConfigNames() {
   return REQUIRED_AI_CONFIG.filter((name) => !process.env[name]);
 }
 
+export function getAiConfigStatus() {
+  const missing = getMissingAiConfigNames();
+
+  return {
+    ok: missing.length === 0,
+    configured: REQUIRED_AI_CONFIG.filter((name) => !missing.includes(name)),
+    missing,
+  };
+}
+
 function getMissingConfigError(missingConfigNames) {
   return `AI services are not configured. Missing: ${missingConfigNames.join(', ')}`;
 }

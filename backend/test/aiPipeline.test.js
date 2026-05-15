@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { prepareAiPipeline } from '../src/models/aiPipelineModel.js';
+import {
+  getAiConfigStatus,
+  prepareAiPipeline,
+} from '../src/models/aiPipelineModel.js';
 
 const AI_ENV_NAMES = [
   'OPENAI_API_KEY',
@@ -54,6 +57,24 @@ test('prepareAiPipeline marks every processing turn failed when AI config is mis
   assert.equal(result.processedTurns, 2);
   assert.equal(updates.length, 2);
   assert.match(updates[0].params[1], /OPENAI_API_KEY/);
+});
+
+test('getAiConfigStatus reports missing names without exposing values', () => {
+  clearAiEnv();
+  process.env.OPENAI_API_KEY = 'secret-value';
+
+  const status = getAiConfigStatus();
+
+  assert.equal(status.ok, false);
+  assert.deepEqual(status.configured, ['OPENAI_API_KEY']);
+  assert.deepEqual(status.missing, [
+    'AZURE_SPEECH_KEY',
+    'AZURE_SPEECH_REGION',
+    'GEMINI_API_KEY',
+  ]);
+  assert.equal(JSON.stringify(status).includes('secret-value'), false);
+
+  clearAiEnv();
 });
 
 test('prepareAiPipeline runs turn scaffold and stores placeholder failure', async () => {
