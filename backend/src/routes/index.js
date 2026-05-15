@@ -1,10 +1,110 @@
 import { Router } from 'express';
+import { mkdir, rename, rm } from 'fs/promises';
+import { join } from 'path';
+import { fileURLToPath } from 'url';
+import multer from 'multer';
+import { randomUUID } from 'crypto';
+import { saveAudioUpload, validateAudioUpload } from '../models/audioModel.js';
 import { checkDbConnection } from '../config/db.js';
 import { checkRedisConnection } from '../config/redis.js';
 import { completeReview, savePeerNotesBatch } from '../models/reviewModel.js';
 import { getSessionDetail } from '../models/sessionModel.js';
 
 const router = Router();
+const uploadsDirectory = fileURLToPath(new URL('../../uploads', import.meta.url));
+const tempDirectory = join(uploadsDirectory, 'tmp');
+const audioDirectory = join(uploadsDirectory, 'audio');
+const maxAudioFileSize = 25 * 1024 * 1024;
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const upload = multer({
+  dest: tempDirectory,
+  limits: {
+    fileSize: maxAudioFileSize,
+    files: 1,
+  },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype !== 'audio/webm') {
+      cb(new Error('audio must be an audio/webm file'));
+      return;
+    }
+
+    cb(null, true);
+  },
+});
+
+function uploadSingleAudio(req, res, next) {
+  upload.single('audio')(req, res, (err) => {
+    if (!err) {
+      next();
+      return;
+    }
+
+    const message = err.code === 'LIMIT_FILE_SIZE'
+      ? 'audio file must be 25MB or smaller'
+      : err.message;
+    res.status(400).json({ error: message });
+  });
+}
+
+function parsePositiveInteger(value) {
+  const number = Number(value);
+
+  if (!Number.isInteger(number) || number <= 0) {
+    return null;
+  }
+
+  return number;
+}
+
+function isValidUuid(value) {
+  return typeof value === 'string' && uuidPattern.test(value);
+}
+
+async function deleteFileIfExists(filePath) {
+  if (!filePath) {
+    return;
+  }
+
+  await rm(filePath, { force: true });
+}
+
+async function replaceUploadedFile(sourcePath, destinationPath) {
+  const backupPath = `${destinationPath}.${randomUUID()}.bak`;
+  let hasBackup = false;
+
+  try {
+    await rename(destinationPath, backupPath);
+    hasBackup = true;
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      throw err;
+    }
+  }
+
+  try {
+    await rename(sourcePath, destinationPath);
+    return { backupPath, hasBackup };
+  } catch (err) {
+    if (hasBackup) {
+      await rename(backupPath, destinationPath);
+    }
+
+    throw err;
+  }
+}
+
+async function restorePreviousFile(destinationPath, replacement) {
+  if (!replacement) {
+    return;
+  }
+
+  await rm(destinationPath, { force: true });
+
+  if (replacement.hasBackup) {
+    await rename(replacement.backupPath, destinationPath);
+  }
+}
 
 function getIceServers() {
   try {
@@ -62,6 +162,54 @@ router.get('/sessions/:sessionId', async (req, res) => {
   } catch (err) {
     console.error('Failed to get session detail:', err.message);
     res.status(500).json({ error: 'Không thể tải phiên luyện tập' });
+  }
+});
+
+router.post('/audio/upload', uploadSingleAudio, async (req, res) => {
+  let finalPath = null;
+  let replacement = null;
+
+  try {
+    if (!req.file) {
+      throw new Error('audio is required');
+    }
+
+    const { turnId, sessionId, speakerId, questionId } = req.body;
+    const durationMs = parsePositiveInteger(req.body.durationMs);
+
+    if (!isValidUuid(turnId)) {
+      throw new Error('turnId is invalid');
+    }
+
+    await validateAudioUpload({
+      sessionId,
+      turnId,
+      speakerId,
+      questionId,
+      durationMs,
+    });
+
+    await mkdir(audioDirectory, { recursive: true });
+
+    finalPath = join(audioDirectory, `${turnId}.webm`);
+    replacement = await replaceUploadedFile(req.file.path, finalPath);
+
+    const result = await saveAudioUpload({
+      sessionId,
+      turnId,
+      speakerId,
+      questionId,
+      durationMs,
+      audioUrl: `/uploads/audio/${turnId}.webm`,
+    });
+
+    await deleteFileIfExists(replacement.backupPath);
+    res.json(result);
+  } catch (err) {
+    await deleteFileIfExists(req.file?.path);
+    await restorePreviousFile(finalPath, replacement);
+    console.warn('Failed to upload audio:', err.message);
+    res.status(400).json({ error: err.message });
   }
 });
 
