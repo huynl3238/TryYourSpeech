@@ -1,2 +1,6 @@
 node_modules/
 .env
+uploads/audio/*
+uploads/tmp/*
+!uploads/audio/.gitkeep
+!uploads/tmp/.gitkeep
