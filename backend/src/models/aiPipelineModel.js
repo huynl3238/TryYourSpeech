@@ -4,6 +4,7 @@ const REQUIRED_AI_CONFIG = [
   'AZURE_SPEECH_REGION',
   'GEMINI_API_KEY',
 ];
+const AI_WORKER_NOT_IMPLEMENTED_ERROR = 'AI worker is not implemented yet';
 
 function getMissingAiConfigNames() {
   return REQUIRED_AI_CONFIG.filter((name) => !process.env[name]);
@@ -51,19 +52,32 @@ async function markSessionCompletedIfAllResultsTerminal(client, sessionId) {
   );
 }
 
-async function failSessionBecauseAiConfigMissing(client, sessionId, missingConfigNames) {
-  const errorMessage = getMissingConfigError(missingConfigNames);
-
+async function failSessionProcessing(client, sessionId, errorMessage) {
   await markProcessingResultsFailed(client, sessionId, errorMessage);
   await markSessionCompletedIfAllResultsTerminal(client, sessionId);
-
-  console.warn(`${errorMessage}. Session ${sessionId} was completed with failed AI results.`);
 
   return {
     started: false,
     status: 'failed',
     reason: errorMessage,
   };
+}
+
+async function failSessionBecauseAiConfigMissing(client, sessionId, missingConfigNames) {
+  const errorMessage = getMissingConfigError(missingConfigNames);
+  const result = await failSessionProcessing(client, sessionId, errorMessage);
+
+  console.warn(`${errorMessage}. Session ${sessionId} was completed with failed AI results.`);
+
+  return result;
+}
+
+async function failSessionBecauseWorkerIsMissing(client, sessionId) {
+  const result = await failSessionProcessing(client, sessionId, AI_WORKER_NOT_IMPLEMENTED_ERROR);
+
+  console.warn(`Session ${sessionId} was completed because the AI worker is not implemented yet.`);
+
+  return result;
 }
 
 export async function prepareAiPipeline(client, sessionId) {
@@ -73,6 +87,5 @@ export async function prepareAiPipeline(client, sessionId) {
     return failSessionBecauseAiConfigMissing(client, sessionId, missingConfigNames);
   }
 
-  console.log(`AI pipeline is ready for session ${sessionId}`);
-  return { started: false, status: 'processing', reason: 'AI worker is not implemented yet' };
+  return failSessionBecauseWorkerIsMissing(client, sessionId);
 }
