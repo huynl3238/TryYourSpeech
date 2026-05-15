@@ -63,6 +63,29 @@ function isValidUuid(value) {
   return typeof value === 'string' && uuidPattern.test(value);
 }
 
+function requireUuid(value, fieldName) {
+  if (!isValidUuid(value)) {
+    throw new Error(`${fieldName} is invalid`);
+  }
+}
+
+function validatePeerNotesPayload({ sessionId, listenerId, notes }) {
+  requireUuid(sessionId, 'sessionId');
+  requireUuid(listenerId, 'listenerId');
+
+  if (!Array.isArray(notes)) {
+    throw new Error('notes must be an array');
+  }
+
+  for (const note of notes) {
+    if (!note || typeof note !== 'object') {
+      throw new Error('note is invalid');
+    }
+
+    requireUuid(note.turnId, 'note.turnId');
+  }
+}
+
 async function deleteFileIfExists(filePath) {
   if (!filePath) {
     return;
@@ -153,6 +176,8 @@ router.get('/health', async (_req, res) => {
 
 router.get('/sessions/:sessionId', async (req, res) => {
   try {
+    requireUuid(req.params.sessionId, 'sessionId');
+
     const sessionDetail = await getSessionDetail(req.params.sessionId);
 
     if (!sessionDetail) {
@@ -162,13 +187,21 @@ router.get('/sessions/:sessionId', async (req, res) => {
 
     res.json(sessionDetail);
   } catch (err) {
-    console.error('Failed to get session detail:', err.message);
+    console.warn('Failed to get session detail:', err.message);
+    if (err.message.endsWith('is invalid')) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+
     res.status(500).json({ error: 'Không thể tải phiên luyện tập' });
   }
 });
 
 router.get('/results/:sessionId', async (req, res) => {
   try {
+    requireUuid(req.params.sessionId, 'sessionId');
+    requireUuid(req.query.userId, 'userId');
+
     const results = await getResultsForUser({
       sessionId: req.params.sessionId,
       userId: req.query.userId,
@@ -199,9 +232,10 @@ router.post('/audio/upload', uploadSingleAudio, async (req, res) => {
     const { turnId, sessionId, speakerId, questionId } = req.body;
     const durationMs = parsePositiveInteger(req.body.durationMs);
 
-    if (!isValidUuid(turnId)) {
-      throw new Error('turnId is invalid');
-    }
+    requireUuid(turnId, 'turnId');
+    requireUuid(sessionId, 'sessionId');
+    requireUuid(speakerId, 'speakerId');
+    requireUuid(questionId, 'questionId');
 
     await validateAudioUpload({
       sessionId,
@@ -242,6 +276,8 @@ router.post('/audio/upload', uploadSingleAudio, async (req, res) => {
 
 router.post('/peer-notes/batch', async (req, res) => {
   try {
+    validatePeerNotesPayload(req.body);
+
     const result = await savePeerNotesBatch(req.body);
     res.json(result);
   } catch (err) {
@@ -252,6 +288,9 @@ router.post('/peer-notes/batch', async (req, res) => {
 
 router.post('/review/complete', async (req, res) => {
   try {
+    requireUuid(req.body.sessionId, 'sessionId');
+    requireUuid(req.body.userId, 'userId');
+
     const result = await completeReview(req.body);
     res.json(result);
   } catch (err) {
