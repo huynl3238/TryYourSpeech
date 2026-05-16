@@ -1,3 +1,5 @@
+import { scoreSpeakingTurn } from '../services/ieltsRubricScoring.js';
+
 const REQUIRED_AI_CONFIG = [
   'OPENAI_API_KEY',
   'AZURE_SPEECH_KEY',
@@ -141,22 +143,65 @@ const transcribeTurnAudio = createPendingStep('Transcription');
 const assessPronunciation = createPendingStep('Pronunciation assessment');
 const generateSpeakingFeedback = createPendingStep('Speaking feedback');
 
+function getFeedbackScoringMetrics(feedback) {
+  return feedback?.scoringMetrics || feedback?.metrics || null;
+}
+
+function getRubricResult(turn, feedback) {
+  const metrics = getFeedbackScoringMetrics(feedback);
+  if (!metrics) {
+    return null;
+  }
+
+  return scoreSpeakingTurn({
+    partNumber: turn.part_number,
+    metrics,
+  });
+}
+
+function getScoresFromRubric(rubricResult) {
+  if (!rubricResult?.ok) {
+    return null;
+  }
+
+  return rubricResult.scores;
+}
+
+function buildGeminiFeedback(feedback, rubricResult) {
+  if (!rubricResult) {
+    return feedback || {};
+  }
+
+  return {
+    ...(feedback || {}),
+    rubric: rubricResult,
+  };
+}
+
 async function runTurnPipeline(_client, turn) {
   const transcript = await transcribeTurnAudio(turn);
   const pronunciationResult = await assessPronunciation(turn, transcript);
   const feedback = await generateSpeakingFeedback(turn, transcript, pronunciationResult);
   const feedbackScores = feedback?.scores || {};
+  const rubricResult = getRubricResult(turn, feedback);
+  const rubricScores = getScoresFromRubric(rubricResult) || {};
 
   return {
     transcript,
     scores: {
-      fluency: feedbackScores.fluency ?? pronunciationResult?.fluencyScore ?? null,
-      lexical: feedbackScores.lexical ?? null,
-      grammar: feedbackScores.grammar ?? null,
-      pronunciation: feedbackScores.pronunciation ?? pronunciationResult?.pronunciationScore ?? null,
+      fluency: rubricScores.fluency
+        ?? feedbackScores.fluency
+        ?? pronunciationResult?.fluencyScore
+        ?? null,
+      lexical: rubricScores.lexical ?? feedbackScores.lexical ?? null,
+      grammar: rubricScores.grammar ?? feedbackScores.grammar ?? null,
+      pronunciation: rubricScores.pronunciation
+        ?? feedbackScores.pronunciation
+        ?? pronunciationResult?.pronunciationScore
+        ?? null,
     },
     pronunciationDetail: pronunciationResult?.detail || [],
-    geminiFeedback: feedback || {},
+    geminiFeedback: buildGeminiFeedback(feedback, rubricResult),
   };
 }
 
