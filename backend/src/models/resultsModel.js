@@ -35,7 +35,7 @@ function mapTurnResult(row) {
     transcript: row.whisper_transcript,
     scores: mapScores(row),
     pronunciationDetail: row.pronunciation_detail || [],
-    geminiFeedback: row.gemini_feedback || {},
+    aiFeedback: row.ai_feedback || {},
     peerNotes: row.peer_notes || [],
     error: row.error_message,
   };
@@ -76,7 +76,7 @@ async function getTurnResults(client, sessionId, userId) {
         ar.grammar_score,
         ar.pronunciation_score,
         ar.pronunciation_detail,
-        ar.gemini_feedback,
+        ar.ai_feedback,
         ar.error_message,
         COALESCE(
           json_agg(
@@ -106,7 +106,7 @@ async function getTurnResults(client, sessionId, userId) {
         ar.grammar_score,
         ar.pronunciation_score,
         ar.pronunciation_detail,
-        ar.gemini_feedback,
+        ar.ai_feedback,
         ar.error_message
       ORDER BY tr.turn_index
     `,
@@ -188,7 +188,7 @@ async function resetAiResultForRetry(client, turnId) {
           grammar_score = NULL,
           pronunciation_score = NULL,
           pronunciation_detail = NULL,
-          gemini_feedback = NULL,
+          ai_feedback = NULL,
           error_message = NULL,
           updated_at = NOW()
       WHERE turn_id = $1

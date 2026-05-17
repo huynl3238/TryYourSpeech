@@ -84,7 +84,7 @@ Nếu user yêu cầu một tính năng trong danh sách này, phải đề xu�
 
 ### AI Services
 
-- OpenAI Whisper API: transcription, dùng làm reference text.
+- OpenAI Audio transcription API: transcription, dùng làm reference text.
 - Azure Cognitive Services Speech SDK: Pronunciation Assessment ở word/phoneme level.
 - OpenAI text model: grammar, vocabulary, fluency/coherence, IELTS band feedback bằng tiếng Việt.
   - Dùng Structured Outputs/JSON schema khi cần kết quả ổn định để backend rubric scoring xử lý.
@@ -101,7 +101,7 @@ Nếu user yêu cầu một tính năng trong danh sách này, phải đề xu�
 
 Các package này chưa chắc đã được cài sẵn trong repo. Khi implement phần tương ứng, kiểm tra `backend/package.json` trước và chỉ cài package thật sự cần dùng:
 
-- `openai` cho Whisper/transcription.
+- `openai` cho transcription.
 - `microsoft-cognitiveservices-speech-sdk` cho Azure Pronunciation Assessment.
 - `openai` cho IELTS feedback bằng text model, dùng cùng API key với transcription nếu phù hợp.
 - `multer` cho multipart upload.
@@ -126,8 +126,11 @@ DB_PASSWORD=postgres
 REDIS_URL=redis://localhost:6379
 
 OPENAI_API_KEY=
+OPENAI_TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe
+OPENAI_FEEDBACK_MODEL=gpt-4.1-mini
 AZURE_SPEECH_KEY=
 AZURE_SPEECH_REGION=
+AZURE_SPEECH_LANGUAGE=en-US
 # Production: JSON array of TURN servers. Local: để trống.
 ICE_SERVERS=[]
 ```

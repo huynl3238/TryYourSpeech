@@ -49,7 +49,9 @@ test('health endpoint reports AI config names without exposing secret values', a
 
     assert.ok(body.services.ai);
     assert.deepEqual(body.services.ai.configured, ['OPENAI_API_KEY']);
-    assert.ok(body.services.ai.missing.includes('GEMINI_API_KEY'));
+    assert.ok(body.services.ai.missing.includes('AZURE_SPEECH_KEY'));
+    assert.ok(body.services.ai.missing.includes('AZURE_SPEECH_REGION'));
+    assert.equal(body.services.ai.provider.feedback, 'openai');
     assert.equal(JSON.stringify(body).includes('secret-value'), false);
   } finally {
     if (originalOpenAiKey === undefined) {

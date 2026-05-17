@@ -86,9 +86,35 @@ CREATE TABLE IF NOT EXISTS ai_results (
   grammar_score DECIMAL(3,1),
   pronunciation_score DECIMAL(3,1),
   pronunciation_detail JSONB,
-  gemini_feedback JSONB,
+  ai_feedback JSONB,
   error_message TEXT,
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW(),
   CHECK (status IN ('processing', 'completed', 'failed'))
 );
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'ai_results'
+      AND column_name = 'gemini_feedback'
+  ) AND NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'ai_results'
+      AND column_name = 'ai_feedback'
+  ) THEN
+    ALTER TABLE ai_results RENAME COLUMN gemini_feedback TO ai_feedback;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'ai_results'
+      AND column_name = 'ai_feedback'
+  ) THEN
+    ALTER TABLE ai_results ADD COLUMN ai_feedback JSONB;
+  END IF;
+END $$;
