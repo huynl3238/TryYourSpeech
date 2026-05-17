@@ -7,7 +7,7 @@
 Hệ thống tích hợp AI **sau phiên luyện** để:
 - Chuyển audio thành transcript bằng OpenAI Whisper.
 - Chấm phát âm chi tiết bằng Azure Pronunciation Assessment.
-- Đánh giá ngữ pháp, từ vựng, fluency và gợi ý cải thiện bằng Gemini.
+- Đánh giá ngữ pháp, từ vựng, fluency, coherence và gợi ý cải thiện bằng OpenAI text model.
 
 **Đối tượng:** Người Việt đang luyện IELTS Speaking.
 **Quy mô hiện tại:** Local development, ưu tiên hoàn thành MVP trước production.
@@ -44,7 +44,7 @@ Chỉ tập trung làm các tính năng sau trước:
     - Audio của đối phương trong mỗi turn để review local.
 11. Sau phiên luyện, mỗi người review audio đối phương tối đa 5 phút và bổ sung note.
 12. Client upload audio của chính mình lên server.
-13. Server xử lý AI pipeline: Whisper → Azure → Gemini.
+13. Server xử lý AI pipeline: OpenAI transcription → Azure Pronunciation Assessment → OpenAI IELTS feedback.
 14. Lưu kết quả và hiển thị màn hình kết quả.
 
 ## Ngoài phạm vi MVP
@@ -86,9 +86,9 @@ Nếu user yêu cầu một tính năng trong danh sách này, phải đề xu�
 
 - OpenAI Whisper API: transcription, dùng làm reference text.
 - Azure Cognitive Services Speech SDK: Pronunciation Assessment ở word/phoneme level.
-- Gemini Flash model hiện hành: grammar, vocabulary, IELTS band feedback bằng tiếng Việt.
-  - Mặc định MVP: `gemini-2.5-flash`.
-  - Trước khi implement hoặc nâng package, kiểm tra docs/lifecycle hiện tại của Gemini để tránh dùng model đã deprecated.
+- OpenAI text model: grammar, vocabulary, fluency/coherence, IELTS band feedback bằng tiếng Việt.
+  - Dùng Structured Outputs/JSON schema khi cần kết quả ổn định để backend rubric scoring xử lý.
+  - Trước khi implement hoặc nâng package/model, kiểm tra docs OpenAI hiện hành để tránh dùng API/model đã deprecated.
 
 ### Local Infrastructure
 
@@ -103,7 +103,7 @@ Các package này chưa chắc đã được cài sẵn trong repo. Khi implemen
 
 - `openai` cho Whisper/transcription.
 - `microsoft-cognitiveservices-speech-sdk` cho Azure Pronunciation Assessment.
-- SDK Gemini hiện hành theo docs chính thức. Nếu dùng `@google/generative-ai`, phải kiểm tra package còn phù hợp với model/API hiện tại.
+- `openai` cho IELTS feedback bằng text model, dùng cùng API key với transcription nếu phù hợp.
 - `multer` cho multipart upload.
 - `fluent-ffmpeg` cho conversion, kèm binary `ffmpeg` có sẵn trong môi trường local.
 
@@ -128,8 +128,6 @@ REDIS_URL=redis://localhost:6379
 OPENAI_API_KEY=
 AZURE_SPEECH_KEY=
 AZURE_SPEECH_REGION=
-GEMINI_API_KEY=
-
 # Production: JSON array of TURN servers. Local: để trống.
 ICE_SERVERS=[]
 ```
@@ -392,7 +390,7 @@ Khi đủ điều kiện, server xử lý mỗi turn độc lập:
 2. Convert sang WAV 16kHz mono bằng `fluent-ffmpeg`.
 3. Gửi WAV cho Whisper để lấy transcript.
 4. Gửi WAV + transcript cho Azure Pronunciation Assessment.
-5. Gửi transcript + Azure scores + câu hỏi + peer notes cho Gemini.
+5. Gửi transcript + Azure scores + câu hỏi + peer notes cho OpenAI text model.
 6. Lưu kết quả.
 7. Trả kết quả cho frontend.
 
@@ -645,7 +643,7 @@ Response tối thiểu:
         "pronunciation": 5.5
       },
       "pronunciationDetail": [],
-      "geminiFeedback": {},
+      "aiFeedback": {},
       "peerNotes": [
         {
           "timestampMs": 12345,
@@ -721,13 +719,18 @@ const sdk = require('microsoft-cognitiveservices-speech-sdk');
 
 Không import trực tiếp bằng `import sdk from 'microsoft-cognitiveservices-speech-sdk'` — sẽ lỗi.
 
-### Gemini
+### OpenAI IELTS Feedback
 
-- Package: dùng SDK Gemini hiện hành theo docs chính thức tại thời điểm implement.
-- Model mặc định MVP: `gemini-2.5-flash`, trừ khi docs hiện hành khuyến nghị model khác.
-- Input: transcript + Azure scores + câu hỏi gốc + peer notes.
-- Output: band score 4 tiêu chí, nhận xét và gợi ý bằng tiếng Việt.
-- Free tier có thể gặp rate limit 429. Trong MVP, chỉ cần xử lý lỗi rõ ràng và trả `{ error: "..." }`. Không làm retry phức tạp trừ khi user yêu cầu.
+- Package: `openai`.
+- Dùng OpenAI text model để đánh giá grammar, vocabulary, fluency/coherence và tạo feedback tiếng Việt.
+- Input: transcript từ OpenAI transcription, Azure pronunciation scores/details, câu hỏi gốc, cue card nếu có, peer notes, part number và duration.
+- Output nên dùng Structured Outputs/JSON schema để trả về ổn định:
+  - band score 4 tiêu chí.
+  - scoring metrics cho backend rubric.
+  - nhận xét và gợi ý bằng tiếng Việt.
+  - lỗi grammar/vocabulary/coherence nổi bật, có ví dụ sửa nếu đủ dữ liệu.
+- Không dùng OpenAI text model để thay thế Azure ở phần phoneme/word-level pronunciation detail.
+- Có thể gặp rate limit hoặc lỗi model. Trong MVP, chỉ cần xử lý lỗi rõ ràng và trả `{ error: "..." }`. Không làm retry phức tạp trừ khi user yêu cầu.
 
 ---
 
@@ -886,7 +889,7 @@ CREATE TABLE ai_results (
   grammar_score        DECIMAL(3,1),
   pronunciation_score  DECIMAL(3,1),
   pronunciation_detail JSONB,         -- word-level từ Azure
-  gemini_feedback      JSONB,         -- nhận xét + gợi ý từ Gemini
+  ai_feedback          JSONB,         -- nhận xét + gợi ý từ OpenAI text model
   error_message        TEXT,
   created_at           TIMESTAMP DEFAULT NOW(),
   updated_at           TIMESTAMP DEFAULT NOW(),
@@ -941,7 +944,7 @@ PostgreSQL không tự cập nhật `updated_at`. MVP không cần trigger riên
 
 ### AI pipeline thất bại một phần
 
-- Nếu Whisper thành công nhưng Azure hoặc Gemini fail, lưu `ai_results.status = 'failed'` kèm `error_message`.
+- Nếu OpenAI transcription thành công nhưng Azure hoặc OpenAI feedback fail, lưu `ai_results.status = 'failed'` kèm `error_message`.
 - Không xóa audio đã upload khi AI fail.
 - Results page hiển thị turn nào đang `processing`, turn nào `failed`, và cho phép retry nếu endpoint retry được implement.
 
@@ -978,7 +981,7 @@ PostgreSQL không tự cập nhật `updated_at`. MVP không cần trigger riên
 - [ ] Frontend: Listener UI + TAB workflow + timeline marker.
 - [ ] Frontend: Review phase + playback seek theo marker.
 - [ ] Backend: Audio upload endpoint + ffmpeg conversion.
-- [ ] Backend: AI pipeline Whisper → Azure → Gemini.
+- [ ] Backend: AI pipeline OpenAI transcription → Azure → OpenAI feedback.
 - [ ] Backend: Lưu session, notes, results vào PostgreSQL.
 - [ ] Frontend: Results page.
 
