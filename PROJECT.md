@@ -58,11 +58,11 @@ Không thay bằng chỉ Azure vì Azure cần reference text để hoạt độ
 
 Với IELTS turn dài 45–120 giây, Azure cần được triển khai bằng continuous pronunciation assessment thay vì chỉ nhận diện một lượt ngắn. Miscue detection có thể bị giới hạn trong continuous mode, nên MVP ưu tiên điểm phát âm/fluency/word detail trước; omission/insertion chi tiết có thể xử lý đơn giản hơn hoặc để sau nếu SDK không hỗ trợ tốt.
 
-### Dùng Gemini cho grammar/vocabulary, không dùng Azure
+### Dùng OpenAI cho grammar/vocabulary, không dùng Azure
 
-Azure Pronunciation Assessment chỉ tốt ở phát âm. Grammar và vocabulary cần LLM hiểu ngữ cảnh câu trả lời và câu hỏi gốc. Gemini Flash đủ tốt, rẻ, và có thể output tiếng Việt.
+Azure Pronunciation Assessment chỉ tốt ở phát âm. Grammar, vocabulary, fluency/coherence và IELTS-style feedback cần LLM hiểu ngữ cảnh câu trả lời, câu hỏi gốc, cue card và peer notes. MVP dùng OpenAI text model để giảm số lượng vendor, dùng chung hệ sinh thái với transcription và dễ ép output theo JSON schema.
 
-Model mặc định cho MVP là `gemini-2.5-flash`, không dùng cố định `gemini-1.5-flash` vì lifecycle model thay đổi theo thời gian. Trước khi implement hoặc nâng cấp SDK, kiểm tra docs Gemini hiện hành và cập nhật model nếu Google đã khuyến nghị model mới hơn.
+Khi implement hoặc nâng cấp model, kiểm tra docs OpenAI hiện hành. Kết quả đánh giá phải ưu tiên Structured Outputs/JSON schema để backend rubric scoring có dữ liệu ổn định, không phụ thuộc vào văn bản tự do.
 
 ### Không dùng TypeScript
 
@@ -114,7 +114,7 @@ Socket chỉ chịu trách nhiệm realtime matchmaking/signaling. Database ch�
 
 Session lifecycle trong MVP được giữ đơn giản: `matched` khi ghép cặp xong, `active` khi hai bên WebRTC ready, `reviewing` khi bắt đầu upload/review sau luyện nói, `processing` khi cả hai hoàn tất review và audio đã upload đủ, `completed` khi AI pipeline kết thúc, `abandoned` khi disconnect trước khi hoàn tất.
 
-Audio của chính user được upload ở background trong review phase. AI không chạy ngay khi upload nếu peer review chưa hoàn tất, vì Gemini cần dùng peer notes làm input.
+Audio của chính user được upload ở background trong review phase. AI không chạy ngay khi upload nếu peer review chưa hoàn tất, vì OpenAI feedback cần dùng peer notes làm input.
 
 ---
 
@@ -140,7 +140,7 @@ Không chỉ hiện điểm số — phải chỉ rõ từ nào sai, phoneme nà
 | Azure SDK lỗi với ESM | Cao | Dùng `createRequire` — xem AGENTS.md |
 | Azure Pronunciation Assessment với turn > 30 giây | Cao | Dùng continuous mode cho turn dài; chấp nhận caveat với miscue trong MVP |
 | Whisper file > 25MB | Trung bình | Ghi audio theo từng turn, kiểm tra size trước khi gửi OpenAI |
-| Gemini rate limit 429 | Thấp (free tier) | Trả lỗi rõ ràng, không retry phức tạp |
+| OpenAI feedback rate limit/model error | Trung bình | Trả lỗi rõ ràng, không retry phức tạp |
 | WebRTC fail khi không có TURN | Trung bình | Local dev dùng STUN, production cần TURN — làm sau MVP |
 | Hai client lệch timer | Cao nếu không xử lý | Dùng `session_start` từ server; peer note timestamp tính theo turn local |
 | Env Docker và backend lệch nhau | Cao | Giữ `.env`, Docker Compose và fallback code cùng port/password |
