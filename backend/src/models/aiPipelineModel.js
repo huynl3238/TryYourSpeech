@@ -1,26 +1,12 @@
 import { scoreSpeakingTurn } from '../services/ieltsRubricScoring.js';
+import {
+  getAiConfigStatus,
+  getMissingAiConfigNames,
+} from '../config/ai.js';
 
-const REQUIRED_AI_CONFIG = [
-  'OPENAI_API_KEY',
-  'AZURE_SPEECH_KEY',
-  'AZURE_SPEECH_REGION',
-  'GEMINI_API_KEY',
-];
 const AI_WORKER_NOT_IMPLEMENTED_ERROR = 'AI worker is not implemented yet';
 
-function getMissingAiConfigNames() {
-  return REQUIRED_AI_CONFIG.filter((name) => !process.env[name]);
-}
-
-export function getAiConfigStatus() {
-  const missing = getMissingAiConfigNames();
-
-  return {
-    ok: missing.length === 0,
-    configured: REQUIRED_AI_CONFIG.filter((name) => !missing.includes(name)),
-    missing,
-  };
-}
+export { getAiConfigStatus };
 
 function getMissingConfigError(missingConfigNames) {
   return `AI services are not configured. Missing: ${missingConfigNames.join(', ')}`;
@@ -114,7 +100,7 @@ async function markTurnResultCompleted(client, turnId, result) {
           grammar_score = $5,
           pronunciation_score = $6,
           pronunciation_detail = $7,
-          gemini_feedback = $8,
+          ai_feedback = $8,
           error_message = NULL,
           updated_at = NOW()
       WHERE turn_id = $1
@@ -128,7 +114,7 @@ async function markTurnResultCompleted(client, turnId, result) {
       result.scores.grammar,
       result.scores.pronunciation,
       JSON.stringify(result.pronunciationDetail),
-      JSON.stringify(result.geminiFeedback),
+      JSON.stringify(result.aiFeedback),
     ]
   );
 }
@@ -167,7 +153,7 @@ function getScoresFromRubric(rubricResult) {
   return rubricResult.scores;
 }
 
-function buildGeminiFeedback(feedback, rubricResult) {
+function buildAiFeedback(feedback, rubricResult) {
   if (!rubricResult) {
     return feedback || {};
   }
@@ -201,7 +187,7 @@ async function runTurnPipeline(_client, turn) {
         ?? null,
     },
     pronunciationDetail: pronunciationResult?.detail || [],
-    geminiFeedback: buildGeminiFeedback(feedback, rubricResult),
+    aiFeedback: buildAiFeedback(feedback, rubricResult),
   };
 }
 

@@ -9,7 +9,6 @@ const AI_ENV_NAMES = [
   'OPENAI_API_KEY',
   'AZURE_SPEECH_KEY',
   'AZURE_SPEECH_REGION',
-  'GEMINI_API_KEY',
 ];
 
 function clearAiEnv() {
@@ -70,8 +69,10 @@ test('getAiConfigStatus reports missing names without exposing values', () => {
   assert.deepEqual(status.missing, [
     'AZURE_SPEECH_KEY',
     'AZURE_SPEECH_REGION',
-    'GEMINI_API_KEY',
   ]);
+  assert.equal(status.provider.transcription, 'openai');
+  assert.equal(status.provider.pronunciation, 'azure');
+  assert.equal(status.provider.feedback, 'openai');
   assert.equal(JSON.stringify(status).includes('secret-value'), false);
 
   clearAiEnv();

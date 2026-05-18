@@ -7,7 +7,6 @@ test('retryFailedResults resets failed turns and reruns AI scaffold', async () =
   delete process.env.OPENAI_API_KEY;
   delete process.env.AZURE_SPEECH_KEY;
   delete process.env.AZURE_SPEECH_REGION;
-  delete process.env.GEMINI_API_KEY;
 
   const originalConnect = pool.connect;
   const calls = [];

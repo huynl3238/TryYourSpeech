@@ -54,7 +54,6 @@ test('maybeStartSessionProcessing creates AI results, fails scaffold, and comple
   delete process.env.OPENAI_API_KEY;
   delete process.env.AZURE_SPEECH_KEY;
   delete process.env.AZURE_SPEECH_REGION;
-  delete process.env.GEMINI_API_KEY;
 
   let completionAttempts = 0;
   const client = createClient((sql) => {
