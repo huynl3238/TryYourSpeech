@@ -1,4 +1,5 @@
 import { scoreSpeakingTurn } from '../services/ieltsRubricScoring.js';
+import { assessAzurePronunciation } from '../services/azurePronunciationAssessment.js';
 import {
   getAiConfigStatus,
   getMissingAiConfigNames,
@@ -126,8 +127,15 @@ function createPendingStep(name) {
 }
 
 const transcribeTurnAudio = createPendingStep('Transcription');
-const assessPronunciation = createPendingStep('Pronunciation assessment');
 const generateSpeakingFeedback = createPendingStep('Speaking feedback');
+
+async function assessPronunciation(turn, transcript) {
+  return await assessAzurePronunciation({
+    audioUrl: turn.audio_url,
+    durationMs: turn.duration_ms,
+    referenceText: transcript,
+  });
+}
 
 function getFeedbackScoringMetrics(feedback) {
   return feedback?.scoringMetrics || feedback?.metrics || null;
