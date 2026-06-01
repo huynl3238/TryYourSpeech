@@ -1,23 +1,67 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Timer } from '../ui/Timer';
 import { useSession } from '../../context/SessionContext';
+import { QuestionSupportPanel } from './QuestionSupportPanel';
+import { SessionCallControls } from './SessionCallControls';
 
-const ERROR_TYPES = [
-  { key: 'pronunciation', label: 'Phát âm', icon: 'record_voice_over', shortcut: '1' },
-  { key: 'grammar',       label: 'Ngữ pháp', icon: 'spellcheck',        shortcut: '2' },
-  { key: 'vocabulary',    label: 'Từ vựng',  icon: 'menu_book',          shortcut: '3' },
-  { key: 'fluency',       label: 'Trôi chảy', icon: 'speed',             shortcut: '4' },
+const MARKER_GROUPS = [
+  {
+    title: 'Cần chú ý',
+    helper: 'Đánh dấu những điểm có thể làm giảm band.',
+    items: [
+      { key: 'grammar_error', label: 'Grammar error', description: 'Sai thì, mạo từ, verb form, clause', icon: 'spellcheck', shortcut: '1', tone: 'issue' },
+      { key: 'collocation_issue', label: 'Collocation / word choice', description: 'Dùng từ chưa tự nhiên hoặc sai cụm', icon: 'menu_book', shortcut: '2', tone: 'issue' },
+      { key: 'pause_filler', label: 'Pause / filler', description: 'Ngập ngừng, uh/um, dừng quá lâu', icon: 'more_horiz', shortcut: '3', tone: 'issue' },
+      { key: 'false_start', label: 'False start', description: 'Bắt đầu câu rồi sửa/ngắt lại', icon: 'restart_alt', shortcut: '4', tone: 'issue' },
+      { key: 'pronunciation_issue', label: 'Pronunciation issue', description: 'Từ không rõ, stress/intonation sai', icon: 'record_voice_over', shortcut: '5', tone: 'issue' },
+    ],
+  },
+  {
+    title: 'Điểm tốt',
+    helper: 'Gắn cờ bằng chứng tốt để AI không chỉ đếm lỗi.',
+    items: [
+      { key: 'advanced_vocab', label: 'Advanced vocab', description: 'Từ vựng chủ đề hoặc cụm hay', icon: 'auto_awesome', shortcut: '6', tone: 'positive' },
+      { key: 'good_connector', label: 'Good connector', description: 'Nối ý tốt, mạch nói rõ hơn', icon: 'link', shortcut: '7', tone: 'positive' },
+      { key: 'idea_development', label: 'Strong idea', description: 'Ý phát triển sâu, ví dụ tốt', icon: 'psychology', shortcut: '8', tone: 'positive' },
+    ],
+  },
 ];
+
+const MARKER_TYPES = MARKER_GROUPS.flatMap((group) => group.items);
+
+function getMarkerConfig(errorType) {
+  return MARKER_TYPES.find((item) => item.key === errorType) || {
+    key: errorType,
+    label: errorType,
+    description: '',
+    icon: 'flag',
+    shortcut: '',
+    tone: 'issue',
+  };
+}
+
+function getMarkerLabel(errorType) {
+  return getMarkerConfig(errorType).label;
+}
+
+function getMarkerBadgeClass(errorType) {
+  const config = getMarkerConfig(errorType);
+  if (config.tone === 'positive') return 'badge-success';
+  if (errorType === 'grammar_error' || errorType === 'pause_filler' || errorType === 'false_start') return 'badge-warning';
+  return 'badge-error';
+}
 
 export function ListenerView({
   remoteVideoRef,
   localVideoRef,
   turn,
+  totalTurns,
   turnStartTime,
   onTurnEnd,
+  onEndCall,
 }) {
   const { state, dispatch } = useSession();
-  const [markerState, setMarkerState] = useState(null); // null | 'choosing' | 'noting'
+  const [markerState, setMarkerState] = useState(null);
   const [pendingTimestamp, setPendingTimestamp] = useState(0);
   const [pendingType, setPendingType] = useState(null);
   const [noteText, setNoteText] = useState('');
@@ -28,64 +72,38 @@ export function ListenerView({
 
   const totalMs = turn?.durationMs || 45000;
 
-  // Track elapsed time
   useEffect(() => {
-    const start = turnStartTime || Date.now();
+    setMarkerState(null);
+    setPendingTimestamp(0);
+    setPendingType(null);
+    setNoteText('');
+    setMarkers([]);
+    setElapsed(0);
+    elapsedRef.current = 0;
+  }, [turn?.id]);
+
+  useEffect(() => {
+    const start = turnStartTime || performance.now();
     const id = setInterval(() => {
-      const e = Date.now() - start;
-      setElapsed(e);
-      elapsedRef.current = e;
+      const nextElapsed = performance.now() - start;
+      setElapsed(nextElapsed);
+      elapsedRef.current = nextElapsed;
     }, 200);
+
     return () => clearInterval(id);
   }, [turnStartTime]);
 
-  // TAB key handler
-  useEffect(() => {
-    function handleKeyDown(e) {
-      // TAB → open marker chooser
-      if (e.key === 'Tab' && markerState === null) {
-        e.preventDefault();
-        const ts = elapsedRef.current;
-        setPendingTimestamp(ts);
-        setMarkerState('choosing');
-        return;
-      }
-      // 1-4 → select error type shortcut
-      if (markerState === 'choosing' && ['1','2','3','4'].includes(e.key)) {
-        e.preventDefault();
-        const type = ERROR_TYPES[parseInt(e.key) - 1].key;
-        setPendingType(type);
-        setMarkerState('noting');
-        setTimeout(() => noteInputRef.current?.focus(), 50);
-        return;
-      }
-      // Escape → cancel
-      if (e.key === 'Escape' && markerState !== null) {
-        setMarkerState(null);
-        setPendingType(null);
-        setNoteText('');
-        return;
-      }
-      // Enter → save note
-      if (e.key === 'Enter' && markerState === 'noting') {
-        e.preventDefault();
-        saveMarker();
-        return;
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [markerState, pendingType, noteText]);
-
   const saveMarker = useCallback(() => {
-    if (!pendingType) return;
+    if (!pendingType || !turn?.id) return;
+
     const note = {
       clientNoteId: crypto.randomUUID(),
       turnId: turn.id,
-      timestampMs: pendingTimestamp,
+      timestampMs: Math.round(pendingTimestamp),
       errorType: pendingType,
       noteText: noteText.trim() || null,
     };
+
     setMarkers((prev) => [...prev, note]);
     dispatch({ type: 'ADD_PEER_NOTE', payload: note });
     setMarkerState(null);
@@ -93,33 +111,64 @@ export function ListenerView({
     setNoteText('');
   }, [pendingType, pendingTimestamp, noteText, turn, dispatch]);
 
+  useEffect(() => {
+    function handleKeyDown(e) {
+      if (e.key === 'Tab' && markerState === null) {
+        e.preventDefault();
+        setPendingTimestamp(elapsedRef.current);
+        setMarkerState('choosing');
+        return;
+      }
+
+      if (markerState === 'choosing' && MARKER_TYPES.some((item) => item.shortcut === e.key)) {
+        e.preventDefault();
+        const type = MARKER_TYPES.find((item) => item.shortcut === e.key).key;
+        setPendingType(type);
+        setMarkerState('noting');
+        setTimeout(() => noteInputRef.current?.focus(), 50);
+        return;
+      }
+
+      if (e.key === 'Escape' && markerState !== null) {
+        setMarkerState(null);
+        setPendingType(null);
+        setNoteText('');
+        return;
+      }
+
+      if (e.key === 'Enter' && markerState === 'noting') {
+        e.preventDefault();
+        saveMarker();
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [markerState, saveMarker]);
+
   const progressPct = Math.min((elapsed / totalMs) * 100, 100);
 
   return (
     <div className="session-layout">
-      {/* Header */}
       <div className="session-header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-3)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-3)', minWidth: 0 }}>
           <span className="badge badge-listener" style={{ gap: 4 }}>
             <span className="material-symbols-rounded" style={{ fontSize: 14 }}>hearing</span>
             Bạn đang nghe
           </span>
-          <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: 'var(--font-size-xs)' }}>
-            Part {turn?.partNumber} · Câu {turn?.turnIndex}
+          <span style={{ color: '#5f6368', fontSize: 'var(--font-size-xs)' }}>
+            Part {turn?.partNumber} · Lượt {turn?.turnIndex}/{totalTurns}
           </span>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-4)' }}>
-          <Timer durationMs={totalMs} onEnd={onTurnEnd} />
+        <div className="session-timer-block compact">
+          <span>Thời gian lượt nói</span>
+          <Timer durationMs={totalMs} startedAtMs={turnStartTime} onEnd={onTurnEnd} />
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-2)', color: 'rgba(255,255,255,0.7)', fontSize: 'var(--font-size-xs)' }}>
-          <span className="material-symbols-rounded" style={{ fontSize: 16 }}>mic_off</span>
-          Mic đang tắt
-        </div>
+        <SessionCallControls remoteVideoRef={remoteVideoRef} onEndCall={onEndCall} compact />
       </div>
 
-      {/* Main video */}
       <div className="session-main">
         <div className="video-primary">
           <video
@@ -129,84 +178,45 @@ export function ListenerView({
             style={{ width: '100%', height: '100%', objectFit: 'cover' }}
           />
 
-          {/* Partner label */}
           <div className="video-label">
             <span className="material-symbols-rounded" style={{ fontSize: 12, marginRight: 4 }}>person</span>
             {state.partnerName || 'Đối tác luyện tập'}
           </div>
 
-          {/* Self preview */}
           <div className="video-self-preview">
             <video ref={localVideoRef} autoPlay playsInline muted />
             <div className="video-label" style={{ fontSize: 10 }}>Bạn</div>
           </div>
         </div>
+
+        <QuestionSupportPanel turn={turn} totalTurns={totalTurns} isSpeaker={false} />
       </div>
 
-      {/* Question strip */}
-      <div style={{
-        background: '#1e293b',
-        borderTop: '1px solid #334155',
-        padding: 'var(--spacing-3) var(--spacing-5)',
-      }}>
-        <p style={{
-          color: 'rgba(255,255,255,0.9)',
-          fontSize: 'var(--font-size-sm)',
-          fontWeight: 500,
-          textAlign: 'center',
-        }}>
-          {turn?.questionText || 'Đang tải câu hỏi...'}
-        </p>
-      </div>
-
-      {/* Timeline & Marker controls */}
-      <div className="session-footer" style={{ paddingBottom: 'var(--spacing-4)' }}>
-        {/* Timeline */}
+      <div className="session-footer listener-note-footer">
         <div style={{ marginBottom: 'var(--spacing-3)', position: 'relative' }}>
           <div className="timeline-bar">
             <div className="timeline-progress" style={{ width: `${progressPct}%` }} />
-            {markers.map((m) => (
+            {markers.map((marker) => (
               <div
-                key={m.clientNoteId}
-                className={`timeline-marker ${m.errorType}`}
-                style={{ left: `${(m.timestampMs / totalMs) * 100}%` }}
-                title={`${m.errorType} · ${Math.round(m.timestampMs / 1000)}s${m.noteText ? ` · ${m.noteText}` : ''}`}
+                key={marker.clientNoteId}
+                className={`timeline-marker ${marker.errorType}`}
+                style={{ left: `${(marker.timestampMs / totalMs) * 100}%` }}
+                title={`${getMarkerLabel(marker.errorType)} · ${Math.round(marker.timestampMs / 1000)}s${marker.noteText ? ` · ${marker.noteText}` : ''}`}
               />
             ))}
           </div>
         </div>
 
-        {/* TAB hint / Marker popup */}
         {markerState === null && (
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-          }}>
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 'var(--spacing-2)',
-              color: 'rgba(255,255,255,0.5)',
-              fontSize: 'var(--font-size-xs)',
-            }}>
-              <kbd style={{
-                background: 'rgba(255,255,255,0.1)',
-                border: '1px solid rgba(255,255,255,0.2)',
-                borderRadius: 4,
-                padding: '2px 6px',
-                fontFamily: 'monospace',
-                fontSize: 11,
-                color: 'rgba(255,255,255,0.8)',
-              }}>TAB</kbd>
-              <span>Đánh dấu lỗi · {markers.length} lỗi đã ghi</span>
+          <div className="listener-footer-row">
+            <div className="listener-tab-hint">
+              <kbd>TAB</kbd>
+              <span>Đánh dấu nhanh cho AI · {markers.length} marker đã ghi</span>
             </div>
-            <div style={{ display: 'flex', gap: 'var(--spacing-2)' }}>
-              {markers.slice(-3).map((m) => (
-                <span key={m.clientNoteId} className={`badge badge-${m.errorType === 'pronunciation' ? 'error' : m.errorType === 'grammar' ? 'warning' : m.errorType === 'vocabulary' ? 'success' : 'speaker'}`}
-                  style={{ fontSize: 10 }}>
-                  {m.errorType === 'pronunciation' ? 'Phát âm' : m.errorType === 'grammar' ? 'Ngữ pháp' : m.errorType === 'vocabulary' ? 'Từ vựng' : 'Trôi chảy'}
-                  {' · '}{Math.round(m.timestampMs / 1000)}s
+            <div className="listener-recent-markers">
+              {markers.slice(-3).map((marker) => (
+                <span key={marker.clientNoteId} className={`badge ${getMarkerBadgeClass(marker.errorType)}`}>
+                  {getMarkerLabel(marker.errorType)} · {Math.round(marker.timestampMs / 1000)}s
                 </span>
               ))}
             </div>
@@ -214,75 +224,80 @@ export function ListenerView({
         )}
 
         {markerState === 'choosing' && (
-          <div className="animate-slide-up" style={{
-            background: '#1e293b',
-            border: '1px solid #334155',
-            borderRadius: 'var(--radius-md)',
-            padding: 'var(--spacing-3)',
-          }}>
-            <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: 'var(--font-size-xs)', marginBottom: 'var(--spacing-2)' }}>
-              Lỗi lúc {Math.round(pendingTimestamp / 1000)}s — Chọn loại lỗi:
+          <div className="marker-popup animate-slide-up">
+            <p>
+              <span className="material-symbols-rounded">flag</span>
+              Marker lúc {Math.round(pendingTimestamp / 1000)}s · Chọn nhanh để AI tổng hợp:
             </p>
-            <div style={{ display: 'flex', gap: 'var(--spacing-2)', flexWrap: 'wrap' }}>
-              {ERROR_TYPES.map((et) => (
-                <button
-                  key={et.key}
-                  className={`error-type-btn ${et.key}`}
-                  style={{ color: 'rgba(255,255,255,0.8)', borderColor: 'rgba(255,255,255,0.2)', background: 'rgba(255,255,255,0.05)' }}
-                  onClick={() => {
-                    setPendingType(et.key);
-                    setMarkerState('noting');
-                    setTimeout(() => noteInputRef.current?.focus(), 50);
-                  }}
-                >
-                  <span className="material-symbols-rounded" style={{ fontSize: 14 }}>{et.icon}</span>
-                  <kbd style={{ opacity: 0.5, fontSize: 10 }}>{et.shortcut}</kbd>
-                  {et.label}
-                </button>
+            <div className="marker-choice-groups">
+              {MARKER_GROUPS.map((group) => (
+                <div className="marker-choice-group" key={group.title}>
+                  <div className="marker-choice-heading">
+                    <strong>{group.title}</strong>
+                    <span>{group.helper}</span>
+                  </div>
+                  <div className="marker-choice-grid">
+                    {group.items.map((markerType) => (
+                      <button
+                        key={markerType.key}
+                        className={`error-type-btn ${markerType.key} marker-tone-${markerType.tone}`}
+                        onClick={() => {
+                          setPendingType(markerType.key);
+                          setMarkerState('noting');
+                          setTimeout(() => noteInputRef.current?.focus(), 50);
+                        }}
+                      >
+                        <span className="material-symbols-rounded" style={{ fontSize: 18 }}>{markerType.icon}</span>
+                        <span>
+                          <span className="marker-choice-label"><kbd>{markerType.shortcut}</kbd>{markerType.label}</span>
+                          <small>{markerType.description}</small>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
               ))}
-              <button className="btn btn-ghost btn-sm" style={{ color: 'rgba(255,255,255,0.4)' }}
-                onClick={() => setMarkerState(null)}>
-                Huỷ
+              <button className="btn btn-ghost btn-sm marker-cancel-btn" onClick={() => setMarkerState(null)}>
+                Hủy
               </button>
             </div>
           </div>
         )}
 
         {markerState === 'noting' && (
-          <div className="animate-slide-up" style={{
-            background: '#1e293b',
-            border: '1px solid #334155',
-            borderRadius: 'var(--radius-md)',
-            padding: 'var(--spacing-3)',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-3)', marginBottom: 'var(--spacing-2)' }}>
-              <span className={`badge ${pendingType === 'pronunciation' ? 'badge-error' : pendingType === 'grammar' ? 'badge-warning' : pendingType === 'vocabulary' ? 'badge-success' : 'badge-speaker'}`}>
-                {ERROR_TYPES.find(e => e.key === pendingType)?.label}
+          <div className="marker-popup animate-slide-up">
+            <div className="marker-note-header">
+              <span className={`badge ${getMarkerBadgeClass(pendingType)}`}>
+                {getMarkerLabel(pendingType)}
               </span>
-              <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: 'var(--font-size-xs)' }}>
-                lúc {Math.round(pendingTimestamp / 1000)}s
-              </span>
+              <span>lúc {Math.round(pendingTimestamp / 1000)}s</span>
             </div>
-            <div style={{ display: 'flex', gap: 'var(--spacing-2)' }}>
-              <input
+            <div className="marker-note-row">
+              <textarea
                 ref={noteInputRef}
-                className="form-input"
-                style={{ background: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.15)', color: 'white', flex: 1 }}
-                placeholder="Ghi chú ngắn, không bắt buộc..."
+                className="form-input marker-note-input"
+                rows={3}
+                placeholder="Ghi chú ngắn nếu cần. Có thể bấm Enter để lưu nhanh, AI sẽ tổng hợp sau phiên..."
                 value={noteText}
                 onChange={(e) => setNoteText(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') { e.preventDefault(); saveMarker(); }
-                  if (e.key === 'Escape') { setMarkerState(null); setPendingType(null); setNoteText(''); }
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    saveMarker();
+                  }
+                  if (e.key === 'Escape') {
+                    setMarkerState(null);
+                    setPendingType(null);
+                    setNoteText('');
+                  }
                 }}
               />
               <button className="btn btn-primary btn-sm" onClick={saveMarker}>
                 <span className="material-symbols-rounded" style={{ fontSize: 14 }}>check</span>
                 Lưu
               </button>
-              <button className="btn btn-ghost btn-sm" style={{ color: 'rgba(255,255,255,0.5)' }}
-                onClick={() => { setMarkerState(null); setPendingType(null); setNoteText(''); }}>
-                Huỷ
+              <button className="btn btn-ghost btn-sm" onClick={() => { setMarkerState(null); setPendingType(null); setNoteText(''); }}>
+                Hủy
               </button>
             </div>
           </div>

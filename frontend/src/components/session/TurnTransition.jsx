@@ -2,50 +2,30 @@ import { useEffect } from 'react';
 
 export function TurnTransition({ message, subMessage, onDone, delayMs = 3000 }) {
   useEffect(() => {
-    const id = setTimeout(() => {
-      if (onDone) onDone();
-    }, delayMs);
+    const id = setTimeout(() => { if (onDone) onDone(); }, delayMs);
     return () => clearTimeout(id);
   }, [onDone, delayMs]);
 
   return (
-    <div className="overlay" style={{ zIndex: 200, background: 'rgba(0,0,0,0.85)' }}>
-      <div className="animate-scale-in" style={{ textAlign: 'center', color: 'white' }}>
-        <div style={{
-          width: 80,
-          height: 80,
-          borderRadius: '50%',
-          background: 'var(--color-primary)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          margin: '0 auto var(--spacing-5)',
-          boxShadow: '0 0 0 16px rgba(37,99,235,0.15)',
-        }}>
-          <span className="material-symbols-rounded" style={{ fontSize: 40, color: 'white' }}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: 'rgba(9, 9, 11, 0.92)', backdropFilter: 'blur(12px)' }}
+    >
+      <div className="animate-scale-in text-center px-6">
+        <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-zinc-800 border border-zinc-700 mb-5">
+          <span className="material-symbols-rounded text-zinc-300" style={{ fontSize: 26 }}>
             swap_horiz
           </span>
         </div>
-
-        <h2 style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 700, marginBottom: 'var(--spacing-2)' }}>
-          {message}
-        </h2>
-
-        {subMessage && (
-          <p style={{ color: 'rgba(255,255,255,0.7)', fontSize: 'var(--font-size-base)' }}>
-            {subMessage}
-          </p>
-        )}
-
-        <div style={{ marginTop: 'var(--spacing-6)', display: 'flex', gap: 4, justifyContent: 'center' }}>
+        <h2 className="text-lg font-semibold text-white mb-1.5">{message}</h2>
+        {subMessage && <p className="text-sm text-zinc-400">{subMessage}</p>}
+        <div className="flex gap-1.5 justify-center mt-5">
           {[0, 1, 2].map((i) => (
-            <div key={i} style={{
-              width: 8,
-              height: 8,
-              borderRadius: '50%',
-              background: 'rgba(255,255,255,0.4)',
-              animation: `blink 1.2s ${i * 0.2}s ease infinite`,
-            }} />
+            <div
+              key={i}
+              className="w-1.5 h-1.5 rounded-full bg-zinc-500"
+              style={{ animation: `blink 1.2s ${i * 0.2}s ease infinite` }}
+            />
           ))}
         </div>
       </div>

@@ -1,12 +1,27 @@
 const BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
 
+export function getBackendFileUrl(path) {
+  if (!path) return '';
+  if (path.startsWith('http://') || path.startsWith('https://')) return path;
+  return `${BASE_URL}${path}`;
+}
+
 async function request(path, options = {}) {
   const response = await fetch(`${BASE_URL}/api${path}`, {
     headers: { 'Content-Type': 'application/json', ...options.headers },
     ...options,
   });
 
-  const data = await response.json();
+  const responseText = await response.text();
+  let data = {};
+
+  if (responseText) {
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      data = { error: responseText };
+    }
+  }
 
   if (!response.ok) {
     throw new Error(data.error || 'Đã có lỗi xảy ra');
@@ -20,7 +35,7 @@ export async function getConfig() {
 }
 
 export async function getSession(sessionId) {
-  return request(`/sessions/${sessionId}`);
+  return request(`/sessions/${sessionId}`, { cache: 'no-store' });
 }
 
 export async function uploadAudio({ audio, turnId, sessionId, speakerId, questionId, durationMs }) {
@@ -37,7 +52,16 @@ export async function uploadAudio({ audio, turnId, sessionId, speakerId, questio
     body: formData,
   });
 
-  const data = await response.json();
+  const responseText = await response.text();
+  let data = {};
+
+  if (responseText) {
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      data = { error: responseText };
+    }
+  }
 
   if (!response.ok) {
     throw new Error(data.error || 'Tải audio lên thất bại');

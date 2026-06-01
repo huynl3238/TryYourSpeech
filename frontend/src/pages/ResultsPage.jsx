@@ -1,77 +1,130 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSession } from '../context/SessionContext';
-import { retryResults } from '../services/api';
+import { getBackendFileUrl, retryResults } from '../services/api';
+import { Button } from '../components/ui/button';
+import { Badge } from '../components/ui/badge';
+import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 
-const CRITERIA_LABELS = {
-  fluency_coherence: { label: 'Fluency & Coherence', icon: 'speed', color: 'var(--color-primary)' },
-  lexical_resource:  { label: 'Lexical Resource',    icon: 'menu_book', color: 'var(--color-success)' },
-  grammatical_range: { label: 'Grammatical Range & Accuracy', icon: 'spellcheck', color: 'var(--color-warning)' },
-  pronunciation:     { label: 'Pronunciation',       icon: 'record_voice_over', color: 'var(--color-error)' },
+const CRITERIA = {
+  fluency:       { label: 'Fluency & Coherence',        color: '#2563eb' },
+  lexical:       { label: 'Lexical Resource',           color: '#059669' },
+  grammar:       { label: 'Grammar Range & Accuracy',   color: '#d97706' },
+  pronunciation: { label: 'Pronunciation',              color: '#7c3aed' },
 };
 
 const ERROR_TYPE_LABELS = {
-  pronunciation: { label: 'Phát âm', color: 'var(--color-error)' },
-  grammar:       { label: 'Ngữ pháp', color: 'var(--color-warning)' },
-  vocabulary:    { label: 'Từ vựng',  color: 'var(--color-success)' },
-  fluency:       { label: 'Trôi chảy', color: 'var(--color-speaker)' },
+  grammar_error:       { label: 'Grammar error',             color: '#f59e0b', bg: '#fffbeb' },
+  collocation_issue:   { label: 'Collocation / word choice', color: '#ef4444', bg: '#fef2f2' },
+  pause_filler:        { label: 'Pause / filler',            color: '#f59e0b', bg: '#fffbeb' },
+  false_start:         { label: 'False start',               color: '#f97316', bg: '#fff7ed' },
+  pronunciation_issue: { label: 'Pronunciation issue',       color: '#ef4444', bg: '#fef2f2' },
+  advanced_vocab:      { label: 'Advanced vocab',            color: '#10b981', bg: '#ecfdf5' },
+  good_connector:      { label: 'Good connector',            color: '#10b981', bg: '#ecfdf5' },
+  idea_development:    { label: 'Strong idea',               color: '#10b981', bg: '#ecfdf5' },
+  pronunciation:       { label: 'Phát âm',                   color: '#ef4444', bg: '#fef2f2' },
+  grammar:             { label: 'Ngữ pháp',                  color: '#f59e0b', bg: '#fffbeb' },
+  vocabulary:          { label: 'Từ vựng',                   color: '#10b981', bg: '#ecfdf5' },
+  fluency:             { label: 'Trôi chảy',                 color: '#7c3aed', bg: '#f5f3ff' },
 };
 
-function ScoreRing({ score, maxScore = 9, color = 'var(--color-primary)', size = 80 }) {
-  const radius = (size - 12) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const pct = score != null ? Math.min(score / maxScore, 1) : 0;
-  const dashOffset = circumference * (1 - pct);
+function ScoreCircle({ score, color }) {
+  const num = Number.isFinite(Number(score)) ? Number(score) : null;
+  const size = 56;
+  const r = 22;
+  const circ = 2 * Math.PI * r;
+  const pct = num != null ? Math.min(num / 9, 1) : 0;
 
   return (
     <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
-      <circle cx={size/2} cy={size/2} r={radius} fill="none" stroke="var(--color-border)" strokeWidth={8} />
-      <circle cx={size/2} cy={size/2} r={radius} fill="none" stroke={color} strokeWidth={8}
-        strokeDasharray={circumference} strokeDashoffset={dashOffset}
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#f4f4f5" strokeWidth={5} />
+      <circle
+        cx={size / 2} cy={size / 2} r={r}
+        fill="none"
+        stroke={color}
+        strokeWidth={5}
+        strokeDasharray={circ}
+        strokeDashoffset={circ * (1 - pct)}
         strokeLinecap="round"
         style={{ transition: 'stroke-dashoffset 1s ease' }}
       />
-      <text x={size/2} y={size/2} textAnchor="middle" dominantBaseline="central"
-        style={{ fill: 'var(--color-text)', fontSize: 18, fontWeight: 700, transform: 'rotate(90deg)', transformOrigin: `${size/2}px ${size/2}px` }}>
-        {score != null ? score.toFixed(1) : '—'}
+      <text
+        x={size / 2} y={size / 2}
+        textAnchor="middle" dominantBaseline="central"
+        style={{ fill: '#18181b', fontSize: 13, fontWeight: 700, transform: `rotate(90deg)`, transformOrigin: `${size / 2}px ${size / 2}px`, fontFamily: 'inherit' }}
+      >
+        {num != null ? num.toFixed(1) : '—'}
       </text>
     </svg>
   );
+}
+
+function normalizeTurnResults(results, sessionTurns) {
+  const turnResults = results?.turnResults || results?.turns || [];
+  return turnResults.map((result) => {
+    const sessionTurn = sessionTurns.find((t) => t.id === result.turnId);
+    return { ...sessionTurn, ...result, scores: result.scores || {}, aiFeedback: result.aiFeedback || result.feedback || {}, peerNotes: result.peerNotes || [] };
+  });
+}
+
+function calculateOverallBand(turnResults) {
+  const scores = turnResults.flatMap((turn) =>
+    Object.keys(CRITERIA).map((key) => turn.scores?.[key]).filter((s) => Number.isFinite(Number(s))).map(Number)
+  );
+  if (scores.length === 0) return null;
+  const avg = scores.reduce((s, v) => s + v, 0) / scores.length;
+  return Math.round(avg * 2) / 2;
+}
+
+function getPartLabel(turn, sessionTurns) {
+  if (!turn?.partNumber) return 'Lượt nói';
+  if (turn.partNumber === 2) return 'Part 2 · Cue Card';
+  const questionIds = [];
+  for (const t of sessionTurns) {
+    if (t.partNumber !== turn.partNumber) continue;
+    if (!questionIds.includes(t.questionId)) questionIds.push(t.questionId);
+  }
+  const idx = questionIds.indexOf(turn.questionId);
+  return `Part ${turn.partNumber} · Câu ${idx === -1 ? (turn.turnIndex || '') : idx + 1}`;
+}
+
+function renderFeedbackValue(value) {
+  if (!value) return null;
+  if (Array.isArray(value)) return value.join('\n');
+  if (typeof value === 'object') return JSON.stringify(value, null, 2);
+  return String(value);
 }
 
 export default function ResultsPage() {
   const { state, dispatch } = useSession();
   const navigate = useNavigate();
   const results = state.results;
-
-  const [selectedTurnId, setSelectedTurnId] = useState(results?.turns?.[0]?.turnId || null);
+  const turnResults = useMemo(() => normalizeTurnResults(results, state.turns), [results, state.turns]);
+  const [selectedTurnId, setSelectedTurnId] = useState(turnResults[0]?.turnId || null);
   const [retryingTurns, setRetryingTurns] = useState({});
+
+  useEffect(() => {
+    if (!selectedTurnId && turnResults[0]?.turnId) setSelectedTurnId(turnResults[0].turnId);
+  }, [selectedTurnId, turnResults]);
 
   if (!results) {
     return (
-      <div className="page-center">
-        <div style={{ textAlign: 'center' }}>
-          <div className="spinner spinner-lg" style={{ margin: '0 auto var(--spacing-4)' }} />
-          <p>Đang tải kết quả...</p>
+      <div className="min-h-screen bg-zinc-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-8 h-8 rounded-full border-2 border-zinc-200 border-t-violet-500 animate-spin-slow mx-auto mb-3" />
+          <p className="text-sm text-zinc-400">Đang tải kết quả...</p>
         </div>
       </div>
     );
   }
 
-  const selectedTurnResult = results.turns?.find((t) => t.turnId === selectedTurnId);
-  const failedTurns = results.turns?.filter((t) => t.aiStatus === 'failed') || [];
-
-  const partLabel = (turn) => {
-    if (turn.partNumber === 1) return `Part 1 · Câu ${turn.turnIndex + 1}`;
-    if (turn.partNumber === 2) return `Part 2 · Cue Card`;
-    return `Part 3 · Câu ${turn.turnIndex + 1}`;
-  };
+  const selectedTurnResult = turnResults.find((t) => t.turnId === selectedTurnId);
+  const overallBand = results.overallBand ?? calculateOverallBand(turnResults);
 
   async function handleRetryTurn(turnId) {
     setRetryingTurns((prev) => ({ ...prev, [turnId]: true }));
     try {
       await retryResults({ sessionId: state.sessionId, userId: state.userId, turnId });
-      // After retry, re-navigate to waiting page to poll
       navigate('/waiting-review');
     } catch (err) {
       console.error('[Results] Retry failed:', err.message);
@@ -81,292 +134,198 @@ export default function ResultsPage() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--color-bg)' }}>
+    <div className="flex flex-col h-screen bg-zinc-50">
+
       {/* Header */}
-      <div style={{
-        padding: 'var(--spacing-4) var(--spacing-6)',
-        background: 'var(--color-surface)',
-        borderBottom: '1px solid var(--color-border)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        flexShrink: 0,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-3)' }}>
-          <span className="material-symbols-rounded icon-fill" style={{ color: 'var(--color-primary)', fontSize: 24 }}>
-            emoji_events
-          </span>
+      <div className="flex items-center justify-between px-5 py-3 bg-white border-b border-zinc-200 flex-shrink-0">
+        <div className="flex items-center gap-2.5">
+          <span className="material-symbols-rounded text-zinc-500" style={{ fontSize: 20 }}>analytics</span>
           <div>
-            <h1 style={{ fontSize: 'var(--font-size-base)', fontWeight: 700 }}>Kết quả phiên luyện</h1>
-            <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>
-              Điểm ước lượng · Không phải điểm IELTS chính thức
-            </p>
+            <h1 className="text-sm font-semibold text-zinc-900">Kết quả phiên luyện</h1>
+            <p className="text-xs text-zinc-400">Điểm ước lượng · Không phải điểm IELTS chính thức</p>
           </div>
         </div>
-        <button className="btn btn-secondary" onClick={() => { dispatch({ type: 'RESET' }); navigate('/'); }}>
-          <span className="material-symbols-rounded">home</span>
+        <Button variant="outline" size="sm" onClick={() => { dispatch({ type: 'RESET' }); navigate('/'); }}>
+          <span className="material-symbols-rounded" style={{ fontSize: 15 }}>add</span>
           Phiên mới
-        </button>
+        </Button>
       </div>
 
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        {/* Left: Turn list */}
-        <div style={{
-          width: 240,
-          flexShrink: 0,
-          borderRight: '1px solid var(--color-border)',
-          background: 'var(--color-surface)',
-          overflowY: 'auto',
-          padding: 'var(--spacing-4)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 'var(--spacing-2)',
-        }}>
-          {/* Overall score summary */}
-          <div style={{
-            padding: 'var(--spacing-4)',
-            background: 'var(--color-primary-subtle)',
-            borderRadius: 'var(--radius-md)',
-            textAlign: 'center',
-            marginBottom: 'var(--spacing-3)',
-          }}>
-            <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-primary)', fontWeight: 600, marginBottom: 4 }}>
-              Band ước lượng
-            </p>
-            <p style={{ fontSize: 'var(--font-size-3xl)', fontWeight: 700, color: 'var(--color-primary)' }}>
-              {results.overallBand ?? '—'}
-            </p>
-            <p style={{ fontSize: 10, color: 'var(--color-text-muted)', marginTop: 4 }}>
-              Ước lượng để luyện tập
-            </p>
+      <div className="flex flex-1 overflow-hidden">
+
+        {/* Sidebar */}
+        <div className="w-60 flex-shrink-0 border-r border-zinc-200 bg-white overflow-y-auto p-3 flex flex-col gap-1">
+
+          {/* Overall band */}
+          <div className="rounded-lg border border-zinc-100 bg-zinc-50 p-4 text-center mb-2">
+            <p className="text-xs text-zinc-400 mb-1 font-medium uppercase tracking-wide">Band ước lượng</p>
+            <p className="text-4xl font-bold text-zinc-900 tabular-nums">{overallBand ?? '—'}</p>
+            <p className="text-[10px] text-zinc-400 mt-1">Trung bình 4 tiêu chí</p>
           </div>
 
-          <p style={{ fontSize: 'var(--font-size-xs)', fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 'var(--spacing-1)' }}>
-            Các lượt nói
-          </p>
-          {results.turns?.map((turn) => {
+          <p className="text-xs font-medium text-zinc-400 uppercase tracking-wide px-1 mb-1">Các lượt nói</p>
+          {turnResults.map((turn) => {
             const isSelected = turn.turnId === selectedTurnId;
             const hasFailed = turn.aiStatus === 'failed';
             return (
               <button
                 key={turn.turnId}
                 onClick={() => setSelectedTurnId(turn.turnId)}
-                style={{
-                  width: '100%',
-                  textAlign: 'left',
-                  padding: 'var(--spacing-3)',
-                  borderRadius: 'var(--radius-md)',
-                  border: `1.5px solid ${isSelected ? 'var(--color-primary)' : hasFailed ? 'var(--color-error)' : 'var(--color-border)'}`,
-                  background: isSelected ? 'var(--color-primary-subtle)' : 'transparent',
-                  cursor: 'pointer',
-                }}
+                className={`w-full text-left px-3 py-2.5 rounded-lg border text-sm transition-colors ${
+                  isSelected ? 'border-violet-200 bg-violet-50' : hasFailed ? 'border-red-100 bg-red-50' : 'border-transparent hover:bg-zinc-50'
+                }`}
               >
-                <p style={{ fontSize: 'var(--font-size-xs)', fontWeight: 600, color: isSelected ? 'var(--color-primary)' : hasFailed ? 'var(--color-error)' : 'var(--color-text)' }}>
-                  {partLabel(turn)}
+                <p className={`text-xs font-medium mb-0.5 ${isSelected ? 'text-violet-600' : hasFailed ? 'text-red-600' : 'text-zinc-500'}`}>
+                  {getPartLabel(turn, state.turns)}
                 </p>
-                {hasFailed ? (
-                  <span className="badge badge-error" style={{ fontSize: 10, marginTop: 4 }}>AI lỗi</span>
-                ) : turn.bandEstimate != null ? (
-                  <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>
-                    Band ≈ {turn.bandEstimate}
-                  </span>
-                ) : null}
+                <span className={`text-xs ${turn.aiStatus === 'completed' ? 'text-emerald-600' : hasFailed ? 'text-red-500' : 'text-zinc-400'}`}>
+                  {turn.aiStatus === 'completed' ? 'Đã chấm' : hasFailed ? 'AI lỗi' : 'Đang xử lý...'}
+                </span>
               </button>
             );
           })}
         </div>
 
-        {/* Right: Detail panel */}
-        <div style={{ flex: 1, overflow: 'auto', padding: 'var(--spacing-6)' }}>
+        {/* Detail panel */}
+        <div className="flex-1 overflow-y-auto p-6">
           {selectedTurnResult ? (
-            <div style={{ maxWidth: 720, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 'var(--spacing-5)' }}>
-              {/* Turn header */}
+            <div className="max-w-2xl mx-auto space-y-5">
+
               <div>
-                <span className="badge badge-neutral" style={{ marginBottom: 'var(--spacing-2)' }}>
-                  {partLabel(selectedTurnResult)}
-                </span>
-                <h2 style={{ fontSize: 'var(--font-size-lg)', fontWeight: 600 }}>
-                  {selectedTurnResult.questionText}
-                </h2>
+                <Badge variant="secondary" className="mb-2">{getPartLabel(selectedTurnResult, state.turns)}</Badge>
+                <h2 className="text-base font-semibold text-zinc-900 leading-snug">{selectedTurnResult.questionText}</h2>
               </div>
 
-              {/* AI Failed state */}
+              {/* AI failed notice */}
               {selectedTurnResult.aiStatus === 'failed' && (
-                <div className="alert alert-error">
-                  <span className="material-symbols-rounded" style={{ fontSize: 18 }}>error</span>
-                  <div style={{ flex: 1 }}>
-                    <p style={{ fontWeight: 600 }}>Dịch vụ AI chưa xử lý được lượt này</p>
-                    <p style={{ fontSize: 'var(--font-size-xs)', marginTop: 4 }}>
-                      Dịch vụ AI chưa được cấu hình hoặc tạm thời gặp lỗi. Bạn có thể thử lại.
-                    </p>
-                    <button
-                      className="btn btn-sm btn-danger"
-                      style={{ marginTop: 'var(--spacing-3)' }}
-                      disabled={retryingTurns[selectedTurnResult.turnId]}
-                      onClick={() => handleRetryTurn(selectedTurnResult.turnId)}
-                    >
-                      {retryingTurns[selectedTurnResult.turnId] ? (
-                        <><div className="spinner spinner-sm" /> Đang thử lại...</>
-                      ) : (
-                        <><span className="material-symbols-rounded" style={{ fontSize: 14 }}>refresh</span> Thử lại</>
-                      )}
-                    </button>
-                  </div>
+                <div className="rounded-lg bg-red-50 border border-red-100 p-4">
+                  <p className="text-sm font-medium text-red-800 mb-1">AI chưa xử lý được lượt này</p>
+                  <p className="text-xs text-red-700 mb-3">Dịch vụ AI tạm thời gặp lỗi. Bạn có thể thử lại.</p>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    disabled={retryingTurns[selectedTurnResult.turnId]}
+                    onClick={() => handleRetryTurn(selectedTurnResult.turnId)}
+                  >
+                    {retryingTurns[selectedTurnResult.turnId]
+                      ? <><div className="w-3.5 h-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin-slow" /> Đang thử...</>
+                      : <><span className="material-symbols-rounded" style={{ fontSize: 12 }}>refresh</span> Thử lại</>
+                    }
+                  </Button>
                 </div>
               )}
 
-              {/* Score criteria */}
-              {selectedTurnResult.scores && (
-                <div className="card">
-                  <div className="card-header">
-                    <p style={{ fontWeight: 600, fontSize: 'var(--font-size-sm)' }}>Điểm 4 tiêu chí IELTS</p>
-                  </div>
-                  <div className="card-body" style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr 1fr',
-                    gap: 'var(--spacing-4)',
-                  }}>
-                    {Object.entries(CRITERIA_LABELS).map(([key, { label, icon, color }]) => {
-                      const score = selectedTurnResult.scores?.[key];
-                      return (
-                        <div key={key} style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 'var(--spacing-3)',
-                          padding: 'var(--spacing-3)',
-                          background: 'var(--color-surface-raised)',
-                          borderRadius: 'var(--radius-md)',
-                        }}>
-                          <ScoreRing score={score} color={color} size={64} />
-                          <div>
-                            <p style={{ fontSize: 'var(--font-size-xs)', fontWeight: 600, color }}>{label}</p>
-                            <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginTop: 2 }}>
-                              {score != null ? `Ước lượng ${score}/9` : 'Chưa có dữ liệu'}
-                            </p>
+              {/* Scores */}
+              {selectedTurnResult.scores && Object.keys(selectedTurnResult.scores).length > 0 && (
+                <Card>
+                  <CardHeader className="pt-4 pb-3 px-4">
+                    <CardTitle className="text-sm font-medium text-zinc-600">Điểm 4 tiêu chí IELTS</CardTitle>
+                  </CardHeader>
+                  <CardContent className="px-4 pb-4">
+                    <div className="grid grid-cols-2 gap-3">
+                      {Object.entries(CRITERIA).map(([key, { label, color }]) => {
+                        const score = selectedTurnResult.scores?.[key];
+                        return (
+                          <div key={key} className="flex items-center gap-3 rounded-lg border border-zinc-100 bg-zinc-50/50 px-3 py-2.5">
+                            <ScoreCircle score={score} color={color} />
+                            <div>
+                              <p className="text-xs font-medium text-zinc-700 leading-tight">{label}</p>
+                              <p className="text-xs text-zinc-400 mt-0.5">
+                                {score != null ? `${score}/9` : 'Chưa có'}
+                              </p>
+                            </div>
                           </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div className="card-footer">
-                    <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>
-                      ⚠️ Đây là điểm ước lượng để luyện tập, không phải điểm IELTS chính thức.
+                        );
+                      })}
+                    </div>
+                    <p className="text-[10px] text-zinc-400 mt-3 text-center">
+                      Điểm ước lượng — không phải điểm IELTS chính thức
                     </p>
-                  </div>
-                </div>
+                  </CardContent>
+                </Card>
               )}
 
-              {/* Audio playback */}
-              <div className="card">
-                <div className="card-header">
-                  <p style={{ fontWeight: 600, fontSize: 'var(--font-size-sm)' }}>Nghe lại câu trả lời của bạn</p>
-                </div>
-                <div className="card-body">
+              {/* Audio */}
+              <Card>
+                <CardHeader className="pt-4 pb-3 px-4">
+                  <CardTitle className="text-sm font-medium text-zinc-600">Nghe lại câu trả lời</CardTitle>
+                </CardHeader>
+                <CardContent className="px-4 pb-4">
                   {selectedTurnResult.audioUrl ? (
-                    <audio src={selectedTurnResult.audioUrl} controls style={{ width: '100%' }} />
+                    <audio src={getBackendFileUrl(selectedTurnResult.audioUrl)} controls className="w-full" />
                   ) : (
-                    <p style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)' }}>
-                      Audio chưa khả dụng
-                    </p>
+                    <p className="text-sm text-zinc-400">Audio chưa khả dụng</p>
                   )}
-                </div>
-              </div>
+                </CardContent>
+              </Card>
 
               {/* Transcript */}
               {selectedTurnResult.transcript && (
-                <div className="card">
-                  <div className="card-header">
-                    <p style={{ fontWeight: 600, fontSize: 'var(--font-size-sm)' }}>Transcript</p>
-                  </div>
-                  <div className="card-body">
-                    <p style={{ fontSize: 'var(--font-size-sm)', lineHeight: 2, color: 'var(--color-text)' }}>
-                      {selectedTurnResult.transcript}
-                    </p>
-                  </div>
-                </div>
+                <Card>
+                  <CardHeader className="pt-4 pb-3 px-4">
+                    <CardTitle className="text-sm font-medium text-zinc-600">Transcript</CardTitle>
+                  </CardHeader>
+                  <CardContent className="px-4 pb-4">
+                    <p className="text-sm text-zinc-700 leading-relaxed">{selectedTurnResult.transcript}</p>
+                  </CardContent>
+                </Card>
               )}
 
               {/* AI Feedback */}
-              {selectedTurnResult.feedback && (
-                <div className="card">
-                  <div className="card-header">
-                    <p style={{ fontWeight: 600, fontSize: 'var(--font-size-sm)' }}>Nhận xét từ AI</p>
-                  </div>
-                  <div className="card-body" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-4)' }}>
-                    {selectedTurnResult.feedback.grammar && (
-                      <div>
-                        <p style={{ fontSize: 'var(--font-size-xs)', fontWeight: 600, color: 'var(--color-warning)', marginBottom: 4 }}>
-                          Ngữ pháp
-                        </p>
-                        <p style={{ fontSize: 'var(--font-size-sm)', lineHeight: 1.7 }}>{selectedTurnResult.feedback.grammar}</p>
-                      </div>
-                    )}
-                    {selectedTurnResult.feedback.vocabulary && (
-                      <div>
-                        <p style={{ fontSize: 'var(--font-size-xs)', fontWeight: 600, color: 'var(--color-success)', marginBottom: 4 }}>
-                          Từ vựng
-                        </p>
-                        <p style={{ fontSize: 'var(--font-size-sm)', lineHeight: 1.7 }}>{selectedTurnResult.feedback.vocabulary}</p>
-                      </div>
-                    )}
-                    {selectedTurnResult.feedback.pronunciation && (
-                      <div>
-                        <p style={{ fontSize: 'var(--font-size-xs)', fontWeight: 600, color: 'var(--color-error)', marginBottom: 4 }}>
-                          Phát âm
-                        </p>
-                        <p style={{ fontSize: 'var(--font-size-sm)', lineHeight: 1.7 }}>{selectedTurnResult.feedback.pronunciation}</p>
-                      </div>
-                    )}
-                    {selectedTurnResult.feedback.suggestions && (
-                      <div>
-                        <p style={{ fontSize: 'var(--font-size-xs)', fontWeight: 600, color: 'var(--color-primary)', marginBottom: 4 }}>
-                          Gợi ý cải thiện
-                        </p>
-                        <p style={{ fontSize: 'var(--font-size-sm)', lineHeight: 1.7 }}>{selectedTurnResult.feedback.suggestions}</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
+              {Object.keys(selectedTurnResult.aiFeedback || {}).length > 0 && (
+                <Card>
+                  <CardHeader className="pt-4 pb-3 px-4">
+                    <CardTitle className="text-sm font-medium text-zinc-600">Nhận xét từ AI</CardTitle>
+                  </CardHeader>
+                  <CardContent className="px-4 pb-4 space-y-4">
+                    {Object.entries(selectedTurnResult.aiFeedback).map(([key, value]) => {
+                      const rendered = renderFeedbackValue(value);
+                      if (!rendered) return null;
+                      return (
+                        <div key={key}>
+                          <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-1">{key}</p>
+                          <p className="text-sm text-zinc-700 leading-relaxed whitespace-pre-wrap">{rendered}</p>
+                        </div>
+                      );
+                    })}
+                  </CardContent>
+                </Card>
               )}
 
               {/* Peer notes */}
               {selectedTurnResult.peerNotes?.length > 0 && (
-                <div className="card">
-                  <div className="card-header">
-                    <p style={{ fontWeight: 600, fontSize: 'var(--font-size-sm)' }}>
-                      Ghi chú từ {state.partnerName} ({selectedTurnResult.peerNotes.length} lỗi)
-                    </p>
-                  </div>
-                  <div className="card-body" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-3)' }}>
-                    {selectedTurnResult.peerNotes.sort((a, b) => a.timestampMs - b.timestampMs).map((note, i) => {
-                      const { label, color } = ERROR_TYPE_LABELS[note.errorType] || {};
-                      return (
-                        <div key={i} style={{
-                          padding: 'var(--spacing-3)',
-                          borderLeft: `3px solid ${color}`,
-                          background: 'var(--color-surface-raised)',
-                          borderRadius: '0 var(--radius-sm) var(--radius-sm) 0',
-                        }}>
-                          <div style={{ display: 'flex', gap: 'var(--spacing-2)', alignItems: 'center', marginBottom: 4 }}>
-                            <span style={{ fontSize: 'var(--font-size-xs)', fontWeight: 600, color }}>{label}</span>
-                            <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>
-                              · lúc {Math.round(note.timestampMs / 1000)}s
-                            </span>
+                <Card>
+                  <CardHeader className="pt-4 pb-3 px-4">
+                    <CardTitle className="text-sm font-medium text-zinc-600">
+                      Ghi chú từ {state.partnerName} ({selectedTurnResult.peerNotes.length})
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="px-4 pb-4 space-y-2.5">
+                    {[...selectedTurnResult.peerNotes]
+                      .sort((a, b) => a.timestampMs - b.timestampMs)
+                      .map((note, i) => {
+                        const cfg = ERROR_TYPE_LABELS[note.errorType] || {};
+                        return (
+                          <div
+                            key={`${note.timestampMs}-${i}`}
+                            className="rounded-md border border-zinc-100 px-3 py-2.5"
+                            style={{ borderLeft: `3px solid ${cfg.color || '#a1a1aa'}` }}
+                          >
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-xs font-semibold" style={{ color: cfg.color }}>{cfg.label || note.errorType}</span>
+                              <span className="text-xs text-zinc-400">lúc {Math.round(note.timestampMs / 1000)}s</span>
+                            </div>
+                            {note.noteText && <p className="text-sm text-zinc-700">{note.noteText}</p>}
                           </div>
-                          {note.noteText && (
-                            <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text)' }}>
-                              {note.noteText}
-                            </p>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
+                        );
+                      })}
+                  </CardContent>
+                </Card>
               )}
+
             </div>
           ) : (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--color-text-muted)' }}>
+            <div className="flex items-center justify-center h-full text-sm text-zinc-400">
               Chọn một lượt nói để xem kết quả
             </div>
           )}

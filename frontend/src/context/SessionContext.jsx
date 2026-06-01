@@ -23,6 +23,13 @@ const initialState = {
   roomId: null,
   sessionData: null, // full session detail from GET /api/sessions/:id
   turns: [],
+  sessionStartServerTimestamp: null,
+  sessionStartLocalTime: null,
+  practiceReady: false,
+  partnerPracticeReady: false,
+  practiceStarted: false,
+  practiceStartServerTimestamp: null,
+  practiceStartLocalTime: null,
 
   // Current turn
   currentTurnIndex: 0,
@@ -56,6 +63,7 @@ function sessionReducer(state, action) {
       return {
         ...state,
         phase: 'matched',
+        error: null,
         userId: action.payload.userId,
         partnerId: action.payload.partnerId,
         partnerName: action.payload.partnerName,
@@ -63,13 +71,51 @@ function sessionReducer(state, action) {
         isInitiator: action.payload.isInitiator,
         sessionId: action.payload.sessionId,
         roomId: action.payload.roomId,
+        sessionData: null,
+        turns: [],
+        sessionStartServerTimestamp: null,
+        sessionStartLocalTime: null,
+        practiceReady: false,
+        partnerPracticeReady: false,
+        practiceStarted: false,
+        practiceStartServerTimestamp: null,
+        practiceStartLocalTime: null,
+        currentTurnIndex: 0,
+        localAudioByTurnId: {},
+        remoteAudioByTurnId: {},
+        peerNotes: [],
+        results: null,
+        uploadStatus: {},
       };
 
     case 'SET_SESSION_DATA':
       return {
         ...state,
-        sessionData: action.payload.session,
-        turns: action.payload.turns,
+        sessionData: action.payload,
+        turns: action.payload.turns || [],
+      };
+
+    case 'SET_SESSION_START':
+      return {
+        ...state,
+        phase: 'in_session',
+        sessionStartServerTimestamp: action.payload.timestamp,
+        sessionStartLocalTime: action.payload.localTime,
+      };
+
+    case 'SET_PRACTICE_READY_STATE':
+      return {
+        ...state,
+        practiceReady: action.payload.myReady,
+        partnerPracticeReady: action.payload.partnerReady,
+      };
+
+    case 'SET_PRACTICE_START':
+      return {
+        ...state,
+        practiceStarted: true,
+        practiceStartServerTimestamp: action.payload.timestamp,
+        practiceStartLocalTime: action.payload.localTime,
       };
 
     case 'SET_CURRENT_TURN':
@@ -148,6 +194,7 @@ export function SessionProvider({ children }) {
     localChunks: [],
     remoteChunks: [],
     iceServers: null,
+    pendingIceCandidates: [],
   });
 
   return (

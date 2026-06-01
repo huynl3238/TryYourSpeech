@@ -1,39 +1,65 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSession } from '../context/SessionContext';
 import { useSocket } from '../hooks/useSocket';
 import { useWebRTC } from '../hooks/useWebRTC';
 import { getSession } from '../services/api';
 import { ErrorScreen } from '../components/ui/ErrorScreen';
+import { Button } from '../components/ui/button';
+import { Badge } from '../components/ui/badge';
+import { Card, CardContent } from '../components/ui/card';
+import { cleanupMediaSession } from '../utils/mediaCleanup';
+
+function StatusRow({ status, label }) {
+  return (
+    <div className="flex items-center gap-2.5">
+      {status === 'checking' && (
+        <div className="w-4 h-4 rounded-full border-2 border-zinc-300 border-t-violet-500 animate-spin-slow" />
+      )}
+      {status === 'ok' && (
+        <span className="material-symbols-rounded icon-fill text-emerald-500" style={{ fontSize: 18 }}>check_circle</span>
+      )}
+      {status === 'error' && (
+        <span className="material-symbols-rounded icon-fill text-red-500" style={{ fontSize: 18 }}>error</span>
+      )}
+      <span className="text-sm text-zinc-700">{label}</span>
+    </div>
+  );
+}
 
 export default function DeviceCheckPage() {
   const { state, dispatch, refs } = useSession();
-  const { sendSignal, onSignal, notifyPeerConnected } = useSocket();
+  const { sendSignal, onSignal, notifyPeerConnected, disconnectSocket } = useSocket();
   const navigate = useNavigate();
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
 
-  const [micStatus, setMicStatus] = useState('checking'); // checking | ok | error
+  const [micStatus, setMicStatus] = useState('checking');
   const [camStatus, setCamStatus] = useState('checking');
   const [permissionError, setPermissionError] = useState(null);
   const [isReady, setIsReady] = useState(false);
-  const [partnerReady, setPartnerReady] = useState(false);
+  const [sessionLoadStatus, setSessionLoadStatus] = useState('idle');
+  const [sessionLoadError, setSessionLoadError] = useState('');
+  const [sessionLoadRetry, setSessionLoadRetry] = useState(0);
 
-  const { initPeerConnection, startCall, getLocalStream, stopAll } = useWebRTC({
+  const handleRemoteStream = useCallback((stream) => {
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = stream;
+    }
+  }, []);
+
+  const { initPeerConnection, addLocalTracks, startCall, getLocalStream } = useWebRTC({
     sendSignal,
     onSignal,
-    onRemoteStream: (stream) => {
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = stream;
-      }
-    },
+    onRemoteStream: handleRemoteStream,
   });
 
-  // Get local media
   useEffect(() => {
     async function setup() {
       try {
         const stream = await getLocalStream({ audio: true, video: true });
+        await initPeerConnection();
+        addLocalTracks(stream);
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
         }
@@ -41,6 +67,8 @@ export default function DeviceCheckPage() {
         setCamStatus('ok');
       } catch (err) {
         console.error('[DeviceCheck] Media error:', err.message);
+        cleanupMediaSession(refs, [localVideoRef, remoteVideoRef]);
+        disconnectSocket();
         if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
           setPermissionError('camera_mic');
         } else if (err.name === 'NotFoundError') {
@@ -51,38 +79,30 @@ export default function DeviceCheckPage() {
         setMicStatus('error');
         setCamStatus('error');
       }
-
-      // Init WebRTC peer connection
-      await initPeerConnection();
     }
+    if (state.sessionId) setup();
+  }, [state.sessionId, getLocalStream, initPeerConnection, addLocalTracks, disconnectSocket]);
 
-    if (state.sessionId) {
-      setup();
-    }
-
-    return () => {
-      // cleanup streams on unmount only if navigating away from session
-    };
-  }, [state.sessionId]);
-
-  // Load session data
   useEffect(() => {
     async function loadSession() {
       if (!state.sessionId) return;
+      setSessionLoadStatus('loading');
+      setSessionLoadError('');
       try {
         const data = await getSession(state.sessionId);
         dispatch({ type: 'SET_SESSION_DATA', payload: data });
+        setSessionLoadStatus('loaded');
       } catch (err) {
         console.error('[DeviceCheck] Failed to load session:', err.message);
+        setSessionLoadError(err.message);
+        setSessionLoadStatus('error');
       }
     }
     loadSession();
-  }, [state.sessionId, dispatch]);
+  }, [state.sessionId, sessionLoadRetry, dispatch]);
 
-  // When session_start fires (both ready), navigate to session
   useEffect(() => {
     if (state.phase === 'in_session') {
-      // Start WebRTC call
       if (refs.current.localStream) {
         startCall(refs.current.localStream, state.isInitiator);
       }
@@ -90,9 +110,31 @@ export default function DeviceCheckPage() {
     }
   }, [state.phase, navigate, state.isInitiator, startCall, refs]);
 
+  useEffect(() => {
+    if (state.error?.type === 'partner_disconnected') {
+      cleanupMediaSession(refs, [localVideoRef, remoteVideoRef]);
+    }
+  }, [state.error, refs]);
+
   function handleReady() {
+    if (sessionLoadStatus !== 'loaded') return;
     setIsReady(true);
     notifyPeerConnected();
+  }
+
+  if (state.error?.type === 'partner_disconnected') {
+    return (
+      <ErrorScreen
+        icon="link_off"
+        title="Đối tác không còn sẵn sàng"
+        description="Đối tác đã ngắt kết nối. Vui lòng quay lại để tìm đối tác mới."
+        actions={
+          <Button onClick={() => { cleanupMediaSession(refs, [localVideoRef, remoteVideoRef]); dispatch({ type: 'RESET' }); navigate('/'); }}>
+            Tìm đối tác mới
+          </Button>
+        }
+      />
+    );
   }
 
   if (permissionError) {
@@ -101,22 +143,21 @@ export default function DeviceCheckPage() {
         icon="mic_off"
         title={
           permissionError === 'camera_mic' ? 'Cần quyền truy cập Mic & Camera' :
-          permissionError === 'not_found' ? 'Không tìm thấy thiết bị' :
-          'Lỗi truy cập thiết bị'
+          permissionError === 'not_found' ? 'Không tìm thấy thiết bị' : 'Lỗi truy cập thiết bị'
         }
         description={
           permissionError === 'camera_mic'
-            ? 'Trình duyệt đã chặn quyền truy cập micro và camera. Vui lòng cấp quyền để tiếp tục luyện tập.'
+            ? 'Trình duyệt đã chặn quyền truy cập micro và camera. Vui lòng cấp quyền để tiếp tục.'
             : permissionError === 'not_found'
-            ? 'Không tìm thấy mic hoặc camera trên thiết bị này. Vui lòng kết nối thiết bị và thử lại.'
-            : 'Đã xảy ra lỗi khi khởi động thiết bị. Vui lòng thử lại.'
+            ? 'Không tìm thấy mic hoặc camera trên thiết bị này.'
+            : 'Đã xảy ra lỗi khi khởi động thiết bị.'
         }
         detail={
           permissionError === 'camera_mic' && (
             <div>
-              <p style={{ fontWeight: 600, marginBottom: 8 }}>Cách bật lại quyền:</p>
-              <ol style={{ paddingLeft: 16, lineHeight: 2 }}>
-                <li>Nhấn vào biểu tượng ổ khoá / camera ở thanh địa chỉ</li>
+              <p className="font-medium mb-2">Cách bật lại quyền:</p>
+              <ol className="list-decimal pl-4 space-y-1">
+                <li>Nhấn vào biểu tượng ổ khoá ở thanh địa chỉ</li>
                 <li>Chọn <strong>Cho phép</strong> cho Micro và Camera</li>
                 <li>Tải lại trang</li>
               </ol>
@@ -125,13 +166,34 @@ export default function DeviceCheckPage() {
         }
         actions={
           <>
-            <button className="btn btn-primary" onClick={() => window.location.reload()}>
-              <span className="material-symbols-rounded">refresh</span>
+            <Button onClick={() => window.location.reload()}>
+              <span className="material-symbols-rounded" style={{ fontSize: 16 }}>refresh</span>
               Thử lại
-            </button>
-            <button className="btn btn-secondary" onClick={() => navigate('/')}>
+            </Button>
+            <Button variant="outline" onClick={() => { cleanupMediaSession(refs, [localVideoRef, remoteVideoRef]); disconnectSocket(); dispatch({ type: 'RESET' }); navigate('/'); }}>
               Về trang chủ
-            </button>
+            </Button>
+          </>
+        }
+      />
+    );
+  }
+
+  if (sessionLoadStatus === 'error') {
+    return (
+      <ErrorScreen
+        icon="error"
+        title="Không tải được dữ liệu phiên"
+        description={sessionLoadError || 'Không thể lấy dữ liệu phiên luyện tập từ máy chủ.'}
+        actions={
+          <>
+            <Button onClick={() => setSessionLoadRetry((r) => r + 1)}>
+              <span className="material-symbols-rounded" style={{ fontSize: 16 }}>refresh</span>
+              Thử lại
+            </Button>
+            <Button variant="outline" onClick={() => { cleanupMediaSession(refs, [localVideoRef, remoteVideoRef]); disconnectSocket(); dispatch({ type: 'RESET' }); navigate('/'); }}>
+              Về trang chủ
+            </Button>
           </>
         }
       />
@@ -144,163 +206,117 @@ export default function DeviceCheckPage() {
         icon="link_off"
         title="Không tìm thấy phiên luyện tập"
         description="Phiên luyện tập không còn hiệu lực. Vui lòng tìm đối tác mới."
-        actions={
-          <button className="btn btn-primary" onClick={() => navigate('/')}>
-            Tìm đối tác
-          </button>
-        }
+        actions={<Button onClick={() => { cleanupMediaSession(refs, [localVideoRef, remoteVideoRef]); navigate('/'); }}>Tìm đối tác</Button>}
       />
     );
   }
 
-  const StatusIcon = ({ status }) => {
-    if (status === 'checking') return <div className="spinner spinner-sm" />;
-    if (status === 'ok') return <span className="material-symbols-rounded" style={{ color: 'var(--color-success)', fontSize: 20 }}>check_circle</span>;
-    return <span className="material-symbols-rounded" style={{ color: 'var(--color-error)', fontSize: 20 }}>error</span>;
-  };
+  const partnerBand = state.sessionData?.participants?.find((p) => p.id === state.partnerId)?.band;
 
   return (
-    <div className="page-center">
-      <div className="animate-slide-up" style={{ width: '100%', maxWidth: 900 }}>
+    <div className="min-h-screen bg-zinc-50 flex items-start justify-center px-4 py-10">
+      <div className="animate-slide-up w-full max-w-[880px]">
+
         {/* Header */}
-        <div style={{ textAlign: 'center', marginBottom: 'var(--spacing-8)' }}>
-          <h1 style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 700, marginBottom: 'var(--spacing-2)' }}>
-            Kiểm tra thiết bị
-          </h1>
-          <p style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--font-size-sm)' }}>
-            Phòng luyện tập · Cùng với <strong>{state.partnerName}</strong>
+        <div className="mb-8">
+          <h1 className="text-xl font-semibold text-zinc-900">Kiểm tra thiết bị</h1>
+          <p className="text-sm text-zinc-500 mt-0.5">
+            Phiên luyện tập cùng <span className="font-medium text-zinc-700">{state.partnerName}</span>
           </p>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 'var(--spacing-6)' }}>
+        <div className="grid grid-cols-[1fr_300px] gap-5">
+
           {/* Camera preview */}
-          <div className="card">
-            <div style={{
-              aspectRatio: '16/9',
-              background: '#1e293b',
-              borderRadius: 'var(--radius-lg) var(--radius-lg) 0 0',
-              overflow: 'hidden',
-              position: 'relative',
-            }}>
+          <Card className="overflow-hidden">
+            <div className="aspect-video bg-zinc-900 relative">
               <video
                 ref={localVideoRef}
                 autoPlay
                 playsInline
                 muted
-                style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }}
+                className="w-full h-full object-cover"
+                style={{ transform: 'scaleX(-1)' }}
               />
               {camStatus === 'error' && (
-                <div style={{
-                  position: 'absolute', inset: 0,
-                  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                  background: '#1e293b', color: 'rgba(255,255,255,0.5)',
-                }}>
-                  <span className="material-symbols-rounded" style={{ fontSize: 48, marginBottom: 8 }}>videocam_off</span>
-                  <span style={{ fontSize: 'var(--font-size-sm)' }}>Camera không khả dụng</span>
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-900 text-zinc-500">
+                  <span className="material-symbols-rounded" style={{ fontSize: 40 }}>videocam_off</span>
+                  <span className="text-sm mt-2">Camera không khả dụng</span>
                 </div>
               )}
             </div>
-            <div className="card-footer" style={{ borderRadius: '0 0 var(--radius-lg) var(--radius-lg)' }}>
-              <div style={{ display: 'flex', gap: 'var(--spacing-4)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-2)' }}>
-                  <StatusIcon status={micStatus} />
-                  <span style={{ fontSize: 'var(--font-size-sm)' }}>Microphone</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-2)' }}>
-                  <StatusIcon status={camStatus} />
-                  <span style={{ fontSize: 'var(--font-size-sm)' }}>Camera</span>
-                </div>
-              </div>
-            </div>
-          </div>
+            <CardContent className="py-3 px-4 flex gap-5 bg-zinc-50 border-t border-zinc-100">
+              <StatusRow status={micStatus} label="Microphone" />
+              <StatusRow status={camStatus} label="Camera" />
+            </CardContent>
+          </Card>
 
           {/* Right panel */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-4)' }}>
-            {/* Partner info */}
-            <div className="card">
-              <div className="card-body">
-                <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginBottom: 'var(--spacing-3)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  Đối tác luyện tập
-                </p>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-3)', marginBottom: 'var(--spacing-4)' }}>
-                  <div style={{
-                    width: 44, height: 44,
-                    borderRadius: '50%',
-                    background: 'var(--color-primary-light)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontWeight: 700, fontSize: 'var(--font-size-lg)', color: 'var(--color-primary)',
-                  }}>
+          <div className="flex flex-col gap-4">
+
+            {/* Partner */}
+            <Card>
+              <CardContent className="p-4">
+                <p className="text-xs font-medium text-zinc-400 uppercase tracking-wide mb-3">Đối tác</p>
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-10 h-10 rounded-full bg-violet-100 flex items-center justify-center text-violet-700 font-semibold text-sm flex-shrink-0">
                     {state.partnerName?.[0]?.toUpperCase() || '?'}
                   </div>
                   <div>
-                    <p style={{ fontWeight: 600 }}>{state.partnerName}</p>
-                    <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>
-                      Band {state.sessionData?.participants?.find(p => p.id === state.partnerId)?.band ?? '—'}
-                    </p>
+                    <p className="text-sm font-medium text-zinc-900">{state.partnerName}</p>
+                    <p className="text-xs text-zinc-400">Band {partnerBand ?? '—'}</p>
                   </div>
                 </div>
-
-                <div style={{
-                  padding: 'var(--spacing-3)',
-                  background: state.role === 'A' ? 'var(--color-speaker-light)' : 'var(--color-listener-light)',
-                  borderRadius: 'var(--radius-md)',
-                  fontSize: 'var(--font-size-sm)',
-                }}>
-                  <p style={{ fontWeight: 600, color: state.role === 'A' ? 'var(--color-speaker)' : 'var(--color-listener)' }}>
-                    Vai trò của bạn: Người nói {state.role}
-                  </p>
-                  <p style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--font-size-xs)', marginTop: 4 }}>
-                    {state.role === 'A' ? 'Bạn sẽ nói trước trong mỗi câu' : 'Đối tác sẽ nói trước, bạn nghe và ghi lỗi'}
+                <div className={`rounded-lg px-3 py-2.5 text-xs ${state.role === 'A' ? 'bg-purple-50 text-purple-700' : 'bg-sky-50 text-sky-700'}`}>
+                  <p className="font-medium">Vai trò của bạn: Người nói {state.role}</p>
+                  <p className="mt-0.5 opacity-75">
+                    {state.role === 'A' ? 'Bạn nói trước trong mỗi câu hỏi' : 'Đối tác nói trước, bạn nghe và ghi lỗi'}
                   </p>
                 </div>
-              </div>
-            </div>
+              </CardContent>
+            </Card>
 
-            {/* Session info */}
+            {/* Topic */}
             {state.sessionData && (
-              <div className="card">
-                <div className="card-body">
-                  <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginBottom: 'var(--spacing-3)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                    Chủ đề phiên luyện
-                  </p>
-                  <p style={{ fontWeight: 600 }}>{state.sessionData.topic?.name || 'IELTS Speaking'}</p>
-                  <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginTop: 4 }}>
-                    {state.turns.length} lượt nói · Part 1, 2, 3
-                  </p>
-                </div>
-              </div>
+              <Card>
+                <CardContent className="p-4">
+                  <p className="text-xs font-medium text-zinc-400 uppercase tracking-wide mb-1.5">Chủ đề</p>
+                  <p className="text-sm font-medium text-zinc-900">{state.sessionData.topic?.name || 'IELTS Speaking'}</p>
+                  <p className="text-xs text-zinc-400 mt-0.5">{state.turns.length} lượt · Part 1, 2, 3</p>
+                </CardContent>
+              </Card>
             )}
 
             {/* Ready button */}
-            <button
+            <Button
               id="ready-btn"
-              className="btn btn-primary btn-lg"
-              style={{ width: '100%' }}
+              size="lg"
+              className="w-full"
               onClick={handleReady}
-              disabled={isReady || micStatus !== 'ok'}
+              disabled={isReady || micStatus !== 'ok' || sessionLoadStatus !== 'loaded'}
             >
               {isReady ? (
                 <>
-                  <div className="spinner spinner-sm" />
+                  <div className="w-4 h-4 rounded-full border-2 border-white/40 border-t-white animate-spin-slow" />
                   Đang chờ đối tác...
+                </>
+              ) : sessionLoadStatus !== 'loaded' ? (
+                <>
+                  <div className="w-4 h-4 rounded-full border-2 border-white/40 border-t-white animate-spin-slow" />
+                  Đang tải...
                 </>
               ) : (
                 <>
-                  <span className="material-symbols-rounded">check</span>
+                  <span className="material-symbols-rounded" style={{ fontSize: 18 }}>check</span>
                   Tôi đã sẵn sàng
                 </>
               )}
-            </button>
+            </Button>
 
             {isReady && (
-              <div className="alert alert-success animate-fade-in">
-                <span className="material-symbols-rounded" style={{ fontSize: 18 }}>check_circle</span>
-                <div>
-                  <p style={{ fontWeight: 600 }}>Bạn đã sẵn sàng!</p>
-                  <p style={{ fontSize: 'var(--font-size-xs)', marginTop: 2 }}>
-                    Đang chờ đối tác xác nhận...
-                  </p>
-                </div>
+              <div className="rounded-lg bg-emerald-50 border border-emerald-100 px-4 py-3 animate-fade-in">
+                <p className="text-sm font-medium text-emerald-700">Bạn đã sẵn sàng</p>
+                <p className="text-xs text-emerald-600 mt-0.5">Đang chờ {state.partnerName} xác nhận...</p>
               </div>
             )}
           </div>

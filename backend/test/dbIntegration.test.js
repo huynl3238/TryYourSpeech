@@ -86,7 +86,16 @@ test('database flow creates session, stores idempotent peer notes, and completes
 
     assert.equal(detail.session.status, 'matched');
     assert.equal(detail.participants.length, 2);
-    assert.equal(detail.turns.length, 16);
+    assert.equal(detail.turns.length, 6);
+    assert.ok(detail.turns.every((turn) => turn.durationMs === 30000));
+    assert.deepEqual(
+      detail.turns.map((turn) => turn.partNumber),
+      [1, 1, 2, 2, 3, 3]
+    );
+    assert.deepEqual(
+      detail.turns.map((turn) => turn.prepDurationMs),
+      [30000, 30000, 60000, 60000, 30000, 30000]
+    );
 
     await markSessionActive(session.sessionId);
 

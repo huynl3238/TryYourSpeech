@@ -19,7 +19,21 @@ const tempDirectory = join(uploadsDirectory, 'tmp');
 const audioDirectory = join(uploadsDirectory, 'audio');
 const maxAudioFileSize = 25 * 1024 * 1024;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const errorTypes = new Set(['pronunciation', 'grammar', 'vocabulary', 'fluency']);
+const errorTypes = new Set([
+  'grammar_error',
+  'collocation_issue',
+  'pause_filler',
+  'false_start',
+  'pronunciation_issue',
+  'advanced_vocab',
+  'good_connector',
+  'idea_development',
+  'pronunciation',
+  'grammar',
+  'vocabulary',
+  'fluency',
+]);
+const audioUploadEnabled = process.env.AI_AUDIO_UPLOAD_ENABLED === 'true';
 
 const upload = multer({
   dest: tempDirectory,
@@ -49,6 +63,17 @@ function uploadSingleAudio(req, res, next) {
       : err.message;
     res.status(400).json({ error: message });
   });
+}
+
+function requireAudioUploadEnabled(_req, res, next) {
+  if (!audioUploadEnabled) {
+    res.status(503).json({
+      error: 'Audio upload và AI pronunciation assessment đang tạm tắt để test video call',
+    });
+    return;
+  }
+
+  next();
 }
 
 function parsePositiveInteger(value) {
@@ -217,6 +242,7 @@ router.get('/health', async (_req, res) => {
 router.get('/sessions/:sessionId', async (req, res) => {
   try {
     requireUuid(req.params.sessionId, 'sessionId');
+    res.set('Cache-Control', 'no-store');
 
     const sessionDetail = await getSessionDetail(req.params.sessionId);
 
@@ -282,7 +308,7 @@ router.post('/results/:sessionId/retry', async (req, res) => {
   }
 });
 
-router.post('/audio/upload', uploadSingleAudio, async (req, res) => {
+router.post('/audio/upload', requireAudioUploadEnabled, uploadSingleAudio, async (req, res) => {
   let finalPath = null;
   let wavPath = null;
   let replacement = null;

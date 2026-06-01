@@ -2,7 +2,20 @@ import { randomUUID } from 'crypto';
 import pool from '../config/db.js';
 import { maybeStartSessionProcessing } from './processingModel.js';
 
-const ERROR_TYPES = new Set(['pronunciation', 'grammar', 'vocabulary', 'fluency']);
+const ERROR_TYPES = new Set([
+  'grammar_error',
+  'collocation_issue',
+  'pause_filler',
+  'false_start',
+  'pronunciation_issue',
+  'advanced_vocab',
+  'good_connector',
+  'idea_development',
+  'pronunciation',
+  'grammar',
+  'vocabulary',
+  'fluency',
+]);
 
 function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;

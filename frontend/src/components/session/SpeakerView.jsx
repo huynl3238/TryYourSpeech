@@ -1,34 +1,33 @@
 import { Timer } from '../ui/Timer';
 import { useSession } from '../../context/SessionContext';
+import { QuestionSupportPanel } from './QuestionSupportPanel';
+import { SessionCallControls } from './SessionCallControls';
 
-export function SpeakerView({ localVideoRef, remoteVideoRef, turn, turnStartTime, onTurnEnd }) {
+export function SpeakerView({ localVideoRef, remoteVideoRef, turn, totalTurns, turnStartTime, onTurnEnd, onEndCall }) {
   const { state } = useSession();
-
   const totalMs = turn?.durationMs || 45000;
 
   return (
     <div className="session-layout">
-      {/* Header */}
       <div className="session-header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-3)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-3)', minWidth: 0 }}>
           <span className="badge badge-speaker" style={{ gap: 4 }}>
             <span className="recording-dot" />
             Bạn đang nói
           </span>
-          <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: 'var(--font-size-xs)' }}>
-            Part {turn?.partNumber} · Câu {turn?.turnIndex}
+          <span style={{ color: '#5f6368', fontSize: 'var(--font-size-xs)' }}>
+            Part {turn?.partNumber} · Lượt {turn?.turnIndex}/{totalTurns}
           </span>
         </div>
 
-        <Timer durationMs={totalMs} onEnd={onTurnEnd} />
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-2)', color: 'rgba(255,255,255,0.7)', fontSize: 'var(--font-size-xs)' }}>
-          <span className="material-symbols-rounded" style={{ fontSize: 16 }}>mic</span>
-          Mic đang bật
+        <div className="session-timer-block compact">
+          <span>Thời gian trả lời</span>
+          <Timer durationMs={totalMs} startedAtMs={turnStartTime} onEnd={onTurnEnd} />
         </div>
+
+        <SessionCallControls remoteVideoRef={remoteVideoRef} onEndCall={onEndCall} compact />
       </div>
 
-      {/* Main: local video large */}
       <div className="session-main">
         <div className="video-primary">
           <video
@@ -40,50 +39,25 @@ export function SpeakerView({ localVideoRef, remoteVideoRef, turn, turnStartTime
           />
           <div className="video-label">Bạn</div>
 
-          {/* Partner preview in corner */}
           <div className="video-self-preview">
             <video ref={remoteVideoRef} autoPlay playsInline />
             <div className="video-label" style={{ fontSize: 10 }}>{state.partnerName || 'Đối tác'}</div>
           </div>
         </div>
+
+        <QuestionSupportPanel turn={turn} totalTurns={totalTurns} isSpeaker />
       </div>
 
-      {/* Question */}
-      <div style={{
-        background: '#1e293b',
-        borderTop: '1px solid #334155',
-        padding: 'var(--spacing-4) var(--spacing-5)',
-      }}>
-        <p style={{
-          color: 'rgba(255,255,255,0.5)',
-          fontSize: 'var(--font-size-xs)',
-          marginBottom: 'var(--spacing-1)',
-          textTransform: 'uppercase',
-          letterSpacing: '0.05em',
-        }}>
-          Câu hỏi của bạn
-        </p>
-        <p style={{
-          color: 'white',
-          fontSize: 'var(--font-size-lg)',
-          fontWeight: 600,
-          lineHeight: 1.5,
-        }}>
-          {turn?.questionText || 'Đang tải câu hỏi...'}
-        </p>
-      </div>
-
-      {/* Footer: recording notice */}
       <div className="session-footer">
-        <div style={{ display: 'flex', alignItems: 'center', justify: 'space-between', gap: 'var(--spacing-3)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--spacing-3)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-2)', flex: 1 }}>
             <span className="recording-dot" />
-            <span style={{ color: 'rgba(255,255,255,0.8)', fontSize: 'var(--font-size-xs)', fontWeight: 600 }}>
+            <span style={{ color: '#3c4043', fontSize: 'var(--font-size-xs)', fontWeight: 700 }}>
               Đang ghi âm lượt nói của bạn
             </span>
           </div>
-          <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: 'var(--font-size-xs)' }}>
-            Audio sẽ được tải lên để AI chấm sau phiên luyện
+          <p style={{ color: '#78716c', fontSize: 'var(--font-size-xs)' }}>
+            AI/audio upload đang tắt để test video call
           </p>
         </div>
       </div>

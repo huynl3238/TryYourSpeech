@@ -1,11 +1,17 @@
 import { useCallback, useEffect } from 'react';
 import { useSession } from '../context/SessionContext';
 import { getConfig } from '../services/api';
+import { cleanupMediaSession, rememberMediaStream } from '../utils/mediaCleanup';
 
 export function useWebRTC({ sendSignal, onSignal, onRemoteStream }) {
   const { refs } = useSession();
 
   const initPeerConnection = useCallback(async () => {
+    const existingPc = refs.current.peerConnection;
+    if (existingPc && existingPc.signalingState !== 'closed') {
+      return existingPc;
+    }
+
     // Fetch ICE config from backend
     let iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
     try {
@@ -18,6 +24,7 @@ export function useWebRTC({ sendSignal, onSignal, onRemoteStream }) {
     refs.current.iceServers = iceServers;
     const pc = new RTCPeerConnection({ iceServers });
     refs.current.peerConnection = pc;
+    refs.current.pendingIceCandidates = [];
 
     // Forward ICE candidates to partner
     pc.onicecandidate = (event) => {
@@ -33,6 +40,7 @@ export function useWebRTC({ sendSignal, onSignal, onRemoteStream }) {
       if (onRemoteStream) {
         onRemoteStream(remoteStream);
       }
+      window.dispatchEvent(new Event('remote_stream_ready'));
     };
 
     pc.onconnectionstatechange = () => {
@@ -42,22 +50,42 @@ export function useWebRTC({ sendSignal, onSignal, onRemoteStream }) {
     return pc;
   }, [sendSignal, onRemoteStream, refs]);
 
-  const startCall = useCallback(async (localStream, isInitiator) => {
+  const addLocalTracks = useCallback((localStream) => {
     const pc = refs.current.peerConnection;
-    if (!pc) return;
+    if (!pc || !localStream) return null;
 
-    // Add local tracks
-    localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
+    const existingTracks = new Set(pc.getSenders().map((sender) => sender.track).filter(Boolean));
+    localStream.getTracks().forEach((track) => {
+      if (!existingTracks.has(track)) {
+        pc.addTrack(track, localStream);
+      }
+    });
+
+    return pc;
+  }, [refs]);
+
+  const startCall = useCallback(async (localStream, isInitiator) => {
+    const pc = addLocalTracks(localStream);
+    if (!pc) return;
 
     if (isInitiator) {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       sendSignal('offer', offer);
     }
-  }, [sendSignal, refs]);
+  }, [addLocalTracks, sendSignal]);
 
   // Handle incoming signals
   useEffect(() => {
+    async function flushPendingIceCandidates(pc) {
+      const pendingCandidates = refs.current.pendingIceCandidates || [];
+      refs.current.pendingIceCandidates = [];
+
+      for (const candidate of pendingCandidates) {
+        await pc.addIceCandidate(candidate);
+      }
+    }
+
     const cleanup = onSignal(async ({ type, payload }) => {
       const pc = refs.current.peerConnection;
       if (!pc) return;
@@ -65,13 +93,21 @@ export function useWebRTC({ sendSignal, onSignal, onRemoteStream }) {
       try {
         if (type === 'offer') {
           await pc.setRemoteDescription(new RTCSessionDescription(payload));
+          await flushPendingIceCandidates(pc);
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
           sendSignal('answer', answer);
         } else if (type === 'answer') {
           await pc.setRemoteDescription(new RTCSessionDescription(payload));
+          await flushPendingIceCandidates(pc);
         } else if (type === 'ice-candidate') {
-          await pc.addIceCandidate(new RTCIceCandidate(payload));
+          const candidate = new RTCIceCandidate(payload);
+          if (pc.remoteDescription) {
+            await pc.addIceCandidate(candidate);
+          } else {
+            refs.current.pendingIceCandidates = refs.current.pendingIceCandidates || [];
+            refs.current.pendingIceCandidates.push(candidate);
+          }
         }
       } catch (err) {
         console.error('[WebRTC] Signal handling error:', err.message);
@@ -82,22 +118,19 @@ export function useWebRTC({ sendSignal, onSignal, onRemoteStream }) {
   }, [onSignal, sendSignal, refs]);
 
   const getLocalStream = useCallback(async (constraints = { audio: true, video: true }) => {
-    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    const existingStream = refs.current.localStream;
+    if (existingStream?.getTracks().some((track) => track.readyState === 'live')) {
+      return existingStream;
+    }
+
+    const stream = rememberMediaStream(await navigator.mediaDevices.getUserMedia(constraints));
     refs.current.localStream = stream;
     return stream;
   }, [refs]);
 
   const stopAll = useCallback(() => {
-    if (refs.current.localStream) {
-      refs.current.localStream.getTracks().forEach((t) => t.stop());
-      refs.current.localStream = null;
-    }
-    if (refs.current.peerConnection) {
-      refs.current.peerConnection.close();
-      refs.current.peerConnection = null;
-    }
-    refs.current.remoteStream = null;
+    cleanupMediaSession(refs);
   }, [refs]);
 
-  return { initPeerConnection, startCall, getLocalStream, stopAll };
+  return { initPeerConnection, addLocalTracks, startCall, getLocalStream, stopAll };
 }

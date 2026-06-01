@@ -1,29 +1,55 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
-export function Timer({ durationMs, onEnd, className = '' }) {
-  const [remaining, setRemaining] = useState(Math.ceil(durationMs / 1000));
+function getRemainingSeconds(durationMs, startedAtMs) {
+  const elapsedMs = Math.max(0, performance.now() - startedAtMs);
+  return Math.max(0, Math.ceil((durationMs - elapsedMs) / 1000));
+}
+
+export function Timer({ durationMs, onEnd, className = '', startedAtMs }) {
+  const startTimeRef = useRef(startedAtMs ?? performance.now());
+  const [remaining, setRemaining] = useState(() => getRemainingSeconds(durationMs, startTimeRef.current));
+  const hasEndedRef = useRef(false);
+  const onEndRef = useRef(onEnd);
 
   useEffect(() => {
-    setRemaining(Math.ceil(durationMs / 1000));
-  }, [durationMs]);
+    onEndRef.current = onEnd;
+  }, [onEnd]);
 
   useEffect(() => {
-    if (remaining <= 0) {
-      if (onEnd) onEnd();
-      return;
+    startTimeRef.current = startedAtMs ?? performance.now();
+    hasEndedRef.current = false;
+    setRemaining(getRemainingSeconds(durationMs, startTimeRef.current));
+  }, [durationMs, startedAtMs]);
+
+  useEffect(() => {
+    function updateRemaining() {
+      const nextRemaining = getRemainingSeconds(durationMs, startTimeRef.current);
+      setRemaining(nextRemaining);
+
+      if (nextRemaining <= 0 && !hasEndedRef.current) {
+        hasEndedRef.current = true;
+        onEndRef.current?.();
+      }
     }
 
-    const id = setTimeout(() => setRemaining((r) => r - 1), 1000);
-    return () => clearTimeout(id);
-  }, [remaining, onEnd]);
+    updateRemaining();
+
+    const id = setInterval(updateRemaining, 250);
+    document.addEventListener('visibilitychange', updateRemaining);
+    window.addEventListener('focus', updateRemaining);
+
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', updateRemaining);
+      window.removeEventListener('focus', updateRemaining);
+    };
+  }, [durationMs, startedAtMs]);
 
   const minutes = Math.floor(remaining / 60);
   const seconds = remaining % 60;
   const display = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 
-  const timerClass = remaining <= 0
-    ? 'danger'
-    : remaining <= 10
+  const timerClass = remaining <= 10
     ? 'danger'
     : remaining <= 30
     ? 'warning'

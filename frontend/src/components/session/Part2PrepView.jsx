@@ -1,152 +1,163 @@
 import { useState } from 'react';
 import { Timer } from '../ui/Timer';
-import { useSession } from '../../context/SessionContext';
+import { SessionCallControls } from './SessionCallControls';
 
-export function Part2PrepView({ localVideoRef, remoteVideoRef, turn, onPrepEnd, onSpeakEnd }) {
-  const { state } = useSession();
-  const [phase, setPhase] = useState('prep'); // 'prep' | 'speaking'
+function getCueCardItems(cueCard) {
+  if (!cueCard) return [];
+  if (Array.isArray(cueCard)) return cueCard;
+  if (Array.isArray(cueCard.bullet_points)) return cueCard.bullet_points;
+  return [];
+}
 
+function getPrepLabel(partNumber) {
+  if (partNumber === 1) return 'Chuẩn bị Part 1';
+  if (partNumber === 2) return 'Chuẩn bị Part 2';
+  return 'Chuẩn bị Part 3';
+}
+
+function getPrepGuide(partNumber) {
+  if (partNumber === 1) {
+    return {
+      time: '30 giây chuẩn bị',
+      focus: 'Chuẩn bị ý chính và một ví dụ ngắn.',
+      structure: 'Answer -> Reason -> Example.',
+    };
+  }
+
+  if (partNumber === 2) {
+    return {
+      time: '60 giây chuẩn bị',
+      focus: 'Ghi nhớ từ khóa, không viết cả câu.',
+      structure: 'Who/What -> Context -> Details -> Why it matters.',
+    };
+  }
+
+  return {
+    time: '30 giây chuẩn bị',
+    focus: 'Chọn quan điểm rõ ràng và chuẩn bị 1-2 luận điểm.',
+    structure: 'Opinion -> Reason -> Example -> Conclusion.',
+  };
+}
+
+export function Part2PrepView({
+  localVideoRef,
+  remoteVideoRef,
+  turn,
+  isSpeaker,
+  partnerName,
+  prepStartTime,
+  onPrepEnd,
+  onEndCall,
+}) {
+  const [showPrepWindow, setShowPrepWindow] = useState(true);
   const prepMs = turn?.prepDurationMs || 60000;
-  const speakMs = turn?.durationMs || 120000;
-
-  const isSpeaker = turn?.speakerRole === state.role;
+  const cueItems = getCueCardItems(turn?.cueCard);
+  const phrases = Array.isArray(turn?.suggestedPhrases) ? turn.suggestedPhrases : [];
+  const guide = getPrepGuide(turn?.partNumber);
 
   return (
     <div className="session-layout">
       <div className="session-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-3)' }}>
-          <span className="badge badge-primary">Part 2 — Cue Card</span>
-          {phase === 'prep' ? (
-            <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: 'var(--font-size-xs)' }}>
-              {isSpeaker ? 'Thời gian chuẩn bị' : 'Đối tác đang chuẩn bị'}
-            </span>
-          ) : (
-            <span className="badge badge-speaker" style={{ gap: 4 }}>
-              <span className="recording-dot" />
-              {isSpeaker ? 'Bạn đang nói' : 'Đối tác đang nói'}
-            </span>
-          )}
+          <span className="mode-pill prep">
+            <span className="material-symbols-rounded" style={{ fontSize: 14 }}>edit_note</span>
+            {getPrepLabel(turn?.partNumber)}
+          </span>
+          <span style={{ color: '#5f6368', fontSize: 'var(--font-size-xs)' }}>
+            {isSpeaker ? 'Bạn sắp trả lời' : `${partnerName || 'Đối tác'} sắp trả lời`} · Chưa ghi âm
+          </span>
         </div>
 
-        <Timer
-          durationMs={phase === 'prep' ? prepMs : speakMs}
-          onEnd={() => {
-            if (phase === 'prep') {
-              setPhase('speaking');
-              if (onPrepEnd) onPrepEnd();
-            } else {
-              if (onSpeakEnd) onSpeakEnd();
-            }
-          }}
-        />
-
-        <div style={{ fontSize: 'var(--font-size-xs)', color: 'rgba(255,255,255,0.5)' }}>
-          {phase === 'prep' ? 'Chuẩn bị' : 'Nói 2 phút'}
+        <div className="session-timer-block compact">
+          <span>Thời gian chuẩn bị</span>
+          <Timer durationMs={prepMs} startedAtMs={prepStartTime} onEnd={onPrepEnd} />
         </div>
+
+        <SessionCallControls remoteVideoRef={remoteVideoRef} onEndCall={onEndCall} compact />
       </div>
 
-      {/* Cue Card */}
-      <div className="session-main" style={{ alignItems: 'center', justifyContent: 'center', padding: 'var(--spacing-8)', overflowY: 'auto' }}>
-        <div style={{ maxWidth: 600, width: '100%' }}>
-          {/* Topic tag */}
-          <div style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 'var(--spacing-2)',
-            background: 'rgba(37,99,235,0.2)',
-            color: '#93c5fd',
-            borderRadius: 'var(--radius-full)',
-            padding: '4px 12px',
-            fontSize: 'var(--font-size-xs)',
-            fontWeight: 600,
-            marginBottom: 'var(--spacing-4)',
-          }}>
-            <span className="material-symbols-rounded" style={{ fontSize: 14 }}>description</span>
-            IELTS Speaking · Part 2
-          </div>
+      <div className="warmup-stage prep-video-stage">
+        <section className="warmup-video-pane">
+          <video ref={localVideoRef} autoPlay playsInline muted />
+          <div className="video-label">Bạn</div>
+        </section>
 
-          {/* Cue Card box */}
-          <div style={{
-            background: '#1e293b',
-            border: '1px solid #334155',
-            borderRadius: 'var(--radius-xl)',
-            padding: 'var(--spacing-8)',
-            marginBottom: 'var(--spacing-5)',
-          }}>
-            <p style={{
-              color: 'rgba(255,255,255,0.5)',
-              fontSize: 'var(--font-size-xs)',
-              marginBottom: 'var(--spacing-3)',
-              textTransform: 'uppercase',
-              letterSpacing: '0.1em',
-            }}>
-              Describe...
-            </p>
-            <h2 style={{
-              color: 'white',
-              fontSize: 'var(--font-size-xl)',
-              fontWeight: 700,
-              lineHeight: 1.4,
-              marginBottom: 'var(--spacing-6)',
-            }}>
-              {turn?.questionText || 'Đang tải Cue Card...'}
-            </h2>
+        <section className="warmup-video-pane">
+          <video ref={remoteVideoRef} autoPlay playsInline />
+          <div className="video-label">{partnerName || 'Đối tác'}</div>
+        </section>
 
-            {turn?.cueCard && (
+        {showPrepWindow && (
+          <aside className="warmup-guide-window prep-guide-window">
+            <div className="warmup-guide-titlebar">
               <div>
-                <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: 'var(--font-size-xs)', marginBottom: 'var(--spacing-3)' }}>
-                  You should say:
-                </p>
-                <ul style={{ paddingLeft: 'var(--spacing-5)', color: 'rgba(255,255,255,0.85)', fontSize: 'var(--font-size-sm)', lineHeight: 2 }}>
-                  {(Array.isArray(turn.cueCard) ? turn.cueCard : [turn.cueCard]).map((item, i) => (
-                    <li key={i}>{item}</li>
+                <div className="session-eyebrow">{isSpeaker ? 'Lượt của bạn' : 'Lượt của đối tác'}</div>
+                <h2>{turn?.questionText || 'Đang tải câu hỏi...'}</h2>
+              </div>
+              <button
+                type="button"
+                className="warmup-guide-close"
+                aria-label="Đóng khung chuẩn bị"
+                onClick={() => setShowPrepWindow(false)}
+              >
+                <span className="material-symbols-rounded">close</span>
+              </button>
+            </div>
+
+            {cueItems.length > 0 && (
+              <div className="cue-card-box large">
+                <p>You should say:</p>
+                <ul>
+                  {cueItems.map((item) => (
+                    <li key={item}>{item}</li>
                   ))}
                 </ul>
               </div>
             )}
-          </div>
 
-          {/* Instruction */}
-          <p style={{
-            color: 'rgba(255,255,255,0.5)',
-            fontSize: 'var(--font-size-xs)',
-            textAlign: 'center',
-          }}>
-            {isSpeaker
-              ? 'Hãy ghi chú ý tưởng trong thời gian chuẩn bị. Sau đó nói trong 2 phút.'
-              : 'Đối tác của bạn đang chuẩn bị. Lắng nghe và sẵn sàng đánh dấu lỗi.'
-            }
-          </p>
-        </div>
+            <div className="session-info-band">
+              <div>
+                <strong>{guide.time}</strong>
+                <span>{guide.focus}</span>
+              </div>
+              <div>
+                <strong>{turn?.durationMs ? Math.round(turn.durationMs / 1000) : 60} giây nói</strong>
+                <span>{isSpeaker ? 'Sau bước này, hệ thống sẽ bắt đầu lượt trả lời của bạn.' : 'Sau bước này, bạn nghe và bấm TAB để ghi lỗi.'}</span>
+              </div>
+              <div>
+                <strong>Cấu trúc gợi ý</strong>
+                <span>{guide.structure}</span>
+              </div>
+            </div>
 
-        {/* Video previews small */}
-        <div style={{
-          position: 'absolute',
-          top: 'var(--spacing-4)',
-          right: 'var(--spacing-4)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 'var(--spacing-2)',
-        }}>
-          <div style={{ width: 120, height: 84, borderRadius: 'var(--radius-md)', overflow: 'hidden', border: '2px solid rgba(255,255,255,0.15)', background: '#334155' }}>
-            <video ref={localVideoRef} autoPlay playsInline muted style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
-          </div>
-          <div style={{ width: 120, height: 84, borderRadius: 'var(--radius-md)', overflow: 'hidden', border: '2px solid rgba(255,255,255,0.15)', background: '#334155' }}>
-            <video ref={remoteVideoRef} autoPlay playsInline style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-          </div>
-        </div>
-      </div>
+            <details className="phrases-panel prep-phrases" open>
+              <summary>
+                <span>Cụm từ có thể dùng</span>
+                <span className="material-symbols-rounded">expand_more</span>
+              </summary>
+              {phrases.length > 0 ? (
+                <ul>
+                  {phrases.map((phrase) => (
+                    <li key={phrase}>{phrase}</li>
+                  ))}
+                </ul>
+              ) : (
+                <p>Chưa có cụm từ gợi ý cho câu hỏi này.</p>
+              )}
+            </details>
+          </aside>
+        )}
 
-      <div className="session-footer">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-2)' }}>
-          <span className="material-symbols-rounded" style={{ fontSize: 16, color: 'rgba(255,255,255,0.5)' }}>info</span>
-          <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 'var(--font-size-xs)' }}>
-            {isSpeaker
-              ? 'Nói về chủ đề trên trong vòng 2 phút sau khi đồng hồ chuẩn bị kết thúc'
-              : 'Nhấn TAB để đánh dấu lỗi khi đối tác bắt đầu nói'
-            }
-          </span>
-        </div>
+        {!showPrepWindow && (
+          <button
+            type="button"
+            className="warmup-guide-reopen prep-guide-reopen"
+            onClick={() => setShowPrepWindow(true)}
+          >
+            <span className="material-symbols-rounded">edit_note</span>
+            Mở câu hỏi
+          </button>
+        )}
       </div>
     </div>
   );

@@ -17,9 +17,13 @@ CREATE TABLE IF NOT EXISTS questions (
   part_number SMALLINT NOT NULL,
   question_text TEXT NOT NULL,
   cue_card JSONB,
+  suggested_phrases JSONB,
   CHECK (part_number IN (1, 2, 3))
 );
 CREATE INDEX IF NOT EXISTS idx_questions_topic_id ON questions(topic_id);
+
+ALTER TABLE questions
+ADD COLUMN IF NOT EXISTS suggested_phrases JSONB;
 
 CREATE TABLE IF NOT EXISTS sessions (
   id UUID PRIMARY KEY,
@@ -71,10 +75,43 @@ CREATE TABLE IF NOT EXISTS peer_notes (
   note_text TEXT,
   created_at TIMESTAMP DEFAULT NOW(),
   CHECK (timestamp_ms >= 0),
-  CHECK (error_type IN ('pronunciation', 'grammar', 'vocabulary', 'fluency')),
+  CHECK (error_type IN (
+    'grammar_error',
+    'collocation_issue',
+    'pause_filler',
+    'false_start',
+    'pronunciation_issue',
+    'advanced_vocab',
+    'good_connector',
+    'idea_development',
+    'pronunciation',
+    'grammar',
+    'vocabulary',
+    'fluency'
+  )),
   UNIQUE (listener_id, turn_id, client_note_id)
 );
 CREATE INDEX IF NOT EXISTS idx_peer_notes_turn_id ON peer_notes(turn_id);
+
+ALTER TABLE peer_notes
+DROP CONSTRAINT IF EXISTS peer_notes_error_type_check;
+
+ALTER TABLE peer_notes
+ADD CONSTRAINT peer_notes_error_type_check
+CHECK (error_type IN (
+  'grammar_error',
+  'collocation_issue',
+  'pause_filler',
+  'false_start',
+  'pronunciation_issue',
+  'advanced_vocab',
+  'good_connector',
+  'idea_development',
+  'pronunciation',
+  'grammar',
+  'vocabulary',
+  'fluency'
+));
 
 CREATE TABLE IF NOT EXISTS ai_results (
   id UUID PRIMARY KEY,

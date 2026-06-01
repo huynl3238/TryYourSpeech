@@ -7,10 +7,11 @@ import {
 
 const MAX_BAND_DIFFERENCE = 1.0;
 const MAX_DISPLAY_NAME_LENGTH = 100;
+const READY_WAIT_TIMEOUT_MS = 60000;
 const SIGNAL_TYPES = new Set(['offer', 'answer', 'ice-candidate']);
 
 const waitingQueue = [];    // [{ socketId, displayName, band, joinedAt }]
-const rooms = new Map();    // roomId -> { userA, userB, readyUsers: Set, sessionId }
+const rooms = new Map();    // roomId -> { userA, userB, readyUsers: Set, practiceReadyUsers: Set, practiceStarted, sessionId, readyTimeout }
 const userRoom = new Map(); // socketId -> roomId
 
 function removeFromQueue(socketId) {
@@ -126,7 +127,15 @@ function getPartnerSocketId(roomId, mySocketId) {
 }
 
 function createRoom(roomId, userA, userB, sessionId) {
-  rooms.set(roomId, { userA, userB, readyUsers: new Set(), sessionId });
+  rooms.set(roomId, {
+    userA,
+    userB,
+    readyUsers: new Set(),
+    practiceReadyUsers: new Set(),
+    practiceStarted: false,
+    sessionId,
+    readyTimeout: null,
+  });
   userRoom.set(userA.socketId, roomId);
   userRoom.set(userB.socketId, roomId);
 }
@@ -135,9 +144,27 @@ function deleteRoom(roomId) {
   const room = rooms.get(roomId);
   if (!room) return;
 
+  if (room.readyTimeout) {
+    clearTimeout(room.readyTimeout);
+  }
+
   userRoom.delete(room.userA.socketId);
   userRoom.delete(room.userB.socketId);
   rooms.delete(roomId);
+}
+
+async function abandonRoom(io, roomId) {
+  const room = rooms.get(roomId);
+  if (!room) return;
+
+  io.to(room.userA.socketId).emit('partner_disconnected');
+  io.to(room.userB.socketId).emit('partner_disconnected');
+
+  if (room.sessionId) {
+    await markSessionAbandoned(room.sessionId);
+  }
+
+  deleteRoom(roomId);
 }
 
 function emitMatched(io, userA, userB, roomId, session) {
@@ -159,6 +186,25 @@ function emitMatched(io, userA, userB, roomId, session) {
     role: 'B',
     isInitiator: false,
     partnerName: userA.displayName,
+  });
+}
+
+function emitPracticeReadyState(io, room) {
+  const userAReady = room.practiceReadyUsers.has(room.userA.socketId);
+  const userBReady = room.practiceReadyUsers.has(room.userB.socketId);
+
+  io.to(room.userA.socketId).emit('practice_ready_state', {
+    readyCount: room.practiceReadyUsers.size,
+    total: 2,
+    myReady: userAReady,
+    partnerReady: userBReady,
+  });
+
+  io.to(room.userB.socketId).emit('practice_ready_state', {
+    readyCount: room.practiceReadyUsers.size,
+    total: 2,
+    myReady: userBReady,
+    partnerReady: userAReady,
   });
 }
 
@@ -232,11 +278,45 @@ async function handlePeerConnected(io, socket) {
   room.readyUsers.add(socket.id);
 
   if (room.readyUsers.size === 2) {
+    if (room.readyTimeout) {
+      clearTimeout(room.readyTimeout);
+      room.readyTimeout = null;
+    }
+
     const timestamp = Date.now();
     await markSessionActive(room.sessionId);
     io.to(room.userA.socketId).emit('session_start', { timestamp });
     io.to(room.userB.socketId).emit('session_start', { timestamp });
     console.log(`[Session] Room ${roomId} started at ${timestamp}`);
+    return;
+  }
+
+  if (!room.readyTimeout) {
+    room.readyTimeout = setTimeout(() => {
+      abandonRoom(io, roomId).catch((err) => {
+        console.error('ready timeout handling failed:', err.message);
+      });
+    }, READY_WAIT_TIMEOUT_MS);
+    room.readyTimeout.unref?.();
+  }
+}
+
+function handlePracticeReady(io, socket) {
+  const roomId = userRoom.get(socket.id);
+  if (!roomId) return;
+
+  const room = rooms.get(roomId);
+  if (!room || room.readyUsers.size < 2) return;
+
+  room.practiceReadyUsers.add(socket.id);
+  emitPracticeReadyState(io, room);
+
+  if (room.practiceReadyUsers.size === 2 && !room.practiceStarted) {
+    room.practiceStarted = true;
+    const timestamp = Date.now();
+    io.to(room.userA.socketId).emit('practice_start', { timestamp });
+    io.to(room.userB.socketId).emit('practice_start', { timestamp });
+    console.log(`[Session] Room ${roomId} practice started at ${timestamp}`);
   }
 }
 
@@ -275,6 +355,7 @@ export function setupSocket(io) {
         console.error('peer_connected failed:', err.message);
       });
     });
+    socket.on('practice_ready', () => handlePracticeReady(io, socket));
     socket.on('disconnect', () => {
       handleDisconnect(io, socket).catch((err) => {
         console.error('disconnect handling failed:', err.message);

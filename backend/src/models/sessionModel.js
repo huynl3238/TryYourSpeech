@@ -1,8 +1,10 @@
 import { randomUUID } from 'crypto';
 import pool from '../config/db.js';
 
-const PART_1_COUNT = 4;
-const PART_3_COUNT = 3;
+const TEST_TURNS_PER_USER = 3;
+const TEST_TURN_DURATION_MS = 30000;
+const TEST_SHORT_PREP_DURATION_MS = 30000;
+const TEST_LONG_PREP_DURATION_MS = 60000;
 
 function mapSessionRow(row) {
   return {
@@ -32,6 +34,7 @@ function mapTurnRow(row) {
     partNumber: row.part_number,
     questionText: row.question_text,
     cueCard: row.cue_card,
+    suggestedPhrases: row.suggested_phrases || [],
     durationMs: row.duration_ms,
     prepDurationMs: row.prep_duration_ms,
   };
@@ -59,12 +62,12 @@ async function selectEligibleTopic(client) {
     JOIN questions q ON q.topic_id = t.id
     GROUP BY t.id, t.name
     HAVING
-      COUNT(*) FILTER (WHERE q.part_number = 1) >= $1 AND
+      COUNT(*) FILTER (WHERE q.part_number = 1) >= 1 AND
       COUNT(*) FILTER (WHERE q.part_number = 2) >= 1 AND
-      COUNT(*) FILTER (WHERE q.part_number = 3) >= $2
+      COUNT(*) FILTER (WHERE q.part_number = 3) >= 1
     ORDER BY RANDOM()
     LIMIT 1
-  `, [PART_1_COUNT, PART_3_COUNT]);
+  `);
 
   return result.rows[0] || null;
 }
@@ -76,9 +79,9 @@ async function selectSessionQuestions(client, topicId) {
       FROM questions
       WHERE topic_id = $1 AND part_number = 1
       ORDER BY id
-      LIMIT $2
+      LIMIT 1
     `,
-    [topicId, PART_1_COUNT]
+    [topicId]
   );
   const part2 = await client.query(
     `
@@ -96,24 +99,23 @@ async function selectSessionQuestions(client, topicId) {
       FROM questions
       WHERE topic_id = $1 AND part_number = 3
       ORDER BY id
-      LIMIT $2
+      LIMIT 1
     `,
-    [topicId, PART_3_COUNT]
+    [topicId]
   );
 
-  return [...part1.rows, ...part2.rows, ...part3.rows];
+  return [...part1.rows, ...part2.rows, ...part3.rows].slice(0, TEST_TURNS_PER_USER);
 }
 
 function getTurnDurations(partNumber) {
-  if (partNumber === 2) {
-    return { durationMs: 120000, prepDurationMs: 60000 };
-  }
+  const prepDurationMs = partNumber === 2
+    ? TEST_LONG_PREP_DURATION_MS
+    : TEST_SHORT_PREP_DURATION_MS;
 
-  if (partNumber === 3) {
-    return { durationMs: 60000, prepDurationMs: 0 };
-  }
-
-  return { durationMs: 45000, prepDurationMs: 0 };
+  return {
+    durationMs: TEST_TURN_DURATION_MS,
+    prepDurationMs,
+  };
 }
 
 async function createTurns(client, sessionId, userAId, userBId, questions) {
@@ -269,7 +271,8 @@ export async function getSessionDetail(sessionId) {
         tr.duration_ms,
         tr.prep_duration_ms,
         q.question_text,
-        q.cue_card
+        q.cue_card,
+        q.suggested_phrases
       FROM turns tr
       JOIN questions q ON q.id = tr.question_id
       WHERE tr.session_id = $1
