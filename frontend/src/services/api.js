@@ -1,4 +1,10 @@
-const BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+function getBaseUrl() {
+  const configuredUrl = import.meta.env.VITE_BACKEND_URL;
+  if (configuredUrl) return configuredUrl;
+  return window.location.origin;
+}
+
+const BASE_URL = getBaseUrl();
 
 export function getBackendFileUrl(path) {
   if (!path) return '';
