@@ -1,11 +1,13 @@
-import { scoreSpeakingTurn } from '../services/ieltsRubricScoring.js';
 import { assessAzurePronunciation } from '../services/azurePronunciationAssessment.js';
+import { azureToPronunciationBand } from '../services/pronunciationScoring.js';
+import { generateSpeakingFeedback } from '../services/ieltsSpeakingFeedback.js';
+import { transcribeAudioFile } from '../services/openaiClient.js';
+import { resolveUploadAudioPath } from '../services/uploadPaths.js';
 import {
   getAiConfigStatus,
+  getAiRuntimeConfig,
   getMissingAiConfigNames,
 } from '../config/ai.js';
-
-const AI_WORKER_NOT_IMPLEMENTED_ERROR = 'AI worker is not implemented yet';
 
 export { getAiConfigStatus };
 
@@ -13,22 +15,37 @@ function getMissingConfigError(missingConfigNames) {
   return `AI services are not configured. Missing: ${missingConfigNames.join(', ')}`;
 }
 
-async function markProcessingResultsFailed(client, sessionId, errorMessage) {
-  await client.query(
-    `
-      UPDATE ai_results
-      SET status = 'failed',
-          error_message = $2,
-          updated_at = NOW()
-      WHERE status = 'processing'
-        AND turn_id IN (
-          SELECT id
-          FROM turns
-          WHERE session_id = $1
-        )
-    `,
-    [sessionId, errorMessage]
+function getMonthlyLimitError(limit) {
+  return `Đã đạt giới hạn chấm AI trong tháng (${limit} lượt). Tạm dừng để không vượt ngân sách.`;
+}
+
+function roundToHalf(value) {
+  return Math.round(value * 2) / 2;
+}
+
+function computeOverallBand(scores) {
+  const bands = Object.values(scores).filter(
+    (band) => typeof band === 'number' && Number.isFinite(band)
   );
+  if (bands.length === 0) {
+    return null;
+  }
+
+  const average = bands.reduce((total, band) => total + band, 0) / bands.length;
+  return roundToHalf(average);
+}
+
+async function getMonthlyAssessmentCount(client) {
+  const result = await client.query(
+    `
+      SELECT COUNT(*)::int AS count
+      FROM ai_results
+      WHERE status = 'completed'
+        AND updated_at >= date_trunc('month', NOW())
+    `
+  );
+
+  return result.rows[0]?.count ?? 0;
 }
 
 async function getProcessingTurns(client, sessionId) {
@@ -120,82 +137,68 @@ async function markTurnResultCompleted(client, turnId, result) {
   );
 }
 
-function createPendingStep(name) {
-  return async () => {
-    throw new Error(`${name} step is not implemented yet`);
-  };
+async function transcribeTurnAudio(turn) {
+  const filePath = resolveUploadAudioPath(turn.audio_url);
+  const runtimeConfig = getAiRuntimeConfig();
+
+  return await transcribeAudioFile({
+    filePath,
+    model: runtimeConfig.openAiTranscriptionModel,
+    language: runtimeConfig.azureSpeechLanguage.split('-')[0],
+  });
 }
 
-const transcribeTurnAudio = createPendingStep('Transcription');
-const generateSpeakingFeedback = createPendingStep('Speaking feedback');
-
-async function assessPronunciation(turn, transcript) {
+// Azure runs unscripted (no reference text): the candidate's speech is spontaneous,
+// so pronunciation is assessed against Azure's acoustic model, not a transcript.
+async function assessPronunciation(turn) {
   return await assessAzurePronunciation({
     audioUrl: turn.audio_url,
     durationMs: turn.duration_ms,
-    referenceText: transcript,
   });
 }
 
-function getFeedbackScoringMetrics(feedback) {
-  return feedback?.scoringMetrics || feedback?.metrics || null;
-}
+async function generateTurnFeedback(turn, transcript, pronunciation) {
+  const runtimeConfig = getAiRuntimeConfig();
 
-function getRubricResult(turn, feedback) {
-  const metrics = getFeedbackScoringMetrics(feedback);
-  if (!metrics) {
-    return null;
-  }
-
-  return scoreSpeakingTurn({
-    partNumber: turn.part_number,
-    metrics,
+  return await generateSpeakingFeedback({
+    turn,
+    transcript,
+    pronunciation,
+    model: runtimeConfig.openAiFeedbackModel,
   });
 }
 
-function getScoresFromRubric(rubricResult) {
-  if (!rubricResult?.ok) {
-    return null;
-  }
-
-  return rubricResult.scores;
-}
-
-function buildAiFeedback(feedback, rubricResult) {
-  if (!rubricResult) {
-    return feedback || {};
-  }
-
+function buildAiFeedback(feedback, pronunciation, scores) {
   return {
-    ...(feedback || {}),
-    rubric: rubricResult,
+    ...feedback,
+    pronunciation: {
+      band: scores.pronunciation,
+      accuracyScore: pronunciation?.accuracyScore ?? null,
+      fluencyScore: pronunciation?.fluencyScore ?? null,
+      prosodyScore: pronunciation?.prosodyScore ?? null,
+      pronunciationScore: pronunciation?.pronunciationScore ?? null,
+    },
+    overallBand: computeOverallBand(scores),
   };
 }
 
-async function runTurnPipeline(_client, turn) {
+async function runTurnPipeline(turn) {
   const transcript = await transcribeTurnAudio(turn);
-  const pronunciationResult = await assessPronunciation(turn, transcript);
-  const feedback = await generateSpeakingFeedback(turn, transcript, pronunciationResult);
-  const feedbackScores = feedback?.scores || {};
-  const rubricResult = getRubricResult(turn, feedback);
-  const rubricScores = getScoresFromRubric(rubricResult) || {};
+  const pronunciation = await assessPronunciation(turn);
+  const feedback = await generateTurnFeedback(turn, transcript, pronunciation);
+
+  const scores = {
+    fluency: feedback.scores.fluency ?? null,
+    lexical: feedback.scores.lexical ?? null,
+    grammar: feedback.scores.grammar ?? null,
+    pronunciation: azureToPronunciationBand(pronunciation),
+  };
 
   return {
     transcript,
-    scores: {
-      fluency: rubricScores.fluency
-        ?? feedbackScores.fluency
-        ?? pronunciationResult?.fluencyScore
-        ?? null,
-      lexical: rubricScores.lexical ?? feedbackScores.lexical ?? null,
-      grammar: rubricScores.grammar ?? feedbackScores.grammar ?? null,
-      pronunciation: rubricScores.pronunciation
-        ?? feedbackScores.pronunciation
-        ?? pronunciationResult?.pronunciationScore
-        ?? null,
-    },
-    pronunciationDetail: pronunciationResult?.detail || [],
-    aiFeedback: buildAiFeedback(feedback, rubricResult),
+    scores,
+    pronunciationDetail: pronunciation?.detail || [],
+    aiFeedback: buildAiFeedback(feedback, pronunciation, scores),
   };
 }
 
@@ -223,34 +226,57 @@ async function failSessionBecauseAiConfigMissing(client, sessionId, missingConfi
   return result;
 }
 
-async function failSessionBecauseWorkerIsMissing(client, sessionId) {
+async function failSessionBecauseMonthlyLimitReached(client, sessionId, limit) {
+  const errorMessage = getMonthlyLimitError(limit);
+  const result = await failProcessingTurns(client, sessionId, errorMessage);
+
+  console.warn(`${errorMessage} Session ${sessionId} was completed with failed AI results.`);
+
+  return result;
+}
+
+async function runSessionPipeline(client, sessionId) {
   const turns = await getProcessingTurns(client, sessionId);
+  let completedTurns = 0;
 
   for (const turn of turns) {
     try {
-      const result = await runTurnPipeline(client, turn);
+      const result = await runTurnPipeline(turn);
       await markTurnResultCompleted(client, turn.turn_id, result);
+      completedTurns += 1;
     } catch (err) {
-      await markTurnResultFailed(client, turn.turn_id, err.message || AI_WORKER_NOT_IMPLEMENTED_ERROR);
+      console.error(`AI pipeline failed for turn ${turn.turn_id}:`, err.message);
+      await markTurnResultFailed(client, turn.turn_id, err.message || 'AI processing failed');
     }
   }
 
-  console.warn(`Session ${sessionId} was completed because the AI worker is not implemented yet.`);
+  const allFailed = turns.length > 0 && completedTurns === 0;
 
   return {
-    started: false,
-    status: 'failed',
-    reason: AI_WORKER_NOT_IMPLEMENTED_ERROR,
+    started: true,
+    // Only short-circuit the caller with 'failed' when nothing succeeded; otherwise
+    // let the session-completion logic derive the final status.
+    status: allFailed ? 'failed' : null,
+    reason: null,
     processedTurns: turns.length,
+    completedTurns,
+    failedTurns: turns.length - completedTurns,
   };
 }
 
 export async function prepareAiPipeline(client, sessionId) {
   const missingConfigNames = getMissingAiConfigNames();
-
   if (missingConfigNames.length > 0) {
     return failSessionBecauseAiConfigMissing(client, sessionId, missingConfigNames);
   }
 
-  return failSessionBecauseWorkerIsMissing(client, sessionId);
+  const { monthlyAssessmentLimit } = getAiRuntimeConfig();
+  if (monthlyAssessmentLimit > 0) {
+    const monthlyCount = await getMonthlyAssessmentCount(client);
+    if (monthlyCount >= monthlyAssessmentLimit) {
+      return failSessionBecauseMonthlyLimitReached(client, sessionId, monthlyAssessmentLimit);
+    }
+  }
+
+  return runSessionPipeline(client, sessionId);
 }

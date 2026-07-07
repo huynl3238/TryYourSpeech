@@ -95,6 +95,102 @@ function renderFeedbackValue(value) {
   return String(value);
 }
 
+// The three criteria graded holistically by the LLM. Pronunciation is rendered
+// separately from Azure acoustic data.
+const FEEDBACK_CRITERIA = [
+  { key: 'fluencyCoherence',          label: 'Fluency & Coherence',      color: '#2563eb' },
+  { key: 'lexicalResource',           label: 'Lexical Resource',         color: '#059669' },
+  { key: 'grammaticalRangeAccuracy',  label: 'Grammar Range & Accuracy', color: '#d97706' },
+];
+
+function hasStructuredFeedback(feedback) {
+  return !!(feedback && (feedback.criteria || feedback.overall));
+}
+
+function BandChip({ band, color }) {
+  const num = Number.isFinite(Number(band)) ? Number(band) : null;
+  return (
+    <span className="text-xs font-bold tabular-nums px-2 py-0.5 rounded-full text-white" style={{ background: color }}>
+      {num != null ? num.toFixed(1) : '—'}
+    </span>
+  );
+}
+
+function CriterionFeedback({ label, color, band, feedback, evidence }) {
+  if (!feedback && !evidence && band == null) return null;
+  return (
+    <div className="rounded-lg border border-zinc-100 p-3" style={{ borderLeft: `3px solid ${color}` }}>
+      <div className="flex items-center gap-2 mb-1.5">
+        <span className="text-xs font-semibold text-zinc-700">{label}</span>
+        <BandChip band={band} color={color} />
+      </div>
+      {feedback && <p className="text-sm text-zinc-700 leading-relaxed">{feedback}</p>}
+      {evidence && <p className="text-xs text-zinc-400 mt-1 italic">Dẫn chứng: {evidence}</p>}
+    </div>
+  );
+}
+
+function StructuredFeedback({ feedback }) {
+  const overall = feedback.overall || {};
+  const criteria = feedback.criteria || {};
+  const pronunciation = feedback.pronunciation || null;
+  const pronNotes = pronunciation
+    ? [
+        typeof pronunciation.accuracyScore === 'number' ? `độ chính xác ${pronunciation.accuracyScore}/100` : null,
+        typeof pronunciation.prosodyScore === 'number' ? `ngữ điệu ${pronunciation.prosodyScore}/100` : null,
+      ].filter(Boolean).join(' · ')
+    : '';
+
+  return (
+    <div className="space-y-4">
+      {overall.summary && <p className="text-sm text-zinc-700 leading-relaxed">{overall.summary}</p>}
+
+      {overall.strengths?.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold text-emerald-600 uppercase tracking-wide mb-1">Điểm mạnh</p>
+          <ul className="list-disc pl-5 space-y-0.5">
+            {overall.strengths.map((item, i) => <li key={i} className="text-sm text-zinc-700">{item}</li>)}
+          </ul>
+        </div>
+      )}
+
+      {overall.improvements?.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold text-amber-600 uppercase tracking-wide mb-1">Cần cải thiện</p>
+          <ul className="list-disc pl-5 space-y-0.5">
+            {overall.improvements.map((item, i) => <li key={i} className="text-sm text-zinc-700">{item}</li>)}
+          </ul>
+        </div>
+      )}
+
+      <div className="space-y-3 pt-1">
+        {FEEDBACK_CRITERIA.map(({ key, label, color }) => {
+          const c = criteria[key] || {};
+          return (
+            <CriterionFeedback
+              key={key}
+              label={label}
+              color={color}
+              band={c.band}
+              feedback={c.feedback}
+              evidence={c.evidence}
+            />
+          );
+        })}
+
+        {pronunciation && pronunciation.band != null && (
+          <CriterionFeedback
+            label="Pronunciation"
+            color="#7c3aed"
+            band={pronunciation.band}
+            feedback={`Đánh giá âm học khách quan từ Azure${pronNotes ? ` (${pronNotes})` : ''}.`}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function ResultsPage() {
   const { state, dispatch } = useSession();
   const navigate = useNavigate();
@@ -278,16 +374,20 @@ export default function ResultsPage() {
                     <CardTitle className="text-sm font-medium text-zinc-600">Nhận xét từ AI</CardTitle>
                   </CardHeader>
                   <CardContent className="px-4 pb-4 space-y-4">
-                    {Object.entries(selectedTurnResult.aiFeedback).map(([key, value]) => {
-                      const rendered = renderFeedbackValue(value);
-                      if (!rendered) return null;
-                      return (
-                        <div key={key}>
-                          <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-1">{key}</p>
-                          <p className="text-sm text-zinc-700 leading-relaxed whitespace-pre-wrap">{rendered}</p>
-                        </div>
-                      );
-                    })}
+                    {hasStructuredFeedback(selectedTurnResult.aiFeedback) ? (
+                      <StructuredFeedback feedback={selectedTurnResult.aiFeedback} />
+                    ) : (
+                      Object.entries(selectedTurnResult.aiFeedback).map(([key, value]) => {
+                        const rendered = renderFeedbackValue(value);
+                        if (!rendered) return null;
+                        return (
+                          <div key={key}>
+                            <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-1">{key}</p>
+                            <p className="text-sm text-zinc-700 leading-relaxed whitespace-pre-wrap">{rendered}</p>
+                          </div>
+                        );
+                      })
+                    )}
                   </CardContent>
                 </Card>
               )}

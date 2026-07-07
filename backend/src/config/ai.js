@@ -7,9 +7,27 @@ const REQUIRED_AI_CONFIG = [
 const DEFAULT_OPENAI_TRANSCRIPTION_MODEL = 'gpt-4o-mini-transcribe';
 const DEFAULT_OPENAI_FEEDBACK_MODEL = 'gpt-4.1-mini';
 const DEFAULT_AZURE_SPEECH_LANGUAGE = 'en-US';
+// Hard monthly cap on how many turns the AI pipeline may assess, so the paid
+// OpenAI + Azure usage can never silently exceed the budget. 0 or a negative
+// value disables the cap.
+const DEFAULT_MONTHLY_ASSESSMENT_LIMIT = 250;
 
 function hasEnvValue(name) {
   return typeof process.env[name] === 'string' && process.env[name].trim().length > 0;
+}
+
+function getMonthlyAssessmentLimit() {
+  const raw = process.env.AI_MONTHLY_ASSESSMENT_LIMIT;
+  if (typeof raw !== 'string' || raw.trim().length === 0) {
+    return DEFAULT_MONTHLY_ASSESSMENT_LIMIT;
+  }
+
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_MONTHLY_ASSESSMENT_LIMIT;
+  }
+
+  return Math.trunc(parsed);
 }
 
 export function getMissingAiConfigNames() {
@@ -21,6 +39,7 @@ export function getAiRuntimeConfig() {
     openAiTranscriptionModel: process.env.OPENAI_TRANSCRIPTION_MODEL || DEFAULT_OPENAI_TRANSCRIPTION_MODEL,
     openAiFeedbackModel: process.env.OPENAI_FEEDBACK_MODEL || DEFAULT_OPENAI_FEEDBACK_MODEL,
     azureSpeechLanguage: process.env.AZURE_SPEECH_LANGUAGE || DEFAULT_AZURE_SPEECH_LANGUAGE,
+    monthlyAssessmentLimit: getMonthlyAssessmentLimit(),
   };
 }
 

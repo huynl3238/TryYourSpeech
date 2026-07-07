@@ -78,7 +78,7 @@ test('getAiConfigStatus reports missing names without exposing values', () => {
   clearAiEnv();
 });
 
-test('prepareAiPipeline runs turn scaffold and stores placeholder failure', async () => {
+test('prepareAiPipeline runs the turn pipeline and records failure when audio is unavailable', async () => {
   setAiEnv();
 
   const client = createPipelineClient([
@@ -86,6 +86,7 @@ test('prepareAiPipeline runs turn scaffold and stores placeholder failure', asyn
       turn_id: 'turn-1',
       audio_url: '/uploads/audio/turn-1.webm',
       question_text: 'Question?',
+      part_number: 1,
       peer_notes: [],
     },
   ]);
@@ -93,9 +94,44 @@ test('prepareAiPipeline runs turn scaffold and stores placeholder failure', asyn
   const result = await prepareAiPipeline(client, 'session-1');
   const update = client.calls.find((call) => call.sql.includes('UPDATE ai_results'));
 
+  // No audio file exists on disk in the test, so transcription fails before any
+  // network call is made and the turn is marked failed with the error message.
   assert.equal(result.status, 'failed');
   assert.equal(result.processedTurns, 1);
-  assert.match(update.params[1], /Transcription step is not implemented yet/);
+  assert.equal(typeof update.params[1], 'string');
+  assert.ok(update.params[1].length > 0);
 
+  clearAiEnv();
+});
+
+test('prepareAiPipeline stops when the monthly assessment limit is reached', async () => {
+  setAiEnv();
+  process.env.AI_MONTHLY_ASSESSMENT_LIMIT = '5';
+
+  const calls = [];
+  const client = {
+    calls,
+    async query(sql, params) {
+      calls.push({ sql, params });
+
+      if (sql.includes('date_trunc')) {
+        return { rows: [{ count: 5 }] };
+      }
+
+      if (sql.includes('SELECT') && sql.includes('json_agg')) {
+        return { rows: [{ turn_id: 'turn-1', peer_notes: [] }] };
+      }
+
+      return { rows: [], rowCount: 1 };
+    },
+  };
+
+  const result = await prepareAiPipeline(client, 'session-1');
+  const update = calls.find((call) => call.sql.includes('UPDATE ai_results'));
+
+  assert.equal(result.status, 'failed');
+  assert.match(update.params[1], /giới hạn chấm AI/);
+
+  delete process.env.AI_MONTHLY_ASSESSMENT_LIMIT;
   clearAiEnv();
 });
