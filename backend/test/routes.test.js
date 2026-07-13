@@ -113,3 +113,212 @@ test('result retry endpoint rejects malformed identifiers before database access
     server.close();
   }
 });
+
+test('mentor review endpoint rejects malformed identifiers before database access', async () => {
+  const server = await listen(app);
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    const response = await fetch(`${baseUrl}/api/mentor-reviews`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: 'bad',
+        mentorId: 'bad',
+        studentId: 'bad',
+        overallComment: '',
+      }),
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 400);
+    assert.equal(body.error, 'sessionId is invalid');
+  } finally {
+    server.close();
+  }
+});
+
+test('practice history endpoint rejects malformed user id before database access', async () => {
+  const server = await listen(app);
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    const response = await fetch(`${baseUrl}/api/users/bad/practice-history`);
+    const body = await response.json();
+
+    assert.equal(response.status, 400);
+    assert.equal(body.error, 'userId is invalid');
+  } finally {
+    server.close();
+  }
+});
+
+test('profile endpoints reject malformed requests before database access', async () => {
+  const server = await listen(app);
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    const getResponse = await fetch(`${baseUrl}/api/users/bad/profile`);
+    const getBody = await getResponse.json();
+
+    assert.equal(getResponse.status, 400);
+    assert.equal(getBody.error, 'userId is invalid');
+
+    const patchResponse = await fetch(`${baseUrl}/api/users/11111111-1111-4111-8111-111111111111/profile`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify([]),
+    });
+    const patchBody = await patchResponse.json();
+
+    assert.equal(patchResponse.status, 400);
+    assert.equal(patchBody.error, 'request body is invalid');
+  } finally {
+    server.close();
+  }
+});
+
+test('notification endpoints reject malformed requests before database access', async () => {
+  const server = await listen(app);
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    const listResponse = await fetch(`${baseUrl}/api/users/bad/notifications`);
+    const listBody = await listResponse.json();
+
+    assert.equal(listResponse.status, 400);
+    assert.equal(listBody.error, 'userId is invalid');
+
+    const readResponse = await fetch(`${baseUrl}/api/users/11111111-1111-4111-8111-111111111111/notifications/bad/read`, {
+      method: 'PATCH',
+    });
+    const readBody = await readResponse.json();
+
+    assert.equal(readResponse.status, 400);
+    assert.equal(readBody.error, 'notificationId is invalid');
+  } finally {
+    server.close();
+  }
+});
+
+test('topic endpoints reject malformed requests before database access', async () => {
+  const server = await listen(app);
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    const getResponse = await fetch(`${baseUrl}/api/topics/bad`);
+    const getBody = await getResponse.json();
+
+    assert.equal(getResponse.status, 400);
+    assert.equal(getBody.error, 'topicId is invalid');
+
+    const createResponse = await fetch(`${baseUrl}/api/topics`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify([]),
+    });
+    const createBody = await createResponse.json();
+
+    assert.equal(createResponse.status, 400);
+    assert.equal(createBody.error, 'request body is invalid');
+
+    const questionResponse = await fetch(`${baseUrl}/api/topics/11111111-1111-4111-8111-111111111111/questions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ partNumber: 1, questionText: '' }),
+    });
+    const questionBody = await questionResponse.json();
+
+    assert.equal(questionResponse.status, 400);
+    assert.equal(questionBody.error, 'questionText is required');
+
+    const deleteResponse = await fetch(`${baseUrl}/api/questions/bad`, {
+      method: 'DELETE',
+    });
+    const deleteBody = await deleteResponse.json();
+
+    assert.equal(deleteResponse.status, 400);
+    assert.equal(deleteBody.error, 'questionId is invalid');
+  } finally {
+    server.close();
+  }
+});
+
+test('classroom endpoints reject malformed requests before database access', async () => {
+  const server = await listen(app);
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    const detailResponse = await fetch(`${baseUrl}/api/classroom/posts/bad`);
+    const detailBody = await detailResponse.json();
+
+    assert.equal(detailResponse.status, 400);
+    assert.equal(detailBody.error, 'postId is invalid');
+
+    const publishResponse = await fetch(`${baseUrl}/api/classroom/posts`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: 'bad',
+        userId: 'bad',
+        title: '',
+      }),
+    });
+    const publishBody = await publishResponse.json();
+
+    assert.equal(publishResponse.status, 400);
+    assert.equal(publishBody.error, 'sessionId is invalid');
+
+    const commentResponse = await fetch(`${baseUrl}/api/classroom/posts/bad/comments`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        userId: 'bad',
+        commentText: '',
+      }),
+    });
+    const commentBody = await commentResponse.json();
+
+    assert.equal(commentResponse.status, 400);
+    assert.equal(commentBody.error, 'postId is invalid');
+
+    const likeResponse = await fetch(`${baseUrl}/api/classroom/posts/11111111-1111-4111-8111-111111111111/like`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        userId: 'bad',
+      }),
+    });
+    const likeBody = await likeResponse.json();
+
+    assert.equal(likeResponse.status, 400);
+    assert.equal(likeBody.error, 'userId is invalid');
+
+    const saveResponse = await fetch(`${baseUrl}/api/classroom/posts/11111111-1111-4111-8111-111111111111/save`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify([]),
+    });
+    const saveBody = await saveResponse.json();
+
+    assert.equal(saveResponse.status, 400);
+    assert.equal(saveBody.error, 'request body is invalid');
+  } finally {
+    server.close();
+  }
+});
+
+test('student work endpoint rejects malformed limit before database access', async () => {
+  const server = await listen(app);
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    const response = await fetch(`${baseUrl}/api/teacher/student-work?limit=bad`);
+    const body = await response.json();
+
+    assert.equal(response.status, 400);
+    assert.equal(body.error, 'limit must be a positive integer');
+  } finally {
+    server.close();
+  }
+});

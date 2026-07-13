@@ -1,25 +1,42 @@
 import { randomUUID } from 'crypto';
 import {
   createMatchedSession,
+  getMentorRoomParticipants,
   markSessionAbandoned,
   markSessionActive,
 } from '../models/sessionModel.js';
+import { setIo, registerUserSocket, unregisterSocket } from './notifier.js';
 
 const MAX_BAND_DIFFERENCE = 1.0;
 const MAX_DISPLAY_NAME_LENGTH = 100;
 const READY_WAIT_TIMEOUT_MS = 60000;
 const SIGNAL_TYPES = new Set(['offer', 'answer', 'ice-candidate']);
+const SESSION_MODES = new Set(['peer', 'mentor']);
+const USER_ROLES = new Set(['student', 'mentor']);
 
-const waitingQueue = [];    // [{ socketId, displayName, band, joinedAt }]
-const rooms = new Map();    // roomId -> { userA, userB, readyUsers: Set, practiceReadyUsers: Set, practiceStarted, sessionId, readyTimeout }
-const userRoom = new Map(); // socketId -> roomId
+const waitingQueue = [];
+const mentorQueue = [];
+const mentorStudentQueue = [];
+const rooms = new Map();
+const userRoom = new Map();
+// sessionId -> { A: userInfo|null, B: userInfo|null } for REST-started mentor
+// sessions where both parties join the realtime room explicitly.
+const mentorRoomWaiters = new Map();
 
 function removeFromQueue(socketId) {
-  const idx = waitingQueue.findIndex((user) => user.socketId === socketId);
+  for (const queue of [waitingQueue, mentorQueue, mentorStudentQueue]) {
+    const idx = queue.findIndex((user) => user.socketId === socketId);
 
-  if (idx !== -1) {
-    waitingQueue.splice(idx, 1);
+    if (idx !== -1) {
+      queue.splice(idx, 1);
+    }
   }
+}
+
+function isSocketQueued(socketId) {
+  return [waitingQueue, mentorQueue, mentorStudentQueue].some((queue) =>
+    queue.some((user) => user.socketId === socketId)
+  );
 }
 
 function parseBand(band) {
@@ -54,22 +71,67 @@ function normalizeDisplayName(displayName) {
   return trimmedName;
 }
 
+function parseSessionMode(mode) {
+  if (mode === null || mode === undefined || mode === '') {
+    return 'peer';
+  }
+
+  if (typeof mode !== 'string' || !SESSION_MODES.has(mode)) {
+    return null;
+  }
+
+  return mode;
+}
+
+function parseUserRole(userRole, sessionMode) {
+  if (userRole === null || userRole === undefined || userRole === '') {
+    return 'student';
+  }
+
+  if (typeof userRole !== 'string' || !USER_ROLES.has(userRole)) {
+    return null;
+  }
+
+  if (sessionMode === 'peer' && userRole !== 'student') {
+    return null;
+  }
+
+  return userRole;
+}
+
 function validateMatchRequest(data) {
   if (!data || typeof data !== 'object') {
-    return { error: 'Thông tin tìm đối tác không hợp lệ' };
+    return { error: 'Thong tin tim doi tac khong hop le' };
   }
 
   const displayName = normalizeDisplayName(data.displayName);
   if (!displayName) {
-    return { error: 'Tên hiển thị không hợp lệ' };
+    return { error: 'Ten hien thi khong hop le' };
   }
 
-  const band = parseBand(data.band);
-  if (band === null) {
-    return { error: 'Band hiện tại phải là số từ 0 đến 9' };
+  const sessionMode = parseSessionMode(data.mode);
+  if (!sessionMode) {
+    return { error: 'Che do ghep cap khong hop le' };
   }
 
-  return { displayName, band };
+  const userRole = parseUserRole(data.userRole, sessionMode);
+  if (!userRole) {
+    return { error: 'Vai tro nguoi dung khong hop le' };
+  }
+
+  const band = data.band === undefined && userRole === 'mentor'
+    ? null
+    : parseBand(data.band);
+
+  if (band === null && userRole === 'student') {
+    return { error: 'Band hien tai phai la so tu 0 den 9' };
+  }
+
+  if (band === null && data.band !== undefined && userRole === 'mentor') {
+    return { error: 'Band hien tai phai la so tu 0 den 9' };
+  }
+
+  return { displayName, band, sessionMode, userRole };
 }
 
 function isValidSignal(data) {
@@ -117,6 +179,15 @@ function findBestBandMatch(user) {
   return bestMatch?.user || null;
 }
 
+function takeOldestUser(queue) {
+  if (queue.length === 0) {
+    return null;
+  }
+
+  queue.sort((a, b) => a.joinedAt - b.joinedAt);
+  return queue.shift();
+}
+
 function getPartnerSocketId(roomId, mySocketId) {
   const room = rooms.get(roomId);
   if (!room) return null;
@@ -126,10 +197,11 @@ function getPartnerSocketId(roomId, mySocketId) {
     : room.userA.socketId;
 }
 
-function createRoom(roomId, userA, userB, sessionId) {
+function createRoom(roomId, userA, userB, sessionId, sessionMode) {
   rooms.set(roomId, {
     userA,
     userB,
+    sessionMode,
     readyUsers: new Set(),
     practiceReadyUsers: new Set(),
     practiceStarted: false,
@@ -167,7 +239,7 @@ async function abandonRoom(io, roomId) {
   deleteRoom(roomId);
 }
 
-function emitMatched(io, userA, userB, roomId, session) {
+function emitMatched(io, userA, userB, roomId, session, sessionMode) {
   io.to(userA.socketId).emit('matched', {
     roomId,
     sessionId: session.sessionId,
@@ -176,6 +248,9 @@ function emitMatched(io, userA, userB, roomId, session) {
     role: 'A',
     isInitiator: true,
     partnerName: userB.displayName,
+    sessionMode,
+    myUserRole: userA.userRole,
+    partnerUserRole: userB.userRole,
   });
 
   io.to(userB.socketId).emit('matched', {
@@ -186,6 +261,9 @@ function emitMatched(io, userA, userB, roomId, session) {
     role: 'B',
     isInitiator: false,
     partnerName: userA.displayName,
+    sessionMode,
+    myUserRole: userB.userRole,
+    partnerUserRole: userA.userRole,
   });
 }
 
@@ -208,9 +286,82 @@ function emitPracticeReadyState(io, room) {
   });
 }
 
+function createMatchUser(socket, matchRequest) {
+  return {
+    socketId: socket.id,
+    displayName: matchRequest.displayName,
+    band: matchRequest.band,
+    userRole: matchRequest.userRole,
+    joinedAt: Date.now(),
+  };
+}
+
+async function createPeerMatch(io, socket, user, matchedUser) {
+  removeFromQueue(matchedUser.socketId);
+
+  try {
+    const roomId = randomUUID();
+    const session = await createMatchedSession(roomId, matchedUser, user, 'peer');
+    createRoom(roomId, matchedUser, user, session.sessionId, 'peer');
+    emitMatched(io, matchedUser, user, roomId, session, 'peer');
+
+    console.log(
+      `[Match] ${matchedUser.displayName} (${matchedUser.band}) matched with ${user.displayName} (${user.band}) | room: ${roomId}`
+    );
+  } catch (err) {
+    waitingQueue.unshift(matchedUser);
+    console.error('Failed to create matched session:', err.message);
+    socket.emit('match_error', { error: err.message });
+  }
+}
+
+async function createMentorMatch(io, student, mentor) {
+  try {
+    const roomId = randomUUID();
+    const session = await createMatchedSession(roomId, student, mentor, 'mentor');
+    createRoom(roomId, student, mentor, session.sessionId, 'mentor');
+    emitMatched(io, student, mentor, roomId, session, 'mentor');
+
+    console.log(
+      `[MentorMatch] ${student.displayName} (${student.band}) matched with ${mentor.displayName} | room: ${roomId}`
+    );
+  } catch (err) {
+    mentorStudentQueue.unshift(student);
+    mentorQueue.unshift(mentor);
+    console.error('Failed to create mentor session:', err.message);
+    io.to(student.socketId).emit('match_error', { error: err.message });
+    io.to(mentor.socketId).emit('match_error', { error: err.message });
+  }
+}
+
+async function handleFindMentorMatch(io, socket, user) {
+  if (user.userRole === 'mentor') {
+    const student = takeOldestUser(mentorStudentQueue);
+    if (student) {
+      await createMentorMatch(io, student, user);
+      return;
+    }
+
+    mentorQueue.push(user);
+    console.log(`[MentorQueue] +${user.displayName} | size: ${mentorQueue.length}`);
+    socket.emit('waiting');
+    return;
+  }
+
+  const mentor = takeOldestUser(mentorQueue);
+  if (mentor) {
+    await createMentorMatch(io, user, mentor);
+    return;
+  }
+
+  mentorStudentQueue.push(user);
+  console.log(`[MentorStudentQueue] +${user.displayName} (${user.band}) | size: ${mentorStudentQueue.length}`);
+  socket.emit('waiting');
+}
+
 async function handleFindMatch(io, socket, data) {
   if (userRoom.has(socket.id)) return;
-  if (waitingQueue.some((user) => user.socketId === socket.id)) return;
+  if (isSocketQueued(socket.id)) return;
 
   const matchRequest = validateMatchRequest(data);
   if (matchRequest.error) {
@@ -218,32 +369,16 @@ async function handleFindMatch(io, socket, data) {
     return;
   }
 
-  const user = {
-    socketId: socket.id,
-    displayName: matchRequest.displayName,
-    band: matchRequest.band,
-    joinedAt: Date.now(),
-  };
+  const user = createMatchUser(socket, matchRequest);
+
+  if (matchRequest.sessionMode === 'mentor') {
+    await handleFindMentorMatch(io, socket, user);
+    return;
+  }
 
   const matchedUser = findBestBandMatch(user);
-
   if (matchedUser) {
-    removeFromQueue(matchedUser.socketId);
-
-    try {
-      const roomId = randomUUID();
-      const session = await createMatchedSession(roomId, matchedUser, user);
-      createRoom(roomId, matchedUser, user, session.sessionId);
-      emitMatched(io, matchedUser, user, roomId, session);
-
-      console.log(
-        `[Match] ${matchedUser.displayName} (${matchedUser.band}) matched with ${user.displayName} (${user.band}) | room: ${roomId}`
-      );
-    } catch (err) {
-      waitingQueue.unshift(matchedUser);
-      console.error('Failed to create matched session:', err.message);
-      socket.emit('match_error', { error: err.message });
-    }
+    await createPeerMatch(io, socket, user, matchedUser);
     return;
   }
 
@@ -320,9 +455,97 @@ function handlePracticeReady(io, socket) {
   }
 }
 
+function cleanupMentorWaiter(socketId) {
+  for (const [sessionId, waiter] of mentorRoomWaiters) {
+    let changed = false;
+    for (const role of ['A', 'B']) {
+      if (waiter[role]?.socketId === socketId) {
+        waiter[role] = null;
+        changed = true;
+      }
+    }
+    if (changed && !waiter.A && !waiter.B) {
+      mentorRoomWaiters.delete(sessionId);
+    }
+  }
+}
+
+// A mentor picked a student via REST (session already created in DB). Both the
+// mentor and the chosen student emit join_mentor_room; once both are present we
+// build the realtime room and reuse the normal matched -> session_start flow.
+async function handleJoinMentorRoom(io, socket, data) {
+  if (userRoom.has(socket.id)) return;
+
+  const sessionId = data && typeof data.sessionId === 'string' ? data.sessionId : null;
+  const userId = data && typeof data.userId === 'string' ? data.userId : null;
+  if (!sessionId || !userId) {
+    socket.emit('match_error', { error: 'Thong tin phien khong hop le' });
+    return;
+  }
+
+  let participants;
+  try {
+    participants = await getMentorRoomParticipants(sessionId);
+  } catch (err) {
+    console.error('getMentorRoomParticipants failed:', err.message);
+    socket.emit('match_error', { error: 'Khong the vao phong luc nay' });
+    return;
+  }
+
+  if (!participants || participants.sessionMode !== 'mentor') {
+    socket.emit('match_error', { error: 'Khong tim thay phien hoc' });
+    return;
+  }
+
+  if (participants.status === 'completed' || participants.status === 'abandoned') {
+    socket.emit('match_error', { error: 'Phien hoc da ket thuc' });
+    return;
+  }
+
+  let role;
+  if (userId === participants.userA.id) role = 'A';
+  else if (userId === participants.userB.id) role = 'B';
+  else {
+    socket.emit('match_error', { error: 'Ban khong thuoc phien hoc nay' });
+    return;
+  }
+
+  // Room already built (e.g. a duplicate join) — nothing to do.
+  if (rooms.has(participants.roomId)) return;
+
+  const waiter = mentorRoomWaiters.get(sessionId) || { A: null, B: null };
+  waiter[role] = {
+    socketId: socket.id,
+    displayName: role === 'A' ? participants.userA.displayName : participants.userB.displayName,
+    band: role === 'A' ? participants.userA.band : participants.userB.band,
+    userRole: role === 'A' ? participants.userA.userRole : participants.userB.userRole,
+    joinedAt: Date.now(),
+  };
+  mentorRoomWaiters.set(sessionId, waiter);
+
+  if (!waiter.A || !waiter.B) {
+    socket.emit('waiting');
+    return;
+  }
+
+  mentorRoomWaiters.delete(sessionId);
+  createRoom(participants.roomId, waiter.A, waiter.B, sessionId, 'mentor');
+  emitMatched(
+    io,
+    waiter.A,
+    waiter.B,
+    participants.roomId,
+    { sessionId, userA: { id: participants.userA.id }, userB: { id: participants.userB.id } },
+    'mentor'
+  );
+  console.log(`[MentorRoom] Session ${sessionId} joined by both | room: ${participants.roomId}`);
+}
+
 async function handleDisconnect(io, socket) {
   console.log(`[Socket] Disconnected: ${socket.id}`);
   removeFromQueue(socket.id);
+  cleanupMentorWaiter(socket.id);
+  unregisterSocket(socket.id);
 
   const roomId = userRoom.get(socket.id);
   if (!roomId) return;
@@ -339,13 +562,24 @@ async function handleDisconnect(io, socket) {
 }
 
 export function setupSocket(io) {
+  setIo(io);
+
   io.on('connection', (socket) => {
     console.log(`[Socket] Connected: ${socket.id}`);
+
+    // Associate this socket with a signed-in user so we can push realtime
+    // notifications to them regardless of matchmaking state.
+    socket.on('identify', (data) => {
+      const userId = data && typeof data.userId === 'string' ? data.userId.trim() : '';
+      if (userId) {
+        registerUserSocket(userId, socket.id);
+      }
+    });
 
     socket.on('find_match', (data) => {
       handleFindMatch(io, socket, data).catch((err) => {
         console.error('find_match failed:', err.message);
-        socket.emit('match_error', { error: 'Không thể tìm đối tác lúc này' });
+        socket.emit('match_error', { error: 'Khong the tim doi tac luc nay' });
       });
     });
     socket.on('cancel_find_match', () => handleCancelFindMatch(socket));
@@ -356,6 +590,12 @@ export function setupSocket(io) {
       });
     });
     socket.on('practice_ready', () => handlePracticeReady(io, socket));
+    socket.on('join_mentor_room', (data) => {
+      handleJoinMentorRoom(io, socket, data).catch((err) => {
+        console.error('join_mentor_room failed:', err.message);
+        socket.emit('match_error', { error: 'Khong the vao phong hoc luc nay' });
+      });
+    });
     socket.on('disconnect', () => {
       handleDisconnect(io, socket).catch((err) => {
         console.error('disconnect handling failed:', err.message);

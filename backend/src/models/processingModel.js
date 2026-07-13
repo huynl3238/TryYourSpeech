@@ -23,6 +23,19 @@ async function hasBothReviewsCompleted(client, sessionId) {
   return session.user_a_review_done_at !== null && session.user_b_review_done_at !== null;
 }
 
+async function getSessionMode(client, sessionId) {
+  const result = await client.query(
+    `
+      SELECT session_mode
+      FROM sessions
+      WHERE id = $1
+    `,
+    [sessionId]
+  );
+
+  return result.rows[0]?.session_mode || 'peer';
+}
+
 async function hasAllAudioUploaded(client, sessionId) {
   const result = await client.query(
     `
@@ -66,6 +79,11 @@ async function createMissingAiResults(client, sessionId) {
 }
 
 export async function maybeStartSessionProcessing(client, sessionId) {
+  const sessionMode = await getSessionMode(client, sessionId);
+  if (sessionMode === 'mentor') {
+    return 'not_required';
+  }
+
   if (!(await hasBothReviewsCompleted(client, sessionId))) {
     return 'pending';
   }

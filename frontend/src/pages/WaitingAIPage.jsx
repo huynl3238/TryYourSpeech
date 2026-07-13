@@ -64,8 +64,8 @@ export default function WaitingAIPage() {
       <div className="animate-slide-up w-full max-w-md text-center">
 
         {/* Icon */}
-        <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-violet-50 border border-violet-100 mb-5">
-          <span className="material-symbols-rounded icon-fill text-violet-600" style={{ fontSize: 28 }}>
+        <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-[#F7ECE6] border border-[#EAC7B9] mb-5">
+          <span className="material-symbols-rounded icon-fill text-[#D97757]" style={{ fontSize: 28 }}>
             psychology
           </span>
         </div>
@@ -86,7 +86,7 @@ export default function WaitingAIPage() {
               {partnerDone ? (
                 <span className="material-symbols-rounded icon-fill text-emerald-500" style={{ fontSize: 18 }}>check_circle</span>
               ) : (
-                <div className="w-4 h-4 rounded-full border-2 border-zinc-200 border-t-violet-500 animate-spin-slow flex-shrink-0" />
+                <div className="w-4 h-4 rounded-full border-2 border-zinc-200 border-t-[#D97757] animate-spin-slow flex-shrink-0" />
               )}
               <span className="text-sm text-zinc-700">
                 {partnerDone
@@ -113,12 +113,12 @@ export default function WaitingAIPage() {
                       style={{ opacity: i > stepIndex ? 0.35 : 1, transition: 'opacity 0.4s' }}
                     >
                       <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 ${
-                        isDone ? 'bg-emerald-50' : isCurrent ? 'bg-violet-50' : 'bg-zinc-50'
+                        isDone ? 'bg-emerald-50' : isCurrent ? 'bg-[#F7ECE6]' : 'bg-zinc-50'
                       }`}>
                         {isDone ? (
                           <span className="material-symbols-rounded icon-fill text-emerald-500" style={{ fontSize: 14 }}>check</span>
                         ) : isCurrent ? (
-                          <div className="w-3.5 h-3.5 rounded-full border-2 border-zinc-200 border-t-violet-500 animate-spin-slow" />
+                          <div className="w-3.5 h-3.5 rounded-full border-2 border-zinc-200 border-t-[#D97757] animate-spin-slow" />
                         ) : (
                           <span className="material-symbols-rounded text-zinc-300" style={{ fontSize: 14 }}>{step.icon}</span>
                         )}

@@ -14,7 +14,7 @@ function StatusRow({ status, label }) {
   return (
     <div className="flex items-center gap-2.5">
       {status === 'checking' && (
-        <div className="w-4 h-4 rounded-full border-2 border-zinc-300 border-t-violet-500 animate-spin-slow" />
+        <div className="w-4 h-4 rounded-full border-2 border-zinc-300 border-t-[#D97757] animate-spin-slow" />
       )}
       {status === 'ok' && (
         <span className="material-symbols-rounded icon-fill text-emerald-500" style={{ fontSize: 18 }}>check_circle</span>

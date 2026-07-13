@@ -16,6 +16,10 @@ function createClient(handler) {
 
 test('maybeStartSessionProcessing stays pending until both reviews are complete', async () => {
   const client = createClient((sql) => {
+    if (sql.includes('SELECT session_mode')) {
+      return { rows: [{ session_mode: 'peer' }] };
+    }
+
     if (sql.includes('SELECT user_a_review_done_at')) {
       return {
         rows: [{ user_a_review_done_at: new Date(), user_b_review_done_at: null }],
@@ -32,6 +36,10 @@ test('maybeStartSessionProcessing stays pending until both reviews are complete'
 
 test('maybeStartSessionProcessing stays pending until all audio is uploaded', async () => {
   const client = createClient((sql) => {
+    if (sql.includes('SELECT session_mode')) {
+      return { rows: [{ session_mode: 'peer' }] };
+    }
+
     if (sql.includes('SELECT user_a_review_done_at')) {
       return {
         rows: [{ user_a_review_done_at: new Date(), user_b_review_done_at: new Date() }],
@@ -57,6 +65,10 @@ test('maybeStartSessionProcessing creates AI results, fails scaffold, and comple
 
   let completionAttempts = 0;
   const client = createClient((sql) => {
+    if (sql.includes('SELECT session_mode')) {
+      return { rows: [{ session_mode: 'peer' }] };
+    }
+
     if (sql.includes('SELECT user_a_review_done_at')) {
       return {
         rows: [{ user_a_review_done_at: new Date(), user_b_review_done_at: new Date() }],
@@ -89,4 +101,18 @@ test('maybeStartSessionProcessing creates AI results, fails scaffold, and comple
   assert.equal(status, 'failed');
   assert.equal(failedUpdates.length, 1);
   assert.equal(completionAttempts, 1);
+});
+
+test('maybeStartSessionProcessing does not start AI for mentor sessions', async () => {
+  const client = createClient((sql) => {
+    if (sql.includes('SELECT session_mode')) {
+      return { rows: [{ session_mode: 'mentor' }] };
+    }
+
+    throw new Error('mentor sessions should stop before review and audio checks');
+  });
+
+  const status = await maybeStartSessionProcessing(client, 'session-1');
+
+  assert.equal(status, 'not_required');
 });

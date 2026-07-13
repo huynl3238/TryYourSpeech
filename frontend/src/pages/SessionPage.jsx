@@ -161,8 +161,14 @@ export default function SessionPage() {
     stopLocalRecording();
     stopRemoteRecording();
     cleanupMediaSession(refs, [localVideoRef, remoteVideoRef]);
-    navigate('/review');
-  }, [syncedTimeline?.isComplete, navigate, refs, stopLocalRecording, stopRemoteRecording]);
+    // Mentor sessions branch to the mentor-review flow (mentor writes feedback,
+    // student reads it) instead of the peer note-review flow.
+    if (state.sessionMode === 'mentor') {
+      navigate('/mentor/review');
+    } else {
+      navigate('/review');
+    }
+  }, [syncedTimeline?.isComplete, navigate, refs, stopLocalRecording, stopRemoteRecording, state.sessionMode]);
 
   useEffect(() => {
     if (!state.sessionId) {

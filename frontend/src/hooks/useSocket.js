@@ -120,6 +120,15 @@ export function useSocket() {
     dispatch({ type: 'SET_PHASE', payload: 'lobby' });
   }, [dispatch]);
 
+  // Join the realtime room for a mentor session already created via REST.
+  // Both the mentor and the chosen student call this; the server pairs them.
+  const joinMentorRoom = useCallback((sessionId, userId) => {
+    if (!socket.connected) {
+      socket.connect();
+    }
+    socket.emit('join_mentor_room', { sessionId, userId });
+  }, []);
+
   const sendSignal = useCallback((type, payload) => {
     socket.emit('signal', { type, payload });
   }, []);
@@ -146,6 +155,7 @@ export function useSocket() {
   return {
     findMatch,
     cancelMatch,
+    joinMentorRoom,
     sendSignal,
     notifyPeerConnected,
     notifyPracticeReady,

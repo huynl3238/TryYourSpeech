@@ -1,4 +1,5 @@
-import { createContext, useContext, useReducer, useRef } from 'react';
+import { createContext, useContext, useEffect, useReducer, useRef } from 'react';
+import { getIdentity, saveIdentity } from '../utils/identity';
 
 const SessionContext = createContext(null);
 
@@ -11,12 +12,15 @@ const initialState = {
   displayName: null,
   band: null,
   role: null,        // 'A' | 'B'
+  sessionMode: 'peer',
+  myUserRole: 'student',
   isInitiator: false,
 
   // Partner info
   partnerId: null,
   partnerName: null,
   partnerBand: null,
+  partnerUserRole: 'student',
 
   // Session info
   sessionId: null,
@@ -68,9 +72,12 @@ function sessionReducer(state, action) {
         partnerId: action.payload.partnerId,
         partnerName: action.payload.partnerName,
         role: action.payload.role,
+        sessionMode: action.payload.sessionMode || 'peer',
+        myUserRole: action.payload.myUserRole || 'student',
         isInitiator: action.payload.isInitiator,
         sessionId: action.payload.sessionId,
         roomId: action.payload.roomId,
+        partnerUserRole: action.payload.partnerUserRole || 'student',
         sessionData: null,
         turns: [],
         sessionStartServerTimestamp: null,
@@ -183,6 +190,26 @@ function sessionReducer(state, action) {
 
 export function SessionProvider({ children }) {
   const [state, dispatch] = useReducer(sessionReducer, initialState);
+
+  // Keep the persisted identity (userId + role + name + band) consistent with
+  // the active session's user. Merge so we never clobber known values with
+  // nulls — a peer match fully switches identity to the fresh peer user, while
+  // a mentor session keeps the mentor's signed-in name/band.
+  useEffect(() => {
+    if (!state.userId) {
+      return;
+    }
+
+    const existing = getIdentity() || {};
+    const sameUser = existing.userId === state.userId;
+
+    saveIdentity({
+      userId: state.userId,
+      userRole: state.myUserRole || (sameUser ? existing.userRole : 'student'),
+      displayName: state.displayName || (sameUser ? existing.displayName : ''),
+      band: state.band != null ? state.band : (sameUser ? existing.band : null),
+    });
+  }, [state.userId, state.myUserRole, state.displayName, state.band]);
 
   // Refs for WebRTC and MediaRecorder (not part of render state)
   const refs = useRef({

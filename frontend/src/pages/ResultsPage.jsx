@@ -17,7 +17,7 @@ const ERROR_TYPE_LABELS = {
   grammar_error:       { label: 'Grammar error',             color: '#f59e0b', bg: '#fffbeb' },
   collocation_issue:   { label: 'Collocation / word choice', color: '#ef4444', bg: '#fef2f2' },
   pause_filler:        { label: 'Pause / filler',            color: '#f59e0b', bg: '#fffbeb' },
-  false_start:         { label: 'False start',               color: '#f97316', bg: '#fff7ed' },
+  false_start:         { label: 'False start',               color: '#D97757', bg: '#fff7ed' },
   pronunciation_issue: { label: 'Pronunciation issue',       color: '#ef4444', bg: '#fef2f2' },
   advanced_vocab:      { label: 'Advanced vocab',            color: '#10b981', bg: '#ecfdf5' },
   good_connector:      { label: 'Good connector',            color: '#10b981', bg: '#ecfdf5' },
@@ -207,7 +207,7 @@ export default function ResultsPage() {
     return (
       <div className="min-h-screen bg-zinc-50 flex items-center justify-center">
         <div className="text-center">
-          <div className="w-8 h-8 rounded-full border-2 border-zinc-200 border-t-violet-500 animate-spin-slow mx-auto mb-3" />
+          <div className="w-8 h-8 rounded-full border-2 border-zinc-200 border-t-[#D97757] animate-spin-slow mx-auto mb-3" />
           <p className="text-sm text-zinc-400">Đang tải kết quả...</p>
         </div>
       </div>
@@ -234,11 +234,20 @@ export default function ResultsPage() {
 
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-3 bg-white border-b border-zinc-200 flex-shrink-0">
-        <div className="flex items-center gap-2.5">
-          <span className="material-symbols-rounded text-zinc-500" style={{ fontSize: 20 }}>analytics</span>
-          <div>
-            <h1 className="text-sm font-semibold text-zinc-900">Kết quả phiên luyện</h1>
-            <p className="text-xs text-zinc-400">Điểm ước lượng · Không phải điểm IELTS chính thức</p>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => { dispatch({ type: 'RESET' }); navigate('/'); }}
+            className="inline-flex items-center gap-1.5 h-10 px-4 rounded-xl border border-zinc-200 text-[13.5px] font-semibold text-zinc-600 hover:border-[#EAC7B9] hover:text-[#B5674A] hover:bg-[#F7ECE6] transition-colors"
+          >
+            <span className="material-symbols-rounded" style={{ fontSize: 18 }}>arrow_back</span>
+            Quay lại
+          </button>
+          <div className="flex items-center gap-2.5">
+            <span className="material-symbols-rounded text-zinc-500" style={{ fontSize: 20 }}>analytics</span>
+            <div>
+              <h1 className="text-sm font-semibold text-zinc-900">Kết quả phiên luyện</h1>
+              <p className="text-xs text-zinc-400">Điểm ước lượng · Không phải điểm IELTS chính thức</p>
+            </div>
           </div>
         </div>
         <Button variant="outline" size="sm" onClick={() => { dispatch({ type: 'RESET' }); navigate('/'); }}>
@@ -268,10 +277,10 @@ export default function ResultsPage() {
                 key={turn.turnId}
                 onClick={() => setSelectedTurnId(turn.turnId)}
                 className={`w-full text-left px-3 py-2.5 rounded-lg border text-sm transition-colors ${
-                  isSelected ? 'border-violet-200 bg-violet-50' : hasFailed ? 'border-red-100 bg-red-50' : 'border-transparent hover:bg-zinc-50'
+                  isSelected ? 'border-[#EAC7B9] bg-[#F7ECE6]' : hasFailed ? 'border-red-100 bg-red-50' : 'border-transparent hover:bg-zinc-50'
                 }`}
               >
-                <p className={`text-xs font-medium mb-0.5 ${isSelected ? 'text-violet-600' : hasFailed ? 'text-red-600' : 'text-zinc-500'}`}>
+                <p className={`text-xs font-medium mb-0.5 ${isSelected ? 'text-[#D97757]' : hasFailed ? 'text-red-600' : 'text-zinc-500'}`}>
                   {getPartLabel(turn, state.turns)}
                 </p>
                 <span className={`text-xs ${turn.aiStatus === 'completed' ? 'text-emerald-600' : hasFailed ? 'text-red-500' : 'text-zinc-400'}`}>

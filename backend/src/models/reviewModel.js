@@ -48,7 +48,7 @@ function validateNoteShape(note) {
 async function getSession(client, sessionId) {
   const result = await client.query(
     `
-      SELECT id, user_a_id, user_b_id, status
+      SELECT id, user_a_id, user_b_id, session_mode, status
       FROM sessions
       WHERE id = $1
     `,
@@ -64,6 +64,10 @@ function isUserInSession(session, userId) {
 
 function canReviewSession(session) {
   return session.status === 'active' || session.status === 'reviewing';
+}
+
+function canCompleteReview(session) {
+  return session.status === 'active' || session.status === 'reviewing' || session.status === 'completed';
 }
 
 async function markSessionReviewing(client, sessionId) {
@@ -214,7 +218,7 @@ export async function completeReview({ sessionId, userId }) {
       throw new Error('Session not found');
     }
 
-    if (!canReviewSession(session)) {
+    if (!canCompleteReview(session)) {
       throw new Error('Session is not available for review');
     }
 
@@ -238,7 +242,14 @@ export async function completeReview({ sessionId, userId }) {
       updatedSession.user_a_review_done_at !== null &&
       updatedSession.user_b_review_done_at !== null;
 
-    await maybeStartSessionProcessing(client, sessionId);
+    let sessionStatus = updatedSession.status;
+    if (updatedSession.status === 'completed') {
+      sessionStatus = 'completed';
+    } else if (session.session_mode === 'mentor') {
+      sessionStatus = await completeMentorSessionIfMentorReviewed(client, sessionId) || sessionStatus;
+    } else {
+      sessionStatus = await maybeStartSessionProcessing(client, sessionId);
+    }
 
     await client.query('COMMIT');
 
@@ -246,6 +257,7 @@ export async function completeReview({ sessionId, userId }) {
       sessionId,
       userId,
       bothCompleted,
+      sessionStatus,
     };
   } catch (err) {
     await client.query('ROLLBACK');
@@ -258,7 +270,7 @@ export async function completeReview({ sessionId, userId }) {
 async function getSessionWithReviewState(client, sessionId) {
   const result = await client.query(
     `
-      SELECT user_a_review_done_at, user_b_review_done_at
+      SELECT user_a_review_done_at, user_b_review_done_at, status
       FROM sessions
       WHERE id = $1
     `,
@@ -266,4 +278,27 @@ async function getSessionWithReviewState(client, sessionId) {
   );
 
   return result.rows[0];
+}
+
+async function completeMentorSessionIfMentorReviewed(client, sessionId) {
+  const result = await client.query(
+    `
+      UPDATE sessions s
+      SET status = 'completed',
+          ended_at = COALESCE(ended_at, NOW())
+      WHERE s.id = $1
+        AND s.session_mode = 'mentor'
+        AND s.user_b_review_done_at IS NOT NULL
+        AND s.status = 'reviewing'
+        AND EXISTS (
+          SELECT 1
+          FROM mentor_reviews mr
+          WHERE mr.session_id = s.id
+        )
+      RETURNING status
+    `,
+    [sessionId]
+  );
+
+  return result.rows[0]?.status || null;
 }

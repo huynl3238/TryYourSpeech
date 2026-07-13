@@ -10,7 +10,45 @@ import { checkRedisConnection } from '../config/redis.js';
 import { completeReview, savePeerNotesBatch } from '../models/reviewModel.js';
 import { getResultsForUser, retryFailedResults } from '../models/resultsModel.js';
 import { getSessionDetail } from '../models/sessionModel.js';
+import { saveMentorReview } from '../models/mentorReviewModel.js';
+import { getPracticeHistoryForUser } from '../models/practiceHistoryModel.js';
+import { createIdentity, getUserProfile, updateUserProfile } from '../models/userProfileModel.js';
 import { getAiConfigStatus } from '../models/aiPipelineModel.js';
+import {
+  createQuestion,
+  createTopic,
+  deleteQuestion,
+  deleteTopic,
+  getTopicDetail,
+  listTopics,
+  updateQuestion,
+  updateTopic,
+} from '../models/topicModel.js';
+import {
+  addClassroomComment,
+  approveClassroomPost,
+  declineClassroomPost,
+  getClassroomPost,
+  listClassroomPosts,
+  publishClassroomPost,
+  toggleClassroomLike,
+  toggleClassroomSave,
+} from '../models/classroomModel.js';
+import { listStudentWork } from '../models/studentWorkModel.js';
+import {
+  applyToMentorSession,
+  chooseApplicantAndStart,
+  closeMentorSession,
+  leaveMentorSession,
+  listMentorHostedSessions,
+  listOpenMentorSessions,
+  openMentorSession,
+} from '../models/mentorSessionModel.js';
+import {
+  listNotificationsForUser,
+  markAllNotificationsRead,
+  markNotificationRead,
+} from '../models/notificationModel.js';
 import { convertWebmToWav } from '../services/audioConversion.js';
 
 const router = Router();
@@ -263,6 +301,639 @@ router.get('/sessions/:sessionId', async (req, res) => {
   }
 });
 
+router.get('/users/:userId/practice-history', async (req, res) => {
+  try {
+    requireUuid(req.params.userId, 'userId');
+    res.set('Cache-Control', 'no-store');
+
+    const limit = req.query.limit === undefined
+      ? 50
+      : parsePositiveInteger(req.query.limit);
+    if (limit === null) {
+      res.status(400).json({ error: 'limit must be a positive integer' });
+      return;
+    }
+
+    const history = await getPracticeHistoryForUser({
+      userId: req.params.userId,
+      limit,
+    });
+
+    if (!history) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    res.json(history);
+  } catch (err) {
+    console.warn('Failed to get practice history:', err.message);
+    if (err.message.endsWith('is invalid')) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+
+    res.status(500).json({ error: 'Khong the tai lich su luyen tap' });
+  }
+});
+
+router.post('/users', async (req, res) => {
+  try {
+    requireRequestObject(req.body);
+    requireNonEmptyString(req.body.displayName, 'displayName');
+
+    const result = await createIdentity(req.body);
+    res.status(201).json(result);
+  } catch (err) {
+    console.warn('Failed to create identity:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.get('/users/:userId/profile', async (req, res) => {
+  try {
+    requireUuid(req.params.userId, 'userId');
+    res.set('Cache-Control', 'no-store');
+
+    const profile = await getUserProfile(req.params.userId);
+
+    if (!profile) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    res.json(profile);
+  } catch (err) {
+    console.warn('Failed to get user profile:', err.message);
+    if (err.message.endsWith('is invalid')) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+
+    res.status(500).json({ error: 'Khong the tai ho so nguoi dung' });
+  }
+});
+
+router.get('/users/:userId/notifications', async (req, res) => {
+  try {
+    requireUuid(req.params.userId, 'userId');
+    const limit = req.query.limit === undefined
+      ? 50
+      : parsePositiveInteger(req.query.limit);
+    if (limit === null) {
+      res.status(400).json({ error: 'limit must be a positive integer' });
+      return;
+    }
+
+    res.set('Cache-Control', 'no-store');
+    const result = await listNotificationsForUser({
+      userId: req.params.userId,
+      limit,
+    });
+
+    if (!result) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    res.json(result);
+  } catch (err) {
+    console.warn('Failed to list notifications:', err.message);
+    if (err.message.endsWith('is invalid')) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+
+    res.status(500).json({ error: 'Khong the tai thong bao' });
+  }
+});
+
+router.patch('/users/:userId/notifications/:notificationId/read', async (req, res) => {
+  try {
+    requireUuid(req.params.userId, 'userId');
+    requireUuid(req.params.notificationId, 'notificationId');
+
+    const result = await markNotificationRead({
+      userId: req.params.userId,
+      notificationId: req.params.notificationId,
+    });
+
+    if (!result) {
+      res.status(404).json({ error: 'Notification not found' });
+      return;
+    }
+
+    res.json(result);
+  } catch (err) {
+    console.warn('Failed to mark notification read:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.patch('/users/:userId/notifications/read-all', async (req, res) => {
+  try {
+    requireUuid(req.params.userId, 'userId');
+    const result = await markAllNotificationsRead(req.params.userId);
+    res.json(result);
+  } catch (err) {
+    console.warn('Failed to mark all notifications read:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.patch('/users/:userId/profile', async (req, res) => {
+  try {
+    requireUuid(req.params.userId, 'userId');
+    requireRequestObject(req.body);
+    requireNonEmptyString(req.body.displayName, 'displayName');
+
+    const profile = await updateUserProfile({
+      userId: req.params.userId,
+      displayName: req.body.displayName,
+      band: req.body.band,
+    });
+
+    if (!profile) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    res.json(profile);
+  } catch (err) {
+    console.warn('Failed to update user profile:', err.message);
+    if (err.message.endsWith('is invalid')) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.get('/topics', async (req, res) => {
+  try {
+    res.set('Cache-Control', 'no-store');
+    const ownerId = typeof req.query.ownerId === 'string' && req.query.ownerId.trim()
+      ? req.query.ownerId.trim()
+      : null;
+    const result = await listTopics({ ownerId });
+    res.json(result);
+  } catch (err) {
+    console.warn('Failed to list topics:', err.message);
+    res.status(500).json({ error: 'Khong the tai danh sach chu de' });
+  }
+});
+
+router.post('/topics', async (req, res) => {
+  try {
+    requireRequestObject(req.body);
+    requireNonEmptyString(req.body.name, 'name');
+
+    const result = await createTopic(req.body);
+    res.status(201).json(result);
+  } catch (err) {
+    console.warn('Failed to create topic:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.get('/topics/:topicId', async (req, res) => {
+  try {
+    requireUuid(req.params.topicId, 'topicId');
+    res.set('Cache-Control', 'no-store');
+
+    const result = await getTopicDetail(req.params.topicId);
+
+    if (!result) {
+      res.status(404).json({ error: 'Topic not found' });
+      return;
+    }
+
+    res.json(result);
+  } catch (err) {
+    console.warn('Failed to get topic detail:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.patch('/topics/:topicId', async (req, res) => {
+  try {
+    requireUuid(req.params.topicId, 'topicId');
+    requireRequestObject(req.body);
+    requireNonEmptyString(req.body.name, 'name');
+
+    const result = await updateTopic({
+      topicId: req.params.topicId,
+      ...req.body,
+    });
+
+    if (!result) {
+      res.status(404).json({ error: 'Topic not found' });
+      return;
+    }
+
+    res.json(result);
+  } catch (err) {
+    console.warn('Failed to update topic:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.delete('/topics/:topicId', async (req, res) => {
+  try {
+    requireUuid(req.params.topicId, 'topicId');
+    const result = await deleteTopic(req.params.topicId);
+    res.json(result);
+  } catch (err) {
+    console.warn('Failed to delete topic:', err.message);
+    if (err.message === 'Topic not found') {
+      res.status(404).json({ error: err.message });
+      return;
+    }
+
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.post('/topics/:topicId/questions', async (req, res) => {
+  try {
+    requireUuid(req.params.topicId, 'topicId');
+    requireRequestObject(req.body);
+    requireNonEmptyString(req.body.questionText, 'questionText');
+
+    const result = await createQuestion({
+      topicId: req.params.topicId,
+      ...req.body,
+    });
+
+    res.status(201).json(result);
+  } catch (err) {
+    console.warn('Failed to create question:', err.message);
+    if (err.message === 'Topic not found') {
+      res.status(404).json({ error: err.message });
+      return;
+    }
+
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.patch('/questions/:questionId', async (req, res) => {
+  try {
+    requireUuid(req.params.questionId, 'questionId');
+    requireRequestObject(req.body);
+    requireNonEmptyString(req.body.questionText, 'questionText');
+
+    const result = await updateQuestion({
+      questionId: req.params.questionId,
+      ...req.body,
+    });
+
+    if (!result) {
+      res.status(404).json({ error: 'Question not found' });
+      return;
+    }
+
+    res.json(result);
+  } catch (err) {
+    console.warn('Failed to update question:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.delete('/questions/:questionId', async (req, res) => {
+  try {
+    requireUuid(req.params.questionId, 'questionId');
+    const result = await deleteQuestion(req.params.questionId);
+
+    if (!result) {
+      res.status(404).json({ error: 'Question not found' });
+      return;
+    }
+
+    res.json(result);
+  } catch (err) {
+    console.warn('Failed to delete question:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.get('/classroom/posts', async (_req, res) => {
+  try {
+    if (_req.query.userId !== undefined) {
+      requireUuid(_req.query.userId, 'userId');
+    }
+
+    res.set('Cache-Control', 'no-store');
+    const result = await listClassroomPosts({ userId: _req.query.userId || null });
+    res.json(result);
+  } catch (err) {
+    console.warn('Failed to list classroom posts:', err.message);
+    if (err.message.endsWith('is invalid')) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+
+    res.status(500).json({ error: 'Khong the tai lop hoc' });
+  }
+});
+
+router.get('/teacher/student-work', async (req, res) => {
+  try {
+    const limit = req.query.limit === undefined
+      ? 50
+      : parsePositiveInteger(req.query.limit);
+    if (limit === null) {
+      res.status(400).json({ error: 'limit must be a positive integer' });
+      return;
+    }
+
+    res.set('Cache-Control', 'no-store');
+    const result = await listStudentWork({ limit });
+    res.json(result);
+  } catch (err) {
+    console.warn('Failed to list student work:', err.message);
+    res.status(500).json({ error: 'Khong the tai bai hoc vien' });
+  }
+});
+
+router.get('/classroom/posts/:postId', async (req, res) => {
+  try {
+    requireUuid(req.params.postId, 'postId');
+    if (req.query.userId !== undefined) {
+      requireUuid(req.query.userId, 'userId');
+    }
+
+    res.set('Cache-Control', 'no-store');
+
+    const result = await getClassroomPost(req.params.postId, { userId: req.query.userId || null });
+    if (!result) {
+      res.status(404).json({ error: 'Classroom post not found' });
+      return;
+    }
+
+    res.json(result);
+  } catch (err) {
+    console.warn('Failed to get classroom post:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.post('/classroom/posts', async (req, res) => {
+  try {
+    requireRequestObject(req.body);
+    requireUuid(req.body.sessionId, 'sessionId');
+    requireUuid(req.body.userId, 'userId');
+    requireNonEmptyString(req.body.title, 'title');
+
+    const result = await publishClassroomPost(req.body);
+    res.status(201).json(result);
+  } catch (err) {
+    console.warn('Failed to publish classroom post:', err.message);
+    if (err.message === 'Session not found') {
+      res.status(404).json({ error: err.message });
+      return;
+    }
+
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.post('/classroom/posts/:postId/comments', async (req, res) => {
+  try {
+    requireUuid(req.params.postId, 'postId');
+    requireRequestObject(req.body);
+    requireUuid(req.body.userId, 'userId');
+    requireNonEmptyString(req.body.commentText, 'commentText');
+
+    const result = await addClassroomComment({
+      postId: req.params.postId,
+      userId: req.body.userId,
+      commentText: req.body.commentText,
+    });
+
+    res.status(201).json(result);
+  } catch (err) {
+    console.warn('Failed to add classroom comment:', err.message);
+    if (err.message.endsWith('not found')) {
+      res.status(404).json({ error: err.message });
+      return;
+    }
+
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.post('/classroom/posts/:postId/like', async (req, res) => {
+  try {
+    requireUuid(req.params.postId, 'postId');
+    requireRequestObject(req.body);
+    requireUuid(req.body.userId, 'userId');
+
+    const result = await toggleClassroomLike({
+      postId: req.params.postId,
+      userId: req.body.userId,
+    });
+
+    res.json(result);
+  } catch (err) {
+    console.warn('Failed to toggle classroom like:', err.message);
+    if (err.message.endsWith('not found')) {
+      res.status(404).json({ error: err.message });
+      return;
+    }
+
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.post('/classroom/posts/:postId/save', async (req, res) => {
+  try {
+    requireUuid(req.params.postId, 'postId');
+    requireRequestObject(req.body);
+    requireUuid(req.body.userId, 'userId');
+
+    const result = await toggleClassroomSave({
+      postId: req.params.postId,
+      userId: req.body.userId,
+    });
+
+    res.json(result);
+  } catch (err) {
+    console.warn('Failed to toggle classroom save:', err.message);
+    if (err.message.endsWith('not found')) {
+      res.status(404).json({ error: err.message });
+      return;
+    }
+
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// --- Mentor-led sessions -------------------------------------------------
+router.post('/mentor-sessions', async (req, res) => {
+  try {
+    requireRequestObject(req.body);
+    requireUuid(req.body.mentorId, 'mentorId');
+
+    const result = await openMentorSession(req.body);
+    res.status(201).json(result);
+  } catch (err) {
+    console.warn('Failed to open mentor session:', err.message);
+    if (err.message.endsWith('not found')) {
+      res.status(404).json({ error: err.message });
+      return;
+    }
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.get('/mentor-sessions', async (req, res) => {
+  try {
+    const studentId = req.query.studentId;
+    if (studentId !== undefined) {
+      requireUuid(studentId, 'studentId');
+    }
+
+    const result = await listOpenMentorSessions({ studentId: studentId || null });
+    res.json(result);
+  } catch (err) {
+    console.warn('Failed to list mentor sessions:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.get('/mentors/:mentorId/sessions', async (req, res) => {
+  try {
+    requireUuid(req.params.mentorId, 'mentorId');
+
+    const result = await listMentorHostedSessions({ mentorId: req.params.mentorId });
+    res.json(result);
+  } catch (err) {
+    console.warn('Failed to list hosted mentor sessions:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.post('/mentor-sessions/:mentorSessionId/apply', async (req, res) => {
+  try {
+    requireUuid(req.params.mentorSessionId, 'mentorSessionId');
+    requireRequestObject(req.body);
+    requireUuid(req.body.studentId, 'studentId');
+
+    const result = await applyToMentorSession({
+      mentorSessionId: req.params.mentorSessionId,
+      studentId: req.body.studentId,
+    });
+    res.status(201).json(result);
+  } catch (err) {
+    console.warn('Failed to apply to mentor session:', err.message);
+    if (err.message.endsWith('not found')) {
+      res.status(404).json({ error: err.message });
+      return;
+    }
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.post('/mentor-sessions/:mentorSessionId/leave', async (req, res) => {
+  try {
+    requireUuid(req.params.mentorSessionId, 'mentorSessionId');
+    requireRequestObject(req.body);
+    requireUuid(req.body.studentId, 'studentId');
+
+    const result = await leaveMentorSession({
+      mentorSessionId: req.params.mentorSessionId,
+      studentId: req.body.studentId,
+    });
+    res.json(result);
+  } catch (err) {
+    console.warn('Failed to leave mentor session:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.post('/mentor-sessions/:mentorSessionId/start', async (req, res) => {
+  try {
+    requireUuid(req.params.mentorSessionId, 'mentorSessionId');
+    requireRequestObject(req.body);
+    requireUuid(req.body.mentorId, 'mentorId');
+    requireUuid(req.body.studentId, 'studentId');
+
+    const result = await chooseApplicantAndStart({
+      mentorSessionId: req.params.mentorSessionId,
+      mentorId: req.body.mentorId,
+      studentId: req.body.studentId,
+    });
+    res.status(201).json(result);
+  } catch (err) {
+    console.warn('Failed to start mentor session:', err.message);
+    if (err.message.endsWith('not found')) {
+      res.status(404).json({ error: err.message });
+      return;
+    }
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.post('/mentor-sessions/:mentorSessionId/close', async (req, res) => {
+  try {
+    requireUuid(req.params.mentorSessionId, 'mentorSessionId');
+    requireRequestObject(req.body);
+    requireUuid(req.body.mentorId, 'mentorId');
+
+    const result = await closeMentorSession({
+      mentorSessionId: req.params.mentorSessionId,
+      mentorId: req.body.mentorId,
+    });
+    res.json(result);
+  } catch (err) {
+    console.warn('Failed to close mentor session:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.post('/classroom/posts/:postId/approve', async (req, res) => {
+  try {
+    requireUuid(req.params.postId, 'postId');
+    requireRequestObject(req.body);
+    requireUuid(req.body.userId, 'userId');
+
+    const result = await approveClassroomPost({
+      postId: req.params.postId,
+      userId: req.body.userId,
+    });
+    res.json(result);
+  } catch (err) {
+    console.warn('Failed to approve classroom post:', err.message);
+    if (err.message.endsWith('not found')) {
+      res.status(404).json({ error: err.message });
+      return;
+    }
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.post('/classroom/posts/:postId/decline', async (req, res) => {
+  try {
+    requireUuid(req.params.postId, 'postId');
+    requireRequestObject(req.body);
+    requireUuid(req.body.userId, 'userId');
+
+    const result = await declineClassroomPost({
+      postId: req.params.postId,
+      userId: req.body.userId,
+    });
+    res.json(result);
+  } catch (err) {
+    console.warn('Failed to decline classroom post:', err.message);
+    if (err.message.endsWith('not found')) {
+      res.status(404).json({ error: err.message });
+      return;
+    }
+    res.status(400).json({ error: err.message });
+  }
+});
+
 router.get('/results/:sessionId', async (req, res) => {
   try {
     requireUuid(req.params.sessionId, 'sessionId');
@@ -374,6 +1045,22 @@ router.post('/peer-notes/batch', async (req, res) => {
     res.json(result);
   } catch (err) {
     console.warn('Failed to save peer notes:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.post('/mentor-reviews', async (req, res) => {
+  try {
+    requireRequestObject(req.body);
+    requireUuid(req.body.sessionId, 'sessionId');
+    requireUuid(req.body.mentorId, 'mentorId');
+    requireUuid(req.body.studentId, 'studentId');
+    requireNonEmptyString(req.body.overallComment, 'overallComment');
+
+    const result = await saveMentorReview(req.body);
+    res.json(result);
+  } catch (err) {
+    console.warn('Failed to save mentor review:', err.message);
     res.status(400).json({ error: err.message });
   }
 });

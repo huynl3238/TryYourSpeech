@@ -11,7 +11,7 @@ const ERROR_TYPE_CONFIG = {
   grammar_error:        { label: 'Grammar error',              badgeClass: 'bg-amber-100 text-amber-700',  borderColor: '#f59e0b' },
   collocation_issue:    { label: 'Collocation / word choice',  badgeClass: 'bg-red-100 text-red-700',      borderColor: '#ef4444' },
   pause_filler:         { label: 'Pause / filler',             badgeClass: 'bg-amber-100 text-amber-700',  borderColor: '#f59e0b' },
-  false_start:          { label: 'False start',                badgeClass: 'bg-orange-100 text-orange-700', borderColor: '#f97316' },
+  false_start:          { label: 'False start',                badgeClass: 'bg-[#EAC7B9] text-[#B5674A]', borderColor: '#D97757' },
   pronunciation_issue:  { label: 'Pronunciation issue',        badgeClass: 'bg-red-100 text-red-700',      borderColor: '#ef4444' },
   advanced_vocab:       { label: 'Advanced vocab',             badgeClass: 'bg-emerald-100 text-emerald-700', borderColor: '#10b981' },
   good_connector:       { label: 'Good connector',             badgeClass: 'bg-emerald-100 text-emerald-700', borderColor: '#10b981' },
@@ -184,7 +184,7 @@ export default function ReviewPage() {
           )}
           {AI_AUDIO_UPLOAD_ENABLED && pendingUploads.length > 0 && (
             <div className="flex items-center gap-2 text-xs text-zinc-400">
-              <div className="w-3.5 h-3.5 rounded-full border-2 border-zinc-200 border-t-violet-500 animate-spin-slow" />
+              <div className="w-3.5 h-3.5 rounded-full border-2 border-zinc-200 border-t-[#D97757] animate-spin-slow" />
               Đang tải audio... ({myTurns.length - pendingUploads.length}/{myTurns.length})
             </div>
           )}
@@ -230,11 +230,11 @@ export default function ReviewPage() {
                 onClick={() => setSelectedTurnId(turn.id)}
                 className={`w-full text-left px-3 py-2.5 rounded-lg border text-sm transition-colors ${
                   isSelected
-                    ? 'border-violet-200 bg-violet-50 text-violet-900'
+                    ? 'border-[#EAC7B9] bg-[#F7ECE6] text-[#8A4A33]'
                     : 'border-transparent hover:bg-zinc-50 text-zinc-700'
                 }`}
               >
-                <p className={`text-xs font-medium mb-0.5 ${isSelected ? 'text-violet-600' : 'text-zinc-500'}`}>
+                <p className={`text-xs font-medium mb-0.5 ${isSelected ? 'text-[#D97757]' : 'text-zinc-500'}`}>
                   {partLabel(turn)}
                 </p>
                 <p className="text-xs text-zinc-500 truncate">{turn.questionText}</p>

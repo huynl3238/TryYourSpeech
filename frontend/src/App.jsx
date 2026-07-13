@@ -6,6 +6,9 @@ import SessionPage from './pages/SessionPage';
 import ReviewPage from './pages/ReviewPage';
 import WaitingAIPage from './pages/WaitingAIPage';
 import ResultsPage from './pages/ResultsPage';
+import MentorHostPage from './pages/MentorHostPage';
+import MentorLearnerPage from './pages/MentorLearnerPage';
+import MentorReviewPage from './pages/MentorReviewPage';
 import './index.css';
 
 function App() {
@@ -18,6 +21,9 @@ function App() {
         <Route path="/review" element={<ReviewPage />} />
         <Route path="/waiting-review" element={<WaitingAIPage />} />
         <Route path="/results" element={<ResultsPage />} />
+        <Route path="/mentor" element={<MentorLearnerPage />} />
+        <Route path="/mentor/host" element={<MentorHostPage />} />
+        <Route path="/mentor/review" element={<MentorReviewPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </SessionProvider>

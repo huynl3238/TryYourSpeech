@@ -1,5 +1,6 @@
 import pool from '../config/db.js';
 import { prepareAiPipeline } from './aiPipelineModel.js';
+import { getMentorReviewForSession } from './mentorReviewModel.js';
 import {
   getSessionStatus,
   markSessionCompletedIfAllResultsTerminal,
@@ -26,16 +27,16 @@ function mapPeerNote(row) {
   };
 }
 
-function mapTurnResult(row) {
+function mapTurnResult(row, sessionMode = 'peer') {
   return {
     turnId: row.turn_id,
     questionText: row.question_text,
     audioUrl: row.audio_url,
-    aiStatus: row.ai_status || 'pending',
+    aiStatus: sessionMode === 'mentor' ? 'not_required' : row.ai_status || 'pending',
     transcript: row.whisper_transcript,
     scores: mapScores(row),
     pronunciationDetail: row.pronunciation_detail || [],
-    aiFeedback: row.ai_feedback || {},
+    aiFeedback: sessionMode === 'mentor' ? {} : row.ai_feedback || {},
     peerNotes: row.peer_notes || [],
     error: row.error_message,
   };
@@ -44,7 +45,7 @@ function mapTurnResult(row) {
 async function getSession(client, sessionId) {
   const result = await client.query(
     `
-      SELECT id, user_a_id, user_b_id, status
+      SELECT id, user_a_id, user_b_id, session_mode, status
       FROM sessions
       WHERE id = $1
     `,
@@ -62,7 +63,7 @@ function canRetryResults(session) {
   return session.status === 'processing' || session.status === 'completed';
 }
 
-async function getTurnResults(client, sessionId, userId) {
+async function getTurnResults(client, sessionId, userId, sessionMode) {
   const result = await client.query(
     `
       SELECT
@@ -114,7 +115,7 @@ async function getTurnResults(client, sessionId, userId) {
   );
 
   return result.rows.map((row) => ({
-    ...mapTurnResult(row),
+    ...mapTurnResult(row, sessionMode),
     peerNotes: row.peer_notes.map(mapPeerNote),
   }));
 }
@@ -140,12 +141,17 @@ export async function getResultsForUser({ sessionId, userId }) {
       throw new Error('User is not in this session');
     }
 
-    const turnResults = await getTurnResults(client, sessionId, userId);
+    const turnResults = await getTurnResults(client, sessionId, userId, session.session_mode);
+    const mentorReview = session.session_mode === 'mentor'
+      ? await getMentorReviewForSession(client, sessionId)
+      : null;
 
     return {
       sessionId,
       status: session.status,
+      sessionMode: session.session_mode || 'peer',
       turnResults,
+      mentorReview,
     };
   } finally {
     client.release();

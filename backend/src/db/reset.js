@@ -2,6 +2,14 @@ import 'dotenv/config';
 import pool from '../config/db.js';
 
 const resetSql = `
+  DROP TABLE IF EXISTS mentor_session_applicants;
+  DROP TABLE IF EXISTS mentor_sessions;
+  DROP TABLE IF EXISTS notifications;
+  DROP TABLE IF EXISTS classroom_post_saves;
+  DROP TABLE IF EXISTS classroom_post_likes;
+  DROP TABLE IF EXISTS classroom_comments;
+  DROP TABLE IF EXISTS classroom_posts;
+  DROP TABLE IF EXISTS mentor_reviews;
   DROP TABLE IF EXISTS ai_results;
   DROP TABLE IF EXISTS peer_notes;
   DROP TABLE IF EXISTS turns;
