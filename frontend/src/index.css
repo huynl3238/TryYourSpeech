@@ -87,6 +87,11 @@
   to { opacity: 1; transform: scale(1); }
 }
 
+@keyframes toastIn {
+  from { opacity: 0; transform: translateX(24px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
 .animate-spin-slow {
   animation: spin 1s linear infinite;
 }

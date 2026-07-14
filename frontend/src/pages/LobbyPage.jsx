@@ -36,6 +36,7 @@ import { Label } from '../components/ui/label';
 import { Card, CardContent } from '../components/ui/card';
 import { cleanupMediaSession } from '../utils/mediaCleanup';
 import { getIdentity } from '../utils/identity';
+import { startNotificationsRealtime, onNotification } from '../services/notificationsRealtime';
 
 const NAV_ITEMS = [
   { key: 'practice', label: 'Ghép cặp thực hành', icon: 'groups' },
@@ -423,10 +424,56 @@ function profileInitials(name) {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
+// Live unread-notification count for the sidebar badge. Seeds from the API,
+// then refetches whenever a realtime "notification:new" ping arrives or the
+// active tab changes (so reading notifications clears the badge).
+function useUnreadNotifications(activeTab) {
+  const [unread, setUnread] = useState(0);
+
+  useEffect(() => {
+    const userId = getIdentity()?.userId;
+    if (!userId) {
+      setUnread(0);
+      return undefined;
+    }
+
+    startNotificationsRealtime();
+    let cancelled = false;
+
+    async function refresh() {
+      try {
+        const data = await getNotifications(userId);
+        if (!cancelled) {
+          setUnread(data.unreadCount || 0);
+        }
+      } catch {
+        // Best-effort badge; ignore transient fetch errors.
+      }
+    }
+
+    refresh();
+    // The server emits while its DB transaction may still be committing, so a
+    // ping can arrive a beat before the row is visible. Refetch now and again
+    // shortly after to self-heal that race.
+    const off = onNotification(() => {
+      refresh();
+      setTimeout(refresh, 700);
+    });
+
+    return () => {
+      cancelled = true;
+      off();
+    };
+  }, [activeTab]);
+
+  return unread;
+}
+
 function Sidebar({ activeTab, onChangeTab }) {
   const navigate = useNavigate();
   const { state } = useSession();
   const identity = getIdentity() || {};
+  const unreadNotifications = useUnreadNotifications(activeTab);
 
   const displayName = state.displayName || identity.displayName || 'Khách';
   const band = state.band ?? identity.band ?? null;
@@ -454,6 +501,13 @@ function Sidebar({ activeTab, onChangeTab }) {
           >
             <span className="material-symbols-rounded">{item.icon}</span>
             {item.label}
+            {item.key === 'notifications' && unreadNotifications > 0 && (
+              <span
+                className="ml-auto min-w-[20px] h-5 px-1.5 inline-flex items-center justify-center rounded-full bg-[#D97757] text-white text-xs font-semibold"
+              >
+                {unreadNotifications > 99 ? '99+' : unreadNotifications}
+              </span>
+            )}
           </button>
         ))}
 
@@ -1931,6 +1985,16 @@ function NotificationsPanelReal() {
       cancelled = true;
     };
   }, [currentUserId, reloadKey]);
+
+  // Refetch the open panel when a realtime notification arrives.
+  useEffect(() => {
+    if (!currentUserId) return undefined;
+    startNotificationsRealtime();
+    return onNotification(() => {
+      setReloadKey((key) => key + 1);
+      setTimeout(() => setReloadKey((key) => key + 1), 700);
+    });
+  }, [currentUserId]);
 
   async function handleMarkRead(notification) {
     if (!currentUserId || notification.isRead) return;

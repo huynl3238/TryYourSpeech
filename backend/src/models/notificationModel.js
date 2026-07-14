@@ -118,7 +118,19 @@ export async function createNotification(client, {
     ]
   );
 
-  return mapNotification(result.rows[0]);
+  const notification = mapNotification(result.rows[0]);
+
+  // Realtime push: ping the recipient's live sockets so their UI can refetch
+  // without a manual refresh. Fire-and-forget; delivery is best-effort and the
+  // authoritative list still comes from GET /api/notifications on refetch.
+  emitToUser(recipientId, 'notification:new', {
+    id: notification.id,
+    type: notification.type,
+    title: notification.title,
+    createdAt: notification.createdAt,
+  });
+
+  return notification;
 }
 
 export async function createNotificationWithPool(payload) {
