@@ -81,8 +81,12 @@ function createPronunciationConfig(referenceText) {
   );
   const runtimeConfig = getAiRuntimeConfig();
 
+  // Request prosody (intonation/stress/rhythm) for any English locale, not just
+  // en-US. If Azure cannot score prosody for a given locale it simply returns null,
+  // so broadening the guard is safe and avoids silently dropping the dimension when
+  // the configured language is e.g. en-GB.
   if (
-    runtimeConfig.azureSpeechLanguage === 'en-US' &&
+    runtimeConfig.azureSpeechLanguage.toLowerCase().startsWith('en') &&
     typeof config.enableProsodyAssessment === 'function'
   ) {
     config.enableProsodyAssessment();
@@ -138,6 +142,13 @@ async function assessWithContinuousRecognition(recognizer) {
 
   return new Promise((resolve, reject) => {
     recognizer.canceled = async (_sender, event) => {
+      // Reaching the end of a finite audio file fires `canceled` with reason
+      // EndOfStream — this is the normal terminator, not a failure. Only a genuine
+      // Error should reject; otherwise let `sessionStopped` resolve the results.
+      if (event.reason !== speechSdk.CancellationReason.Error) {
+        return;
+      }
+
       try {
         await stopContinuousRecognition(recognizer);
       } catch {

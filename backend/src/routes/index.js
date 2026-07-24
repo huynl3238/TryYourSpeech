@@ -487,6 +487,7 @@ router.post('/topics', async (req, res) => {
   try {
     requireRequestObject(req.body);
     requireNonEmptyString(req.body.name, 'name');
+    requireUuid(req.body.actorUserId, 'actorUserId');
 
     const result = await createTopic(req.body);
     res.status(201).json(result);
@@ -520,6 +521,7 @@ router.patch('/topics/:topicId', async (req, res) => {
     requireUuid(req.params.topicId, 'topicId');
     requireRequestObject(req.body);
     requireNonEmptyString(req.body.name, 'name');
+    requireUuid(req.body.actorUserId, 'actorUserId');
 
     const result = await updateTopic({
       topicId: req.params.topicId,
@@ -541,7 +543,10 @@ router.patch('/topics/:topicId', async (req, res) => {
 router.delete('/topics/:topicId', async (req, res) => {
   try {
     requireUuid(req.params.topicId, 'topicId');
-    const result = await deleteTopic(req.params.topicId);
+    requireUuid(req.query.actorUserId, 'actorUserId');
+    const result = await deleteTopic(req.params.topicId, {
+      actorUserId: req.query.actorUserId,
+    });
     res.json(result);
   } catch (err) {
     console.warn('Failed to delete topic:', err.message);
@@ -559,6 +564,7 @@ router.post('/topics/:topicId/questions', async (req, res) => {
     requireUuid(req.params.topicId, 'topicId');
     requireRequestObject(req.body);
     requireNonEmptyString(req.body.questionText, 'questionText');
+    requireUuid(req.body.actorUserId, 'actorUserId');
 
     const result = await createQuestion({
       topicId: req.params.topicId,
@@ -582,6 +588,7 @@ router.patch('/questions/:questionId', async (req, res) => {
     requireUuid(req.params.questionId, 'questionId');
     requireRequestObject(req.body);
     requireNonEmptyString(req.body.questionText, 'questionText');
+    requireUuid(req.body.actorUserId, 'actorUserId');
 
     const result = await updateQuestion({
       questionId: req.params.questionId,
@@ -603,7 +610,10 @@ router.patch('/questions/:questionId', async (req, res) => {
 router.delete('/questions/:questionId', async (req, res) => {
   try {
     requireUuid(req.params.questionId, 'questionId');
-    const result = await deleteQuestion(req.params.questionId);
+    requireUuid(req.query.actorUserId, 'actorUserId');
+    const result = await deleteQuestion(req.params.questionId, {
+      actorUserId: req.query.actorUserId,
+    });
 
     if (!result) {
       res.status(404).json({ error: 'Question not found' });

@@ -190,6 +190,12 @@ export default function MentorLearnerPage() {
     }
   }, [state.phase, navigate]);
 
+  useEffect(() => {
+    if (state.error?.type === 'match_error') {
+      setError(state.error.message);
+    }
+  }, [state.error]);
+
   function handleEnter(session) {
     if (session?.sessionId && studentId) {
       joinMentorRoom(session.sessionId, studentId);

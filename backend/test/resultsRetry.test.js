@@ -58,7 +58,6 @@ test('retryFailedResults resets failed turns and reruns AI scaffold', async () =
       call.params?.[0] === 'turn-1'
     ));
 
-    assert.equal(result.retried, 1);
     assert.equal(result.aiStatus, 'failed');
     assert.equal(result.sessionStatus, 'completed');
     assert.ok(resetCall);

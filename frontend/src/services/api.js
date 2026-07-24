@@ -91,22 +91,23 @@ export async function getTopicDetail(topicId) {
   return request(`/topics/${topicId}`, { cache: 'no-store' });
 }
 
-export async function createTopic({ name, targetBand, status, ownerId }) {
+export async function createTopic({ name, targetBand, status, ownerId, scope, actorUserId }) {
   return request('/topics', {
     method: 'POST',
-    body: JSON.stringify({ name, targetBand, status, ownerId }),
+    body: JSON.stringify({ name, targetBand, status, ownerId, scope, actorUserId }),
   });
 }
 
-export async function updateTopic(topicId, { name, targetBand, status }) {
+export async function updateTopic(topicId, { name, targetBand, status, actorUserId }) {
   return request(`/topics/${topicId}`, {
     method: 'PATCH',
-    body: JSON.stringify({ name, targetBand, status }),
+    body: JSON.stringify({ name, targetBand, status, actorUserId }),
   });
 }
 
-export async function deleteTopic(topicId) {
-  return request(`/topics/${topicId}`, {
+export async function deleteTopic(topicId, actorUserId) {
+  const query = actorUserId ? `?actorUserId=${encodeURIComponent(actorUserId)}` : '';
+  return request(`/topics/${topicId}${query}`, {
     method: 'DELETE',
   });
 }
@@ -125,8 +126,9 @@ export async function updateQuestion(questionId, payload) {
   });
 }
 
-export async function deleteQuestion(questionId) {
-  return request(`/questions/${questionId}`, {
+export async function deleteQuestion(questionId, actorUserId) {
+  const query = actorUserId ? `?actorUserId=${encodeURIComponent(actorUserId)}` : '';
+  return request(`/questions/${questionId}${query}`, {
     method: 'DELETE',
   });
 }

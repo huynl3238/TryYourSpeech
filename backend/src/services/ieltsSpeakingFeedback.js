@@ -4,7 +4,7 @@ import { createJsonChatCompletion } from './openaiClient.js';
 // grades. Pronunciation is graded separately from Azure acoustic data, so it is
 // intentionally excluded here. These anchors keep the model's judgement aligned
 // with the official rubric an IELTS examiner would defend.
-const BAND_DESCRIPTORS = `
+export const BAND_DESCRIPTORS = `
 Fluency and Coherence (FC):
 - Band 8: speaks fluently with only occasional repetition/self-correction; hesitation is content-related; develops topics coherently and appropriately.
 - Band 7: speaks at length without noticeable effort; some hesitation, repetition or self-correction; uses a range of connectives and discourse markers flexibly.

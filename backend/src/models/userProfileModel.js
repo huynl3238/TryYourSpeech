@@ -72,30 +72,15 @@ async function getProfileStats(client, userId) {
         FROM sessions
         WHERE user_a_id = $1 OR user_b_id = $1
       ),
-      user_turn_scores AS (
+      session_bands AS (
         SELECT
           us.id AS session_id,
           COALESCE(us.started_at, us.created_at) AS session_date,
-          scores.score_value
+          sar.overall_band AS estimated_band
         FROM user_sessions us
-        JOIN turns tr ON tr.session_id = us.id AND tr.speaker_id = $1
-        JOIN ai_results ar ON ar.turn_id = tr.id AND ar.status = 'completed'
-        JOIN LATERAL (
-          VALUES
-            (ar.fluency_score),
-            (ar.lexical_score),
-            (ar.grammar_score),
-            (ar.pronunciation_score)
-        ) scores(score_value) ON true
-        WHERE scores.score_value IS NOT NULL
-      ),
-      session_bands AS (
-        SELECT
-          session_id,
-          MAX(session_date) AS session_date,
-          ROUND(AVG(score_value) * 2) / 2 AS estimated_band
-        FROM user_turn_scores
-        GROUP BY session_id
+        JOIN session_ai_results sar ON sar.session_id = us.id AND sar.user_id = $1
+        WHERE sar.status = 'completed'
+          AND sar.overall_band IS NOT NULL
       ),
       latest_band AS (
         SELECT estimated_band
@@ -185,7 +170,7 @@ export async function createIdentity({ displayName, band, userRole }) {
     throw new Error('displayName is invalid');
   }
 
-  const role = userRole === 'mentor' ? 'mentor' : 'student';
+  const role = ['student', 'mentor', 'admin'].includes(userRole) ? userRole : 'student';
 
   let parsedBand = null;
   if (band !== undefined && band !== null && band !== '') {

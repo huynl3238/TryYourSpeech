@@ -64,6 +64,7 @@ async function selectEligibleTopic(client) {
     FROM topics t
     JOIN questions q ON q.topic_id = t.id
     WHERE COALESCE(t.status, 'open') = 'open'
+      AND COALESCE(t.scope, 'system') = 'system'
     GROUP BY t.id, t.name
     HAVING
       COUNT(*) FILTER (WHERE q.part_number = 1) >= 1 AND
@@ -111,18 +112,34 @@ async function selectSessionQuestions(client, topicId) {
   return [...part1.rows, ...part2.rows, ...part3.rows].slice(0, TEST_TURNS_PER_USER);
 }
 
-// Mentor sessions run the mentor's full question set (all questions of the
-// chosen topic), ordered Part 1 → 2 → 3, unlike peer sessions which sample one
-// question per part.
-async function selectAllQuestions(client, topicId) {
+// Mentor sessions use the mentor's selected focus. A focused session runs only
+// that IELTS part; a full session runs every question in Part 1 -> 2 -> 3 order.
+function getMentorFocusPartNumber(focus) {
+  if (focus === 'part1') return 1;
+  if (focus === 'part2') return 2;
+  if (focus === 'part3') return 3;
+  return null;
+}
+
+async function selectMentorQuestions(client, topicId, focus) {
+  const partNumber = getMentorFocusPartNumber(focus);
+  const params = [topicId];
+  let partFilter = '';
+
+  if (partNumber !== null) {
+    params.push(partNumber);
+    partFilter = 'AND part_number = $2';
+  }
+
   const result = await client.query(
     `
       SELECT id, part_number
       FROM questions
       WHERE topic_id = $1
+        ${partFilter}
       ORDER BY part_number, id
     `,
-    [topicId]
+    params
   );
 
   return result.rows;
@@ -269,24 +286,32 @@ export async function createMatchedSession(roomId, userA, userB, sessionMode = '
 // Create a real mentor-led practice session from users that already exist
 // (the mentor and the student they picked from the queue). Reuses the private
 // question/turn helpers above. Must be called inside an open transaction.
-export async function insertMentorSessionWithClient(client, { mentorId, studentId, topicId = null }) {
+export async function insertMentorSessionWithClient(client, { mentorId, studentId, topicId = null, focus = 'full' }) {
   if (!topicId) {
     throw new Error('Phiên mentor cần một bộ câu hỏi');
   }
 
   const chosen = await client.query(
-    'SELECT id, name FROM topics WHERE id = $1',
-    [topicId]
+    `
+      SELECT id, name, scope, owner_id
+      FROM topics
+      WHERE id = $1
+        AND COALESCE(status, 'open') = 'open'
+        AND (
+          COALESCE(scope, 'system') = 'system'
+          OR (scope = 'mentor_private' AND owner_id = $2)
+        )
+    `,
+    [topicId, mentorId]
   );
   const topic = chosen.rows[0] || null;
   if (!topic) {
     throw new Error('Không tìm thấy bộ câu hỏi của phiên');
   }
 
-  // Use the mentor's full set (all questions of the topic).
-  const questions = await selectAllQuestions(client, topic.id);
+  const questions = await selectMentorQuestions(client, topic.id, focus);
   if (questions.length === 0) {
-    throw new Error('Bộ câu hỏi này chưa có câu nào');
+    throw new Error('Bộ câu hỏi này chưa có câu phù hợp với phần luyện đã chọn');
   }
 
   const sessionId = randomUUID();

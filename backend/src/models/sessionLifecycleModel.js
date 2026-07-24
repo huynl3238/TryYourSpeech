@@ -16,6 +16,12 @@ export async function markSessionCompletedIfAllResultsTerminal(client, sessionId
               ar.status NOT IN ('completed', 'failed')
             )
         )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM session_ai_results sar
+          WHERE sar.session_id = $1
+            AND sar.status NOT IN ('completed', 'failed')
+        )
       RETURNING status
     `,
     [sessionId]

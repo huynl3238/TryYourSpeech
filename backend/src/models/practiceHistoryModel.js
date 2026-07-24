@@ -159,7 +159,7 @@ async function getHistoryRows(client, userId, limit) {
         COALESCE(ai_summary.completed_count, 0) AS ai_completed_count,
         COALESCE(ai_summary.failed_count, 0) AS ai_failed_count,
         COALESCE(ai_summary.pending_count, 0) AS ai_pending_count,
-        ai_summary.overall_band,
+        holistic_summary.overall_band,
         mr.id AS mentor_review_id,
         cp.id AS classroom_post_id,
         cp.status AS classroom_post_status
@@ -201,21 +201,18 @@ async function getHistoryRows(client, userId, limit) {
         SELECT
           COUNT(*) FILTER (WHERE ar.status = 'completed')::int AS completed_count,
           COUNT(*) FILTER (WHERE ar.status = 'failed')::int AS failed_count,
-          COUNT(*) FILTER (WHERE ar.status IS NULL OR ar.status = 'processing')::int AS pending_count,
-          ROUND(AVG(score_value) * 2) / 2 AS overall_band
+          COUNT(*) FILTER (WHERE ar.status IS NULL OR ar.status = 'processing')::int AS pending_count
         FROM turns tr
         LEFT JOIN ai_results ar ON ar.turn_id = tr.id
-        LEFT JOIN LATERAL (
-          VALUES
-            (ar.fluency_score),
-            (ar.lexical_score),
-            (ar.grammar_score),
-            (ar.pronunciation_score)
-        ) scores(score_value) ON true
         WHERE tr.session_id = s.id
           AND tr.speaker_id = $1
-          AND scores.score_value IS NOT NULL
       ) ai_summary ON true
+      LEFT JOIN LATERAL (
+        SELECT overall_band
+        FROM session_ai_results
+        WHERE session_id = s.id
+          AND user_id = $1
+      ) holistic_summary ON true
       LEFT JOIN mentor_reviews mr ON mr.session_id = s.id
       LEFT JOIN classroom_posts cp ON cp.session_id = s.id
         AND cp.status <> 'declined'

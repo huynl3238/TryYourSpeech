@@ -31,6 +31,19 @@ function focusEstimate(focus) {
   return found ? found.estimate : null;
 }
 
+function topicHasFocusQuestions(topic, focus) {
+  if (!topic) return false;
+  if (focus === 'part1') return (topic.partCounts?.part1 ?? 0) > 0;
+  if (focus === 'part2') return (topic.partCounts?.part2 ?? 0) > 0;
+  if (focus === 'part3') return (topic.partCounts?.part3 ?? 0) > 0;
+
+  return (
+    (topic.partCounts?.part1 ?? 0) > 0 &&
+    (topic.partCounts?.part2 ?? 0) > 0 &&
+    (topic.partCounts?.part3 ?? 0) > 0
+  );
+}
+
 function formatWait(appliedAt) {
   if (!appliedAt) return '';
   const minutes = Math.max(0, Math.round((Date.now() - new Date(appliedAt).getTime()) / 60000));
@@ -157,10 +170,16 @@ function OpenSessionModal({ topics, onClose, onCreate, submitting }) {
 
   // A topic is only usable if it has at least one question.
   const usableTopics = topics.filter((t) => (t.questionCount ?? 0) > 0);
+  const selectedTopic = usableTopics.find((topic) => topic.id === topicId) || null;
+  const selectedTopicMatchesFocus = topicHasFocusQuestions(selectedTopic, focus);
 
   function handleCreate() {
     if (!topicId) {
       setFormError('Vui lòng chọn bộ câu hỏi cho phiên học');
+      return;
+    }
+    if (!selectedTopicMatchesFocus) {
+      setFormError('Bộ câu hỏi này chưa có đủ câu phù hợp với phần luyện đã chọn');
       return;
     }
     onCreate({ focus, targetBandMin: Number(bandMin), targetBandMax: Number(bandMax), topicId });
@@ -227,13 +246,18 @@ function OpenSessionModal({ topics, onClose, onCreate, submitting }) {
                 ))}
               </select>
             )}
+            {selectedTopic && !selectedTopicMatchesFocus && (
+              <p className="text-[12.5px] text-red-600 mt-2">
+                Bộ câu hỏi đã chọn chưa có câu phù hợp với {focusLabel(focus)}.
+              </p>
+            )}
           </div>
           {formError && <p className="text-[13px] text-red-600">{formError}</p>}
         </div>
         <div className="px-5 py-4 border-t border-[#F1EEEA] flex justify-end gap-2">
           <button onClick={onClose} className="h-10 px-4 rounded-lg border border-[#EAE7E3] text-sm font-semibold text-[#57534E] hover:bg-[#F1EEEA]">Hủy</button>
           <button
-            disabled={submitting || usableTopics.length === 0}
+            disabled={submitting || usableTopics.length === 0 || Boolean(topicId && !selectedTopicMatchesFocus)}
             onClick={handleCreate}
             className="h-10 px-4 rounded-lg bg-[#059669] text-white text-sm font-semibold hover:brightness-105 disabled:opacity-60"
           >
@@ -267,6 +291,12 @@ export default function MentorHostPage() {
       navigate('/device-check');
     }
   }, [state.phase, navigate]);
+
+  useEffect(() => {
+    if (state.error?.type === 'match_error') {
+      setError(state.error.message);
+    }
+  }, [state.error]);
 
   const loadSessions = useCallback(async () => {
     if (!mentorId) return;
@@ -330,6 +360,12 @@ export default function MentorHostPage() {
       await loadSessions();
     } catch (err) {
       setError(err.message);
+    }
+  }
+
+  function handleEnterStartedSession(session) {
+    if (session?.sessionId && mentorId) {
+      joinMentorRoom(session.sessionId, mentorId);
     }
   }
 
@@ -400,8 +436,19 @@ export default function MentorHostPage() {
                 </div>
 
                 {started ? (
-                  <div className="px-5 py-4 bg-[#ECFDF5] border-t border-[#A7F3D0] text-sm text-[#065F46]">
-                    Đã chọn <b>{chosen?.displayName || 'học viên'}</b> — các học viên còn lại đã được thông báo.
+                  <div className="px-5 py-4 bg-[#ECFDF5] border-t border-[#A7F3D0] text-sm text-[#065F46] flex items-center justify-between gap-3">
+                    <span>
+                      Đã chọn <b>{chosen?.displayName || 'học viên'}</b> — các học viên còn lại đã được thông báo.
+                    </span>
+                    {session.sessionId && (
+                      <button
+                        type="button"
+                        onClick={() => handleEnterStartedSession(session)}
+                        className="h-10 px-4 rounded-lg bg-[#D97757] text-white text-[13.5px] font-semibold hover:brightness-105 whitespace-nowrap"
+                      >
+                        Vào phiên học
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <>

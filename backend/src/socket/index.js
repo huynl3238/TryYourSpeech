@@ -510,10 +510,19 @@ async function handleJoinMentorRoom(io, socket, data) {
     return;
   }
 
-  // Room already built (e.g. a duplicate join) — nothing to do.
-  if (rooms.has(participants.roomId)) return;
+  // Reconnect is not supported in the MVP, so fail loudly instead of leaving
+  // this client waiting forever.
+  if (rooms.has(participants.roomId)) {
+    socket.emit('match_error', { error: 'Phiên học đang có kết nối khác. Vui lòng tải lại danh sách phiên.' });
+    return;
+  }
 
   const waiter = mentorRoomWaiters.get(sessionId) || { A: null, B: null };
+  if (waiter[role]?.socketId && waiter[role].socketId !== socket.id) {
+    io.to(waiter[role].socketId).emit('match_error', {
+      error: 'Phiên học đã được mở ở một tab khác.',
+    });
+  }
   waiter[role] = {
     socketId: socket.id,
     displayName: role === 'A' ? participants.userA.displayName : participants.userB.displayName,

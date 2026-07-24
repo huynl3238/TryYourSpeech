@@ -18,30 +18,55 @@ const BAND_THRESHOLDS = [
 
 const LOWEST_BAND = 4;
 
+// When Azure cannot measure prosody (intonation/stress/rhythm) it returns null, and
+// its overall PronScore is then computed WITHOUT that dimension — which runs
+// optimistically high, because prosody is exactly where L1-influenced speakers lose
+// marks. In that case we do NOT trust PronScore: we re-derive the composite from the
+// dimensions Azure actually measured (accuracy, fluency) and cap the resulting band,
+// since native-like delivery cannot be confirmed without prosody data.
+const PROSODY_MISSING_BAND_CAP = 7;
+
 function isFiniteNumber(value) {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
-// Azure's PronScore already blends accuracy, fluency and prosody, so prefer it and
-// fall back to accuracy when prosody-based scoring is unavailable.
-function getCompositeScore({ pronunciationScore, accuracyScore }) {
-  if (isFiniteNumber(pronunciationScore)) {
-    return pronunciationScore;
-  }
-
-  if (isFiniteNumber(accuracyScore)) {
-    return accuracyScore;
-  }
-
-  return null;
-}
-
-export function azureToPronunciationBand(pronunciation) {
-  const compositeScore = getCompositeScore(pronunciation || {});
-  if (compositeScore === null) {
+function mean(values) {
+  const finite = values.filter(isFiniteNumber);
+  if (finite.length === 0) {
     return null;
   }
 
-  const match = BAND_THRESHOLDS.find((threshold) => compositeScore >= threshold.minScore);
+  return finite.reduce((total, value) => total + value, 0) / finite.length;
+}
+
+function bandFromScore(score) {
+  const match = BAND_THRESHOLDS.find((threshold) => score >= threshold.minScore);
   return match ? match.band : LOWEST_BAND;
+}
+
+export function azureToPronunciationBand(pronunciation) {
+  const scores = pronunciation || {};
+
+  // Prosody available → Azure's PronScore already blends accuracy, fluency and
+  // prosody, so prefer it; fall back to the mean of the measured dimensions.
+  if (isFiniteNumber(scores.prosodyScore)) {
+    const composite = isFiniteNumber(scores.pronunciationScore)
+      ? scores.pronunciationScore
+      : mean([scores.accuracyScore, scores.fluencyScore, scores.prosodyScore]);
+
+    return composite === null ? null : bandFromScore(composite);
+  }
+
+  // Prosody missing → Azure's PronScore was computed without it and reads high, so we
+  // still use the best available composite but cap the band conservatively, since
+  // native-like delivery cannot be confirmed without prosody data.
+  const composite = isFiniteNumber(scores.pronunciationScore)
+    ? scores.pronunciationScore
+    : mean([scores.accuracyScore, scores.fluencyScore]);
+
+  if (composite === null) {
+    return null;
+  }
+
+  return Math.min(bandFromScore(composite), PROSODY_MISSING_BAND_CAP);
 }

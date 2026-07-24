@@ -102,7 +102,7 @@ export async function listStudentWork({ limit = 50 } = {}) {
           COALESCE(note_summary.notes_count, 0) AS notes_count,
           COALESCE(ai_summary.completed_count, 0) AS ai_completed_count,
           COALESCE(ai_summary.failed_count, 0) AS ai_failed_count,
-          ai_summary.overall_band,
+          holistic_summary.overall_band,
           mr.id AS mentor_review_id,
           mr.overall_comment AS mentor_review_summary,
           cp.id AS classroom_post_id,
@@ -140,20 +140,17 @@ export async function listStudentWork({ limit = 50 } = {}) {
         LEFT JOIN LATERAL (
           SELECT
             COUNT(*) FILTER (WHERE ar.status = 'completed')::int AS completed_count,
-            COUNT(*) FILTER (WHERE ar.status = 'failed')::int AS failed_count,
-            ROUND(AVG(score_value) * 2) / 2 AS overall_band
+            COUNT(*) FILTER (WHERE ar.status = 'failed')::int AS failed_count
           FROM turns tr
           LEFT JOIN ai_results ar ON ar.turn_id = tr.id
-          LEFT JOIN LATERAL (
-            VALUES
-              (ar.fluency_score),
-              (ar.lexical_score),
-              (ar.grammar_score),
-              (ar.pronunciation_score)
-          ) scores(score_value) ON true
           WHERE tr.session_id = s.id
-            AND scores.score_value IS NOT NULL
         ) ai_summary ON true
+        LEFT JOIN LATERAL (
+          SELECT ROUND(AVG(overall_band) * 2) / 2 AS overall_band
+          FROM session_ai_results
+          WHERE session_id = s.id
+            AND overall_band IS NOT NULL
+        ) holistic_summary ON true
         LEFT JOIN mentor_reviews mr ON mr.session_id = s.id
         LEFT JOIN classroom_posts cp ON cp.session_id = s.id
           AND cp.status = 'published'

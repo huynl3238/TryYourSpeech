@@ -31,6 +31,32 @@ function focusLabel(focus) {
   return `Part ${focus.slice(-1)}`;
 }
 
+function hasQuestionsForFocus(topicRow, focus) {
+  if (focus === 'part1') return Number(topicRow.part1_count) > 0;
+  if (focus === 'part2') return Number(topicRow.part2_count) > 0;
+  if (focus === 'part3') return Number(topicRow.part3_count) > 0;
+
+  return (
+    Number(topicRow.part1_count) > 0 &&
+    Number(topicRow.part2_count) > 0 &&
+    Number(topicRow.part3_count) > 0
+  );
+}
+
+function isBandWithinTarget(studentBand, session) {
+  if (studentBand === null || studentBand === undefined) {
+    return false;
+  }
+
+  const band = Number(studentBand);
+  const min = session.target_band_min === null ? null : Number(session.target_band_min);
+  const max = session.target_band_max === null ? null : Number(session.target_band_max);
+
+  if (min !== null && band < min) return false;
+  if (max !== null && band > max) return false;
+  return true;
+}
+
 async function getUser(client, userId) {
   const result = await client.query(
     'SELECT id, display_name, band, user_role FROM users WHERE id = $1',
@@ -96,7 +122,15 @@ export async function openMentorSession({ mentorId, focus = 'part2', targetBandM
     }
     const topic = await client.query(
       `
-        SELECT t.id, t.owner_id, COUNT(q.id)::int AS question_count
+        SELECT
+          t.id,
+          t.owner_id,
+          t.scope,
+          t.status,
+          COUNT(q.id)::int AS question_count,
+          COUNT(q.id) FILTER (WHERE q.part_number = 1)::int AS part1_count,
+          COUNT(q.id) FILTER (WHERE q.part_number = 2)::int AS part2_count,
+          COUNT(q.id) FILTER (WHERE q.part_number = 3)::int AS part3_count
         FROM topics t
         LEFT JOIN questions q ON q.topic_id = t.id
         WHERE t.id = $1
@@ -108,12 +142,20 @@ export async function openMentorSession({ mentorId, focus = 'part2', targetBandM
       throw new Error('Không tìm thấy bộ câu hỏi');
     }
     const topicRow = topic.rows[0];
-    // A mentor may use their own sets or shared templates (owner_id IS NULL).
-    if (topicRow.owner_id !== null && topicRow.owner_id !== mentorId) {
-      throw new Error('Bạn chỉ được dùng bộ câu hỏi của mình');
+    if (topicRow.status !== 'open') {
+      throw new Error('Question set is not open');
+    }
+    if (
+      topicRow.scope !== 'system' &&
+      !(topicRow.scope === 'mentor_private' && topicRow.owner_id === mentorId)
+    ) {
+      throw new Error('Mentor can only use system question sets or their own sets');
     }
     if (topicRow.question_count === 0) {
       throw new Error('Bộ câu hỏi này chưa có câu nào, hãy thêm câu hỏi trước');
+    }
+    if (!hasQuestionsForFocus(topicRow, safeFocus)) {
+      throw new Error('Bộ câu hỏi này chưa có câu phù hợp với phần luyện đã chọn');
     }
     const safeTopicId = topicId;
 
@@ -252,6 +294,12 @@ export async function applyToMentorSession({ mentorSessionId, studentId }) {
     if (!student) {
       throw new Error('Student not found');
     }
+    if (student.user_role !== 'student') {
+      throw new Error('Chỉ học viên mới được apply vào phiên mentor');
+    }
+    if (!isBandWithinTarget(student.band, session)) {
+      throw new Error('Band hiện tại của bạn không nằm trong khoảng band mục tiêu của phiên này');
+    }
 
     await client.query(
       `
@@ -352,6 +400,7 @@ export async function chooseApplicantAndStart({ mentorSessionId, mentorId, stude
       mentorId,
       studentId,
       topicId: mentorSession.topic_id,
+      focus: mentorSession.focus,
     });
 
     await client.query(

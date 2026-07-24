@@ -283,8 +283,8 @@ async function getPostRows(client, whereClause, params, viewerId = null) {
         ub.user_role AS user_b_role,
         COALESCE(notes.peer_note_count, 0) AS peer_note_count,
         COALESCE(ai.completed_count, 0) AS ai_completed_count,
-        ai.overall_band,
-        ai.feedback_summary AS ai_feedback_summary,
+        holistic.overall_band,
+        holistic.feedback_summary AS ai_feedback_summary,
         mr.overall_comment AS mentor_overall_comment
       FROM classroom_posts cp
       JOIN sessions s ON s.id = cp.session_id
@@ -299,22 +299,19 @@ async function getPostRows(client, whereClause, params, viewerId = null) {
         WHERE tr.session_id = s.id
       ) notes ON true
       LEFT JOIN LATERAL (
-        SELECT
-          COUNT(*) FILTER (WHERE ar.status = 'completed')::int AS completed_count,
-          ROUND(AVG(score_value) * 2) / 2 AS overall_band,
-          MAX(ar.ai_feedback->>'overallComment') AS feedback_summary
+        SELECT COUNT(*) FILTER (WHERE ar.status = 'completed')::int AS completed_count
         FROM turns tr
         LEFT JOIN ai_results ar ON ar.turn_id = tr.id
-        LEFT JOIN LATERAL (
-          VALUES
-            (ar.fluency_score),
-            (ar.lexical_score),
-            (ar.grammar_score),
-            (ar.pronunciation_score)
-        ) scores(score_value) ON true
         WHERE tr.session_id = s.id
-          AND scores.score_value IS NOT NULL
       ) ai ON true
+      LEFT JOIN LATERAL (
+        SELECT
+          overall_band,
+          holistic_feedback -> 'overall' ->> 'summary' AS feedback_summary
+        FROM session_ai_results
+        WHERE session_id = s.id
+          AND user_id = cp.author_id
+      ) holistic ON true
       LEFT JOIN mentor_reviews mr ON mr.session_id = s.id
       LEFT JOIN LATERAL (
         SELECT COUNT(*)::int AS comments_count

@@ -10,8 +10,87 @@ const CRITERIA_FIELDS = [
   { key: 'fluencyComment', label: 'Trôi chảy', placeholder: 'Tốc độ, mạch lạc, nối ý…' },
 ];
 
+function formatDuration(ms) {
+  const totalSeconds = Math.max(0, Math.round((Number(ms) || 0) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = String(totalSeconds % 60).padStart(2, '0');
+  return `${minutes}:${seconds}`;
+}
+
+function MentorTurnReviewList({ turns, audioByTurnId }) {
+  const [audioUrls, setAudioUrls] = useState({});
+
+  useEffect(() => {
+    const nextUrls = {};
+
+    for (const turn of turns || []) {
+      const blob = audioByTurnId?.[turn.id];
+      if (blob) {
+        nextUrls[turn.id] = URL.createObjectURL(blob);
+      }
+    }
+
+    setAudioUrls(nextUrls);
+
+    return () => {
+      Object.values(nextUrls).forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [turns, audioByTurnId]);
+
+  if (!Array.isArray(turns) || turns.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="bg-white border border-[#EAE7E3] rounded-2xl shadow-sm p-5 mb-5">
+      <div className="flex items-start justify-between gap-4 mb-4">
+        <div>
+          <div className="text-[11px] uppercase tracking-[0.1em] text-[#D97757] font-bold">Audio học viên</div>
+          <h2 className="text-base font-bold text-[#1C1917] mt-1">Xem lại phần trả lời</h2>
+        </div>
+        <span className="text-xs text-[#78716C] tabular-nums">{turns.length} lượt nói</span>
+      </div>
+
+      <div className="flex flex-col gap-3">
+        {turns.map((turn) => {
+          const audioUrl = audioUrls[turn.id];
+
+          return (
+            <article key={turn.id} className="rounded-xl border border-[#F1EEEA] bg-[#FAFAF8] p-4">
+              <div className="flex flex-wrap items-center gap-2 mb-2">
+                <span className="text-[11px] font-bold px-2 py-0.5 rounded-md text-[#8A4A33] bg-[#F7ECE6] border border-[#EAC7B9]">
+                  Part {turn.partNumber}
+                </span>
+                <span className="text-[11px] text-[#78716C]">Thời lượng {formatDuration(turn.durationMs)}</span>
+              </div>
+
+              <p className="text-sm font-semibold text-[#1C1917] leading-relaxed">{turn.questionText}</p>
+
+              {turn.cueCard?.bullet_points?.length > 0 && (
+                <ul className="mt-2 text-[13px] text-[#57534E] list-disc pl-5 space-y-1">
+                  {turn.cueCard.bullet_points.map((point) => (
+                    <li key={point}>{point}</li>
+                  ))}
+                </ul>
+              )}
+
+              {audioUrl ? (
+                <audio controls src={audioUrl} className="w-full mt-3" />
+              ) : (
+                <p className="text-[12.5px] text-[#A8A29E] mt-3">
+                  Chưa có audio local cho lượt này. Audio có thể mất nếu tab đã được refresh sau phiên.
+                </p>
+              )}
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 // --- Mentor writes the review ---
-function MentorReviewForm({ sessionId, mentorId, studentId, studentName }) {
+function MentorReviewForm({ sessionId, mentorId, studentId, studentName, turns, audioByTurnId }) {
   const navigate = useNavigate();
   const [form, setForm] = useState({
     overallComment: '',
@@ -72,6 +151,8 @@ function MentorReviewForm({ sessionId, mentorId, studentId, studentName }) {
           <h1 className="text-2xl font-extrabold tracking-tight text-[#1C1917] mt-1">Đánh giá phiên với {studentName || 'học viên'}</h1>
           <p className="text-sm text-[#78716C] mt-1">Viết nhận xét để học viên biết điểm mạnh và hướng cải thiện.</p>
         </div>
+
+        <MentorTurnReviewList turns={turns} audioByTurnId={audioByTurnId} />
 
         <div className="bg-white border border-[#EAE7E3] rounded-2xl shadow-sm p-5 flex flex-col gap-5">
           <div>
@@ -239,6 +320,8 @@ export default function MentorReviewPage() {
         mentorId={state.userId}
         studentId={state.partnerId}
         studentName={state.partnerName}
+        turns={state.turns}
+        audioByTurnId={state.remoteAudioByTurnId}
       />
     );
   }

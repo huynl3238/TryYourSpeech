@@ -42,6 +42,8 @@ import {
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const dbDir = join(currentDir, '..', 'src', 'db');
+const seedMentorId = '33333333-3333-4333-8333-333333333303';
+const seedAdminId = '33333333-3333-4333-8333-333333333305';
 
 async function canUseDatabase() {
   try {
@@ -366,6 +368,8 @@ test('topic management creates, updates, lists, and deletes unused content', asy
       name: `Integration Topic ${Date.now()}`,
       targetBand: 'Band 6.0 - 7.0',
       status: 'draft',
+      scope: 'system',
+      actorUserId: seedAdminId,
     });
     topicId = createdTopic.topic.id;
 
@@ -381,6 +385,7 @@ test('topic management creates, updates, lists, and deletes unused content', asy
         bulletPoints: ['what it was', 'how you learned it'],
       },
       suggestedPhrases: ['It helped me to', 'At first'],
+      actorUserId: seedAdminId,
     });
     questionId = createdQuestion.question.id;
 
@@ -393,6 +398,7 @@ test('topic management creates, updates, lists, and deletes unused content', asy
       questionText: 'Why do people need to keep learning new skills?',
       cueCard: null,
       suggestedPhrases: ['lifelong learning'],
+      actorUserId: seedAdminId,
     });
 
     assert.equal(updatedQuestion.question.partNumber, 3);
@@ -403,9 +409,11 @@ test('topic management creates, updates, lists, and deletes unused content', asy
       name: createdTopic.topic.name,
       targetBand: 'Band 6.5 - 7.5',
       status: 'open',
+      actorUserId: seedAdminId,
     });
 
     assert.equal(updatedTopic.topic.status, 'open');
+    assert.equal(updatedTopic.topic.scope, 'system');
     assert.equal(updatedTopic.topic.questionCount, 1);
     assert.equal(updatedTopic.questions.length, 1);
 
@@ -415,15 +423,64 @@ test('topic management creates, updates, lists, and deletes unused content', asy
     const detail = await getTopicDetail(topicId);
     assert.equal(detail.topic.partCounts.part3, 1);
 
-    await deleteQuestion(questionId);
+    await deleteQuestion(questionId, { actorUserId: seedAdminId });
     questionId = null;
-    await deleteTopic(topicId);
+    await deleteTopic(topicId, { actorUserId: seedAdminId });
     topicId = null;
   } finally {
     if (questionId) {
       await pool.query('DELETE FROM questions WHERE id = $1', [questionId]);
     }
 
+    if (topicId) {
+      await pool.query('DELETE FROM topics WHERE id = $1', [topicId]);
+    }
+  }
+});
+
+test('mentor question sets are private and visible only to their owner plus system sets', async (t) => {
+  if (!(await canUseDatabase())) {
+    t.skip('PostgreSQL local database is not available');
+    return;
+  }
+
+  await prepareDatabase();
+
+  let topicId = null;
+
+  try {
+    const createdTopic = await createTopic({
+      name: `Mentor Private Topic ${Date.now()}`,
+      targetBand: 'Band 6.0',
+      status: 'open',
+      scope: 'mentor_private',
+      ownerId: seedMentorId,
+      actorUserId: seedMentorId,
+    });
+    topicId = createdTopic.topic.id;
+
+    assert.equal(createdTopic.topic.scope, 'mentor_private');
+    assert.equal(createdTopic.topic.ownerId, seedMentorId);
+
+    await assert.rejects(
+      () => createTopic({
+        name: `Invalid System Topic ${Date.now()}`,
+        status: 'open',
+        scope: 'system',
+        actorUserId: seedMentorId,
+      }),
+      /Only admin can manage system question sets/
+    );
+
+    const mentorTopics = await listTopics({ ownerId: seedMentorId });
+    assert.ok(mentorTopics.topics.some((topic) => topic.id === topicId));
+    assert.ok(mentorTopics.topics.every(
+      (topic) => topic.scope === 'system' || topic.ownerId === seedMentorId
+    ));
+
+    await deleteTopic(topicId, { actorUserId: seedMentorId });
+    topicId = null;
+  } finally {
     if (topicId) {
       await pool.query('DELETE FROM topics WHERE id = $1', [topicId]);
     }
@@ -450,11 +507,11 @@ test('topic management protects content already used by sessions', async (t) => 
     const usedQuestionId = detail.turns[0].questionId;
 
     await assert.rejects(
-      () => deleteTopic(detail.topic.id),
+      () => deleteTopic(detail.topic.id, { actorUserId: seedAdminId }),
       /Topic is used by existing sessions/
     );
     await assert.rejects(
-      () => deleteQuestion(usedQuestionId),
+      () => deleteQuestion(usedQuestionId, { actorUserId: seedAdminId }),
       /Question is used by existing turns/
     );
   } finally {

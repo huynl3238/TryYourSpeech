@@ -1,6 +1,7 @@
+import { randomUUID } from 'crypto';
 import { assessAzurePronunciation } from '../services/azurePronunciationAssessment.js';
 import { azureToPronunciationBand } from '../services/pronunciationScoring.js';
-import { generateSpeakingFeedback } from '../services/ieltsSpeakingFeedback.js';
+import { generateHolisticFeedback } from '../services/ieltsHolisticFeedback.js';
 import { transcribeAudioFile } from '../services/openaiClient.js';
 import { resolveUploadAudioPath } from '../services/uploadPaths.js';
 import {
@@ -10,6 +11,9 @@ import {
 } from '../config/ai.js';
 
 export { getAiConfigStatus };
+
+const TURNS_INCOMPLETE_ERROR =
+  'Một số lượt nói chưa xử lý được nên chưa thể chấm tổng thể cả bài.';
 
 function getMissingConfigError(missingConfigNames) {
   return `AI services are not configured. Missing: ${missingConfigNames.join(', ')}`;
@@ -23,10 +27,21 @@ function roundToHalf(value) {
   return Math.round(value * 2) / 2;
 }
 
+function isFiniteNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function mean(values) {
+  const finite = values.filter(isFiniteNumber);
+  if (finite.length === 0) {
+    return null;
+  }
+
+  return finite.reduce((total, value) => total + value, 0) / finite.length;
+}
+
 function computeOverallBand(scores) {
-  const bands = Object.values(scores).filter(
-    (band) => typeof band === 'number' && Number.isFinite(band)
-  );
+  const bands = Object.values(scores).filter(isFiniteNumber);
   if (bands.length === 0) {
     return null;
   }
@@ -53,6 +68,8 @@ async function getProcessingTurns(client, sessionId) {
     `
       SELECT
         tr.id AS turn_id,
+        tr.speaker_id,
+        tr.turn_index,
         tr.audio_url,
         tr.question_id,
         tr.part_number,
@@ -78,6 +95,7 @@ async function getProcessingTurns(client, sessionId) {
         AND ar.status = 'processing'
       GROUP BY
         tr.id,
+        tr.speaker_id,
         tr.turn_index,
         tr.audio_url,
         tr.question_id,
@@ -91,6 +109,20 @@ async function getProcessingTurns(client, sessionId) {
   );
 
   return result.rows;
+}
+
+function groupTurnsBySpeaker(turns) {
+  const bySpeaker = new Map();
+
+  for (const turn of turns) {
+    const speakerId = turn.speaker_id;
+    if (!bySpeaker.has(speakerId)) {
+      bySpeaker.set(speakerId, []);
+    }
+    bySpeaker.get(speakerId).push(turn);
+  }
+
+  return bySpeaker;
 }
 
 async function markTurnResultFailed(client, turnId, errorMessage) {
@@ -107,33 +139,83 @@ async function markTurnResultFailed(client, turnId, errorMessage) {
   );
 }
 
-async function markTurnResultCompleted(client, turnId, result) {
+// A turn's own stage stores only the transcript and word-level pronunciation detail.
+// Fluency/Lexical/Grammar and the pronunciation band are no longer per-turn — they are
+// graded once for the whole test and stored in session_ai_results.
+async function markTurnTranscribed(client, turnId, transcript, pronunciation) {
   await client.query(
     `
       UPDATE ai_results
       SET status = 'completed',
           whisper_transcript = $2,
-          fluency_score = $3,
-          lexical_score = $4,
-          grammar_score = $5,
-          pronunciation_score = $6,
-          pronunciation_detail = $7,
-          ai_feedback = $8,
+          fluency_score = NULL,
+          lexical_score = NULL,
+          grammar_score = NULL,
+          pronunciation_score = NULL,
+          pronunciation_detail = $3,
+          ai_feedback = NULL,
           error_message = NULL,
           updated_at = NOW()
       WHERE turn_id = $1
         AND status = 'processing'
     `,
+    [turnId, transcript, JSON.stringify(pronunciation?.detail || [])]
+  );
+}
+
+async function upsertSessionResultCompleted(client, sessionId, userId, holistic) {
+  await client.query(
+    `
+      INSERT INTO session_ai_results (
+        id, session_id, user_id, status,
+        fluency_score, lexical_score, grammar_score, pronunciation_score,
+        overall_band, holistic_feedback, error_message, updated_at
+      )
+      VALUES ($1, $2, $3, 'completed', $4, $5, $6, $7, $8, $9, NULL, NOW())
+      ON CONFLICT (session_id, user_id) DO UPDATE SET
+        status = 'completed',
+        fluency_score = EXCLUDED.fluency_score,
+        lexical_score = EXCLUDED.lexical_score,
+        grammar_score = EXCLUDED.grammar_score,
+        pronunciation_score = EXCLUDED.pronunciation_score,
+        overall_band = EXCLUDED.overall_band,
+        holistic_feedback = EXCLUDED.holistic_feedback,
+        error_message = NULL,
+        updated_at = NOW()
+    `,
     [
-      turnId,
-      result.transcript,
-      result.scores.fluency,
-      result.scores.lexical,
-      result.scores.grammar,
-      result.scores.pronunciation,
-      JSON.stringify(result.pronunciationDetail),
-      JSON.stringify(result.aiFeedback),
+      randomUUID(),
+      sessionId,
+      userId,
+      holistic.scores.fluency,
+      holistic.scores.lexical,
+      holistic.scores.grammar,
+      holistic.scores.pronunciation,
+      holistic.overallBand,
+      JSON.stringify(holistic.feedback),
     ]
+  );
+}
+
+async function upsertSessionResultFailed(client, sessionId, userId, errorMessage) {
+  await client.query(
+    `
+      INSERT INTO session_ai_results (
+        id, session_id, user_id, status, error_message, updated_at
+      )
+      VALUES ($1, $2, $3, 'failed', $4, NOW())
+      ON CONFLICT (session_id, user_id) DO UPDATE SET
+        status = 'failed',
+        fluency_score = NULL,
+        lexical_score = NULL,
+        grammar_score = NULL,
+        pronunciation_score = NULL,
+        overall_band = NULL,
+        holistic_feedback = NULL,
+        error_message = EXCLUDED.error_message,
+        updated_at = NOW()
+    `,
+    [randomUUID(), sessionId, userId, errorMessage]
   );
 }
 
@@ -157,49 +239,101 @@ async function assessPronunciation(turn) {
   });
 }
 
-async function generateTurnFeedback(turn, transcript, pronunciation) {
-  const runtimeConfig = getAiRuntimeConfig();
-
-  return await generateSpeakingFeedback({
-    turn,
-    transcript,
-    pronunciation,
-    model: runtimeConfig.openAiFeedbackModel,
-  });
-}
-
-function buildAiFeedback(feedback, pronunciation, scores) {
+// Combines the per-turn Azure scores into one acoustic profile for the whole test so
+// the pronunciation band reflects the entire performance, not a single answer.
+function aggregatePronunciation(pronunciations) {
   return {
-    ...feedback,
-    pronunciation: {
-      band: scores.pronunciation,
-      accuracyScore: pronunciation?.accuracyScore ?? null,
-      fluencyScore: pronunciation?.fluencyScore ?? null,
-      prosodyScore: pronunciation?.prosodyScore ?? null,
-      pronunciationScore: pronunciation?.pronunciationScore ?? null,
-    },
-    overallBand: computeOverallBand(scores),
+    accuracyScore: mean(pronunciations.map((p) => p?.accuracyScore)),
+    fluencyScore: mean(pronunciations.map((p) => p?.fluencyScore)),
+    prosodyScore: mean(pronunciations.map((p) => p?.prosodyScore)),
+    pronunciationScore: mean(pronunciations.map((p) => p?.pronunciationScore)),
   };
 }
 
-async function runTurnPipeline(turn) {
-  const transcript = await transcribeTurnAudio(turn);
-  const pronunciation = await assessPronunciation(turn);
-  const feedback = await generateTurnFeedback(turn, transcript, pronunciation);
+// Grades Fluency/Lexical/Grammar once across every answer, then folds in the
+// aggregated pronunciation band. `processedTurns` is [{ turn, transcript, pronunciation }].
+async function runHolisticScoring(processedTurns) {
+  const runtimeConfig = getAiRuntimeConfig();
+
+  const parts = processedTurns.map(({ turn, transcript }) => ({
+    partNumber: turn.part_number,
+    question: turn.question_text,
+    cueCard: turn.cue_card,
+    transcript,
+  }));
+
+  const aggregatedPronunciation = aggregatePronunciation(
+    processedTurns.map(({ pronunciation }) => pronunciation)
+  );
+  const pronunciationBand = azureToPronunciationBand(aggregatedPronunciation);
+
+  const feedback = await generateHolisticFeedback({
+    parts,
+    pronunciation: aggregatedPronunciation,
+    model: runtimeConfig.openAiFeedbackModel,
+  });
 
   const scores = {
     fluency: feedback.scores.fluency ?? null,
     lexical: feedback.scores.lexical ?? null,
     grammar: feedback.scores.grammar ?? null,
-    pronunciation: azureToPronunciationBand(pronunciation),
+    pronunciation: pronunciationBand,
   };
 
   return {
-    transcript,
     scores,
-    pronunciationDetail: pronunciation?.detail || [],
-    aiFeedback: buildAiFeedback(feedback, pronunciation, scores),
+    overallBand: computeOverallBand(scores),
+    feedback: {
+      ...feedback,
+      pronunciation: {
+        band: pronunciationBand,
+        accuracyScore: aggregatedPronunciation.accuracyScore,
+        fluencyScore: aggregatedPronunciation.fluencyScore,
+        prosodyScore: aggregatedPronunciation.prosodyScore,
+        pronunciationScore: aggregatedPronunciation.pronunciationScore,
+      },
+    },
   };
+}
+
+// Processes one speaker's turns (transcribe + pronunciation), then grades the whole
+// test holistically. Returns true only when both stages succeed.
+async function runSpeakerPipeline(client, sessionId, speakerId, speakerTurns) {
+  const processedTurns = [];
+  let anyTurnFailed = false;
+
+  for (const turn of speakerTurns) {
+    try {
+      const transcript = await transcribeTurnAudio(turn);
+      const pronunciation = await assessPronunciation(turn);
+      await markTurnTranscribed(client, turn.turn_id, transcript, pronunciation);
+      processedTurns.push({ turn, transcript, pronunciation });
+    } catch (err) {
+      console.error(`AI pipeline failed for turn ${turn.turn_id}:`, err.message);
+      await markTurnResultFailed(client, turn.turn_id, err.message || 'AI processing failed');
+      anyTurnFailed = true;
+    }
+  }
+
+  if (anyTurnFailed || processedTurns.length === 0) {
+    await upsertSessionResultFailed(client, sessionId, speakerId, TURNS_INCOMPLETE_ERROR);
+    return false;
+  }
+
+  try {
+    const holistic = await runHolisticScoring(processedTurns);
+    await upsertSessionResultCompleted(client, sessionId, speakerId, holistic);
+    return true;
+  } catch (err) {
+    console.error(`Holistic scoring failed for user ${speakerId}:`, err.message);
+    await upsertSessionResultFailed(
+      client,
+      sessionId,
+      speakerId,
+      err.message || 'Holistic scoring failed'
+    );
+    return false;
+  }
 }
 
 async function failProcessingTurns(client, sessionId, errorMessage) {
@@ -207,6 +341,10 @@ async function failProcessingTurns(client, sessionId, errorMessage) {
 
   for (const turn of turns) {
     await markTurnResultFailed(client, turn.turn_id, errorMessage);
+  }
+
+  for (const speakerId of groupTurnsBySpeaker(turns).keys()) {
+    await upsertSessionResultFailed(client, sessionId, speakerId, errorMessage);
   }
 
   return {
@@ -237,20 +375,17 @@ async function failSessionBecauseMonthlyLimitReached(client, sessionId, limit) {
 
 async function runSessionPipeline(client, sessionId) {
   const turns = await getProcessingTurns(client, sessionId);
-  let completedTurns = 0;
+  const bySpeaker = groupTurnsBySpeaker(turns);
+  let completedSpeakers = 0;
 
-  for (const turn of turns) {
-    try {
-      const result = await runTurnPipeline(turn);
-      await markTurnResultCompleted(client, turn.turn_id, result);
-      completedTurns += 1;
-    } catch (err) {
-      console.error(`AI pipeline failed for turn ${turn.turn_id}:`, err.message);
-      await markTurnResultFailed(client, turn.turn_id, err.message || 'AI processing failed');
+  for (const [speakerId, speakerTurns] of bySpeaker) {
+    const ok = await runSpeakerPipeline(client, sessionId, speakerId, speakerTurns);
+    if (ok) {
+      completedSpeakers += 1;
     }
   }
 
-  const allFailed = turns.length > 0 && completedTurns === 0;
+  const allFailed = bySpeaker.size > 0 && completedSpeakers === 0;
 
   return {
     started: true,
@@ -259,8 +394,8 @@ async function runSessionPipeline(client, sessionId) {
     status: allFailed ? 'failed' : null,
     reason: null,
     processedTurns: turns.length,
-    completedTurns,
-    failedTurns: turns.length - completedTurns,
+    completedSpeakers,
+    failedSpeakers: bySpeaker.size - completedSpeakers,
   };
 }
 

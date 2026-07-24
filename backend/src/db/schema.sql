@@ -15,7 +15,7 @@ DROP CONSTRAINT IF EXISTS users_user_role_check;
 
 ALTER TABLE users
 ADD CONSTRAINT users_user_role_check
-CHECK (user_role IN ('student', 'mentor'));
+CHECK (user_role IN ('student', 'mentor', 'admin'));
 
 CREATE TABLE IF NOT EXISTS topics (
   id UUID PRIMARY KEY,
@@ -51,10 +51,44 @@ ALTER TABLE topics
 ADD COLUMN IF NOT EXISTS owner_id UUID REFERENCES users(id);
 
 ALTER TABLE topics
+ADD COLUMN IF NOT EXISTS scope VARCHAR(30) DEFAULT 'system';
+
+UPDATE topics
+SET scope = CASE
+  WHEN owner_id IS NULL THEN 'system'
+  ELSE 'mentor_private'
+END
+WHERE
+  scope IS NULL
+  OR (owner_id IS NULL AND scope <> 'system')
+  OR (owner_id IS NOT NULL AND scope <> 'mentor_private');
+
+ALTER TABLE topics
+DROP CONSTRAINT IF EXISTS topics_scope_check;
+
+ALTER TABLE topics
+ADD CONSTRAINT topics_scope_check
+CHECK (scope IN ('system', 'mentor_private'));
+
+ALTER TABLE topics
+DROP CONSTRAINT IF EXISTS topics_scope_owner_check;
+
+ALTER TABLE topics
+ADD CONSTRAINT topics_scope_owner_check
+CHECK (
+  (scope = 'system' AND owner_id IS NULL)
+  OR
+  (scope = 'mentor_private' AND owner_id IS NOT NULL)
+);
+
+ALTER TABLE topics
 DROP CONSTRAINT IF EXISTS topics_name_key;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_topics_owner_name ON topics(owner_id, name);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_topics_scope_owner_name
+ON topics(scope, COALESCE(owner_id, '00000000-0000-0000-0000-000000000000'::uuid), name);
 CREATE INDEX IF NOT EXISTS idx_topics_owner_id ON topics(owner_id);
+CREATE INDEX IF NOT EXISTS idx_topics_scope ON topics(scope);
 
 CREATE TABLE IF NOT EXISTS questions (
   id UUID PRIMARY KEY,
@@ -212,6 +246,30 @@ BEGIN
     ALTER TABLE ai_results ADD COLUMN ai_feedback JSONB;
   END IF;
 END $$;
+
+-- Holistic (whole-test) AI scoring, one row per (session, user). Fluency, Lexical and
+-- Grammar are graded ONCE across all of the user's answers (not per turn), while the
+-- pronunciation band is aggregated from the per-turn Azure acoustic scores. Per-turn
+-- ai_results still hold each answer's transcript and word-level pronunciation detail.
+CREATE TABLE IF NOT EXISTS session_ai_results (
+  id UUID PRIMARY KEY,
+  session_id UUID NOT NULL REFERENCES sessions(id),
+  user_id UUID NOT NULL REFERENCES users(id),
+  status VARCHAR(20) DEFAULT 'processing',
+  fluency_score DECIMAL(3,1),
+  lexical_score DECIMAL(3,1),
+  grammar_score DECIMAL(3,1),
+  pronunciation_score DECIMAL(3,1),
+  overall_band DECIMAL(3,1),
+  holistic_feedback JSONB,
+  error_message TEXT,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE (session_id, user_id),
+  CHECK (status IN ('processing', 'completed', 'failed'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_ai_results_session_id ON session_ai_results(session_id);
 
 CREATE TABLE IF NOT EXISTS mentor_reviews (
   id UUID PRIMARY KEY,

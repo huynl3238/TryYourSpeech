@@ -2836,7 +2836,13 @@ function TopicBuilderPanelReal() {
     setError('');
 
     try {
-      const result = await createTopic({ ...topicForm, ownerId: getIdentity()?.userId });
+      const identity = getIdentity();
+      const result = await createTopic({
+        ...topicForm,
+        ownerId: identity?.userId,
+        actorUserId: identity?.userId,
+        scope: identity?.userRole === 'admin' ? 'system' : 'mentor_private',
+      });
       await loadTopics(true);
       setSelectedTopicId(result.topic.id);
       setTopicModalOpen(false);
@@ -2856,7 +2862,10 @@ function TopicBuilderPanelReal() {
     setError('');
 
     try {
-      await updateTopic(selectedTopicId, topicForm);
+      await updateTopic(selectedTopicId, {
+        ...topicForm,
+        actorUserId: getIdentity()?.userId,
+      });
       await refreshAfterMutation(selectedTopicId);
       setTopicModalOpen(false);
       setMessage('Đã lưu thay đổi bộ câu hỏi.');
@@ -2877,7 +2886,7 @@ function TopicBuilderPanelReal() {
     setError('');
 
     try {
-      await deleteTopic(topicId);
+      await deleteTopic(topicId, getIdentity()?.userId);
       if (topicId === selectedTopicId) {
         setSelectedTopicId('');
       }
@@ -2920,7 +2929,10 @@ function TopicBuilderPanelReal() {
     setError('');
 
     try {
-      const payload = buildQuestionPayload(questionDraft);
+      const payload = {
+        ...buildQuestionPayload(questionDraft),
+        actorUserId: getIdentity()?.userId,
+      };
 
       if (questionDraft.id) {
         await updateQuestion(questionDraft.id, payload);
@@ -2949,7 +2961,7 @@ function TopicBuilderPanelReal() {
     setError('');
 
     try {
-      await deleteQuestion(questionId);
+      await deleteQuestion(questionId, getIdentity()?.userId);
       await refreshAfterMutation(selectedTopicId);
       setMessage('Đã xóa câu hỏi.');
     } catch (err) {

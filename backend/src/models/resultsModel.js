@@ -42,6 +42,49 @@ function mapTurnResult(row, sessionMode = 'peer') {
   };
 }
 
+function toBand(value) {
+  return value === null || value === undefined ? null : Number(value);
+}
+
+// Reads the whole-test holistic result for one user. Fluency/Lexical/Grammar are
+// graded once across all answers; pronunciation is the aggregated Azure band.
+async function getHolisticResult(client, sessionId, userId) {
+  const result = await client.query(
+    `
+      SELECT
+        status,
+        fluency_score,
+        lexical_score,
+        grammar_score,
+        pronunciation_score,
+        overall_band,
+        holistic_feedback,
+        error_message
+      FROM session_ai_results
+      WHERE session_id = $1 AND user_id = $2
+    `,
+    [sessionId, userId]
+  );
+
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+
+  return {
+    status: row.status,
+    scores: {
+      fluency: toBand(row.fluency_score),
+      lexical: toBand(row.lexical_score),
+      grammar: toBand(row.grammar_score),
+      pronunciation: toBand(row.pronunciation_score),
+    },
+    overallBand: toBand(row.overall_band),
+    feedback: row.holistic_feedback || {},
+    error: row.error_message,
+  };
+}
+
 async function getSession(client, sessionId) {
   const result = await client.query(
     `
@@ -145,12 +188,16 @@ export async function getResultsForUser({ sessionId, userId }) {
     const mentorReview = session.session_mode === 'mentor'
       ? await getMentorReviewForSession(client, sessionId)
       : null;
+    const holistic = session.session_mode === 'mentor'
+      ? null
+      : await getHolisticResult(client, sessionId, userId);
 
     return {
       sessionId,
       status: session.status,
       sessionMode: session.session_mode || 'peer',
       turnResults,
+      holistic,
       mentorReview,
     };
   } finally {
@@ -158,35 +205,39 @@ export async function getResultsForUser({ sessionId, userId }) {
   }
 }
 
-async function getRetryableTurnIds(client, { sessionId, userId, turnId }) {
-  const params = [sessionId, userId];
-  const turnFilter = turnId ? 'AND tr.id = $3' : '';
-
-  if (turnId) {
-    params.push(turnId);
-  }
-
+// Holistic scoring grades the WHOLE test at once, so a retry is per-user, not per-turn:
+// if any of the user's turns failed, or the whole-test grading failed, the entire pass
+// is redone. Returns true when there is anything to retry.
+async function userHasFailedResults(client, sessionId, userId) {
   const result = await client.query(
     `
-      SELECT tr.id
+      SELECT 1
       FROM turns tr
       JOIN ai_results ar ON ar.turn_id = tr.id
       WHERE tr.session_id = $1
         AND tr.speaker_id = $2
         AND ar.status = 'failed'
-        ${turnFilter}
-      ORDER BY tr.turn_index
+      UNION
+      SELECT 1
+      FROM session_ai_results sar
+      WHERE sar.session_id = $1
+        AND sar.user_id = $2
+        AND sar.status = 'failed'
+      LIMIT 1
     `,
-    params
+    [sessionId, userId]
   );
 
-  return result.rows.map((row) => row.id);
+  return result.rows.length > 0;
 }
 
-async function resetAiResultForRetry(client, turnId) {
+// Resets ALL of the user's turns (not just failed ones) back to 'processing'. The
+// whole-test grader needs every answer available in a single pass, so completed turns
+// are reprocessed too.
+async function resetUserResultsForRetry(client, sessionId, userId) {
   await client.query(
     `
-      UPDATE ai_results
+      UPDATE ai_results ar
       SET status = 'processing',
           whisper_transcript = NULL,
           fluency_score = NULL,
@@ -197,10 +248,30 @@ async function resetAiResultForRetry(client, turnId) {
           ai_feedback = NULL,
           error_message = NULL,
           updated_at = NOW()
-      WHERE turn_id = $1
-        AND status = 'failed'
+      FROM turns tr
+      WHERE ar.turn_id = tr.id
+        AND tr.session_id = $1
+        AND tr.speaker_id = $2
     `,
-    [turnId]
+    [sessionId, userId]
+  );
+
+  await client.query(
+    `
+      UPDATE session_ai_results
+      SET status = 'processing',
+          fluency_score = NULL,
+          lexical_score = NULL,
+          grammar_score = NULL,
+          pronunciation_score = NULL,
+          overall_band = NULL,
+          holistic_feedback = NULL,
+          error_message = NULL,
+          updated_at = NOW()
+      WHERE session_id = $1
+        AND user_id = $2
+    `,
+    [sessionId, userId]
   );
 }
 
@@ -244,16 +315,13 @@ export async function retryFailedResults({ sessionId, userId, turnId }) {
       throw new Error('Session is not available for result retry');
     }
 
-    const turnIds = await getRetryableTurnIds(client, { sessionId, userId, turnId });
-    if (turnIds.length === 0) {
+    const hasFailures = await userHasFailedResults(client, sessionId, userId);
+    if (!hasFailures) {
       throw new Error('No failed AI results to retry');
     }
 
     await markSessionProcessingForRetry(client, sessionId);
-
-    for (const retryTurnId of turnIds) {
-      await resetAiResultForRetry(client, retryTurnId);
-    }
+    await resetUserResultsForRetry(client, sessionId, userId);
 
     const pipeline = await prepareAiPipeline(client, sessionId);
     const completedStatus = await markSessionCompletedIfAllResultsTerminal(client, sessionId);
@@ -264,7 +332,6 @@ export async function retryFailedResults({ sessionId, userId, turnId }) {
     return {
       sessionId,
       userId,
-      retried: turnIds.length,
       aiStatus: pipeline.status || sessionStatus,
       sessionStatus,
     };

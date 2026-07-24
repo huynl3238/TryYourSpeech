@@ -80,7 +80,8 @@ VALUES
   ('1ebb7a00-5352-4508-9947-258fc3d35bbc', 'Nguyễn Lê Huy', 6.5, 'student', NOW() - INTERVAL '14 days'),
   ('33333333-3333-4333-8333-333333333302', 'Trần Minh Anh', 6.0, 'student', NOW() - INTERVAL '13 days'),
   ('33333333-3333-4333-8333-333333333303', 'Mentor Linh Nguyễn', NULL, 'mentor', NOW() - INTERVAL '12 days'),
-  ('33333333-3333-4333-8333-333333333304', 'Phạm Thu Trang', 7.0, 'student', NOW() - INTERVAL '11 days')
+  ('33333333-3333-4333-8333-333333333304', 'Phạm Thu Trang', 7.0, 'student', NOW() - INTERVAL '11 days'),
+  ('33333333-3333-4333-8333-333333333305', 'Admin Try Your Speech', NULL, 'admin', NOW() - INTERVAL '10 days')
 ON CONFLICT (id) DO UPDATE
 SET
   display_name = EXCLUDED.display_name,
