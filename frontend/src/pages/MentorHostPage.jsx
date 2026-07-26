@@ -11,6 +11,7 @@ import {
 import { getIdentity, isMentor, saveIdentity } from '../utils/identity';
 import { useSocket } from '../hooks/useSocket';
 import { useSession } from '../context/SessionContext';
+import MentorLearnerPage from './MentorLearnerPage';
 
 const FOCUS_OPTIONS = [
   { value: 'part1', label: 'Part 1', estimate: '4–5 phút', desc: 'Hỏi đáp giới thiệu' },
@@ -53,7 +54,7 @@ function formatWait(appliedAt) {
 // --- Account creation with a role step (teacher / student) ---
 // Shown only when there is no usable account on this device. Choosing "Giáo viên"
 // lands on session management; choosing "Học viên" goes to the learner page.
-function AccountSignIn({ onSignedIn }) {
+function AccountSignIn({ onSignedIn, embedded }) {
   const navigate = useNavigate();
   const [role, setRole] = useState('mentor');
   const [displayName, setDisplayName] = useState('');
@@ -87,9 +88,11 @@ function AccountSignIn({ onSignedIn }) {
         displayName: user.displayName,
         band: user.band,
       });
-      if (role === 'student') {
+      if (role === 'student' && !embedded) {
         navigate('/mentor');
       } else {
+        // Embedded in the lobby: a fresh student identity surfaces the learner
+        // view in place (the parent re-renders) instead of leaving the lobby.
         onSignedIn();
       }
     } catch (err) {
@@ -105,11 +108,13 @@ function AccountSignIn({ onSignedIn }) {
   ];
 
   return (
-    <div className="relative min-h-screen grid place-items-center bg-[#FAFAF8] p-6">
-      <Link to="/" className="absolute top-6 left-6 inline-flex items-center gap-1.5 h-10 px-4 rounded-xl border border-[#EAE7E3] bg-white text-[13.5px] font-semibold text-[#57534E] hover:border-[#EAC7B9] hover:text-[#8A4A33] hover:bg-[#FBF4EF] transition-colors">
-        <span className="material-symbols-rounded" style={{ fontSize: 18 }}>arrow_back</span>
-        Về trang chính
-      </Link>
+    <div className={embedded ? 'grid place-items-center py-10' : 'relative min-h-screen grid place-items-center bg-[#FAFAF8] p-6'}>
+      {!embedded && (
+        <Link to="/" className="absolute top-6 left-6 inline-flex items-center gap-1.5 h-10 px-4 rounded-xl border border-[#EAE7E3] bg-white text-[13.5px] font-semibold text-[#57534E] hover:border-[#EAC7B9] hover:text-[#8A4A33] hover:bg-[#FBF4EF] transition-colors">
+          <span className="material-symbols-rounded" style={{ fontSize: 18 }}>arrow_back</span>
+          Về trang chính
+        </Link>
+      )}
       <form onSubmit={handleSubmit} className="w-full max-w-sm bg-white border border-[#EAE7E3] rounded-2xl shadow-sm p-6">
         <h1 className="text-lg font-bold tracking-tight text-[#1C1917]">Tạo tài khoản</h1>
         <p className="text-sm text-[#78716C] mt-1">Chọn vai trò và nhập thông tin để bắt đầu.</p>
@@ -269,7 +274,7 @@ function OpenSessionModal({ topics, onClose, onCreate, submitting }) {
   );
 }
 
-export default function MentorHostPage() {
+export default function MentorHostPage({ embedded = false }) {
   const [identity, setIdentity] = useState(() => getIdentity());
   const [sessions, setSessions] = useState([]);
   const [loadStatus, setLoadStatus] = useState('idle');
@@ -370,21 +375,24 @@ export default function MentorHostPage() {
   }
 
   if (!mentorReady) {
-    // A student account already exists → send them to the learner page rather
-    // than making them create a second account.
+    // A student account already exists → show the learner view instead of making
+    // them create a second account. Embedded keeps the lobby sidebar; the
+    // standalone route redirects as before.
     if (identity && !isMentor()) {
-      return <Navigate to="/mentor" replace />;
+      return embedded ? <MentorLearnerPage embedded /> : <Navigate to="/mentor" replace />;
     }
-    return <AccountSignIn onSignedIn={() => setIdentity(getIdentity())} />;
+    return <AccountSignIn embedded={embedded} onSignedIn={() => setIdentity(getIdentity())} />;
   }
 
   return (
-    <div className="min-h-screen bg-[#FAFAF8]">
-      <div className="max-w-3xl mx-auto px-6 py-7">
-        <Link to="/" className="inline-flex items-center gap-1.5 h-10 px-4 mb-5 rounded-xl border border-[#EAE7E3] bg-white text-[13.5px] font-semibold text-[#57534E] hover:border-[#EAC7B9] hover:text-[#8A4A33] hover:bg-[#FBF4EF] transition-colors">
-          <span className="material-symbols-rounded" style={{ fontSize: 18 }}>arrow_back</span>
-          Về trang chính
-        </Link>
+    <div className={embedded ? '' : 'min-h-screen bg-[#FAFAF8]'}>
+      <div className={embedded ? 'max-w-3xl mx-auto' : 'max-w-3xl mx-auto px-6 py-7'}>
+        {!embedded && (
+          <Link to="/" className="inline-flex items-center gap-1.5 h-10 px-4 mb-5 rounded-xl border border-[#EAE7E3] bg-white text-[13.5px] font-semibold text-[#57534E] hover:border-[#EAC7B9] hover:text-[#8A4A33] hover:bg-[#FBF4EF] transition-colors">
+            <span className="material-symbols-rounded" style={{ fontSize: 18 }}>arrow_back</span>
+            Về trang chính
+          </Link>
+        )}
         <div className="flex items-end justify-between gap-4 mb-6">
           <div>
             <div className="text-[11px] uppercase tracking-[0.1em] text-[#D97757] font-bold">Giảng dạy</div>

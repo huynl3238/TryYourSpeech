@@ -38,6 +38,7 @@ import { cleanupMediaSession } from '../utils/mediaCleanup';
 import { getIdentity } from '../utils/identity';
 import { startNotificationsRealtime, onNotification } from '../services/notificationsRealtime';
 import MentorLearnerPage from './MentorLearnerPage';
+import MentorHostPage from './MentorHostPage';
 
 const NAV_ITEMS = [
   { key: 'practice', label: 'Ghép cặp thực hành', icon: 'groups' },
@@ -47,6 +48,7 @@ const NAV_ITEMS = [
   { key: 'notifications', label: 'Thông báo', icon: 'notifications' },
   { key: 'teacherReviews', label: 'Bài học viên', icon: 'school' },
   { key: 'topicBuilder', label: 'Quản lý bộ câu hỏi', icon: 'library_add' },
+  { key: 'mentorHost', label: 'Phiên của Mentor', icon: 'co_present' },
 ];
 
 const ERROR_TYPE_CONFIG = {
@@ -472,7 +474,6 @@ function useUnreadNotifications(activeTab) {
 }
 
 function Sidebar({ activeTab, onChangeTab }) {
-  const navigate = useNavigate();
   const { state } = useSession();
   const identity = getIdentity() || {};
   const unreadNotifications = useUnreadNotifications(activeTab);
@@ -513,10 +514,6 @@ function Sidebar({ activeTab, onChangeTab }) {
           </button>
         ))}
 
-        <button type="button" className="app-nav-item" onClick={() => navigate('/mentor/host')}>
-          <span className="material-symbols-rounded">co_present</span>
-          Phiên của Mentor
-        </button>
       </nav>
 
       <button
@@ -3753,6 +3750,7 @@ export default function LobbyPage() {
           />
         )}
         {activeTab === 'mentorLearner' && <MentorLearnerPage embedded />}
+        {activeTab === 'mentorHost' && <MentorHostPage embedded />}
         {activeTab === 'classroom' && <ClassroomPanelReal />}
         {activeTab === 'history' && <UserHistoryPanelReal />}
         {activeTab === 'notifications' && <NotificationsPanelReal />}
