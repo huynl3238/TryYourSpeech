@@ -43,12 +43,12 @@ import MentorHostPage from './MentorHostPage';
 const NAV_ITEMS = [
   { key: 'practice', label: 'Ghép cặp thực hành', icon: 'groups' },
   { key: 'mentorLearner', label: 'Luyện với Mentor', icon: 'school' },
+  { key: 'mentorHost', label: 'Phiên của Mentor', icon: 'co_present' },
   { key: 'classroom', label: 'Lớp học', icon: 'forum' },
   { key: 'history', label: 'Lịch sử luyện tập', icon: 'history' },
-  { key: 'notifications', label: 'Thông báo', icon: 'notifications' },
-  { key: 'teacherReviews', label: 'Bài học viên', icon: 'school' },
   { key: 'topicBuilder', label: 'Quản lý bộ câu hỏi', icon: 'library_add' },
-  { key: 'mentorHost', label: 'Phiên của Mentor', icon: 'co_present' },
+  { key: 'teacherReviews', label: 'Bài học viên', icon: 'school' },
+  { key: 'notifications', label: 'Thông báo', icon: 'notifications' },
 ];
 
 const ERROR_TYPE_CONFIG = {
