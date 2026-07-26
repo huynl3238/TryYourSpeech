@@ -1,0 +1,60 @@
+name: Deploy to VPS
+
+# Tự động deploy khi có code mới đẩy lên nhánh staging.
+# Cũng có thể bấm chạy tay từ tab Actions (workflow_dispatch).
+on:
+  push:
+    branches: [staging]
+  workflow_dispatch:
+
+# Nếu có 2 lần deploy chồng nhau, huỷ lần cũ, chỉ giữ lần mới nhất.
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          command_timeout: 20m
+          script: |
+            set -eo pipefail
+
+            # Nạp nvm nếu Node được cài qua nvm (để có node/npm/pm2 trong PATH
+            # khi chạy SSH không tương tác). Vô hại nếu không dùng nvm.
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+
+            APP_DIR="$HOME/TryYourSpeech"
+            WEB_ROOT="/var/www/try-your-speech"
+
+            echo "==> Kéo code mới nhất (origin/staging)"
+            cd "$APP_DIR"
+            git fetch --all --prune
+            git reset --hard origin/staging
+
+            echo "==> Cài dependencies backend"
+            cd "$APP_DIR/backend"
+            npm ci
+
+            echo "==> Build frontend"
+            cd "$APP_DIR/frontend"
+            npm ci
+            npm run build
+
+            echo "==> Xuất bản frontend vào web root"
+            rm -rf "$WEB_ROOT"/*
+            cp -r dist/* "$WEB_ROOT"/
+
+            echo "==> Khởi động lại backend"
+            cd "$APP_DIR/backend"
+            pm2 restart tys-backend --update-env
+            pm2 save
+
+            echo "==> Deploy hoàn tất"
