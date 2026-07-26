@@ -10,13 +10,15 @@ import MentorHostPage from './pages/MentorHostPage';
 import MentorLearnerPage from './pages/MentorLearnerPage';
 import MentorReviewPage from './pages/MentorReviewPage';
 import { NotificationToaster } from './components/ui/NotificationToaster';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import './index.css';
 
 function App() {
   return (
-    <SessionProvider>
-      <NotificationToaster />
-      <Routes>
+    <ErrorBoundary>
+      <SessionProvider>
+        <NotificationToaster />
+        <Routes>
         <Route path="/" element={<LobbyPage />} />
         <Route path="/device-check" element={<DeviceCheckPage />} />
         <Route path="/session" element={<SessionPage />} />
@@ -27,8 +29,9 @@ function App() {
         <Route path="/mentor/host" element={<MentorHostPage />} />
         <Route path="/mentor/review" element={<MentorReviewPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </SessionProvider>
+        </Routes>
+      </SessionProvider>
+    </ErrorBoundary>
   );
 }
 
