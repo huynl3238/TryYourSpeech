@@ -37,9 +37,11 @@ import { Card, CardContent } from '../components/ui/card';
 import { cleanupMediaSession } from '../utils/mediaCleanup';
 import { getIdentity } from '../utils/identity';
 import { startNotificationsRealtime, onNotification } from '../services/notificationsRealtime';
+import MentorLearnerPage from './MentorLearnerPage';
 
 const NAV_ITEMS = [
   { key: 'practice', label: 'Ghép cặp thực hành', icon: 'groups' },
+  { key: 'mentorLearner', label: 'Luyện với Mentor', icon: 'school' },
   { key: 'classroom', label: 'Lớp học', icon: 'forum' },
   { key: 'history', label: 'Lịch sử luyện tập', icon: 'history' },
   { key: 'notifications', label: 'Thông báo', icon: 'notifications' },
@@ -511,10 +513,6 @@ function Sidebar({ activeTab, onChangeTab }) {
           </button>
         ))}
 
-        <button type="button" className="app-nav-item" onClick={() => navigate('/mentor')}>
-          <span className="material-symbols-rounded">school</span>
-          Luyện với Mentor
-        </button>
         <button type="button" className="app-nav-item" onClick={() => navigate('/mentor/host')}>
           <span className="material-symbols-rounded">co_present</span>
           Phiên của Mentor
@@ -3754,6 +3752,7 @@ export default function LobbyPage() {
             onCancel={cancelMatch}
           />
         )}
+        {activeTab === 'mentorLearner' && <MentorLearnerPage embedded />}
         {activeTab === 'classroom' && <ClassroomPanelReal />}
         {activeTab === 'history' && <UserHistoryPanelReal />}
         {activeTab === 'notifications' && <NotificationsPanelReal />}
