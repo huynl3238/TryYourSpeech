@@ -2670,6 +2670,13 @@ input[type="range"]::-webkit-slider-thumb:hover {
   right: 20px;
 }
 
+/* Mobile drawer controls stay hidden until the layout collapses (below). */
+.app-mobile-bar,
+.app-sidebar-close,
+.app-sidebar-backdrop {
+  display: none;
+}
+
 @media (max-width: 900px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -2678,10 +2685,82 @@ input[type="range"]::-webkit-slider-thumb:hover {
     overflow-y: visible;
   }
 
+  /* Sidebar becomes an off-canvas drawer: hidden by default, slides in when the
+     hamburger is tapped, with a backdrop to tap-close. */
   .app-sidebar {
-    position: static;
-    height: auto;
-    padding: 16px;
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 60;
+    width: 280px;
+    max-width: 85vw;
+    height: 100vh;
+    padding: 20px 16px;
+    overflow-y: auto;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+  }
+
+  .app-sidebar.app-sidebar-open {
+    transform: translateX(0);
+  }
+
+  .app-sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    background: rgba(17, 24, 39, 0.45);
+  }
+
+  .app-sidebar-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: auto;
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    border: 1px solid #e7e5e4;
+    background: #ffffff;
+    color: #57534e;
+  }
+
+  /* Top bar with the hamburger, shown at the top of the content on mobile. */
+  .app-mobile-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    margin-bottom: 12px;
+    padding: 4px 0 10px;
+    background: #f7f6f4;
+    border-bottom: 1px solid #e7e5e4;
+  }
+
+  .app-mobile-menu-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 42px;
+    height: 42px;
+    border-radius: 10px;
+    border: 1px solid #e7e5e4;
+    background: #ffffff;
+    color: #1c1917;
+    flex-shrink: 0;
+  }
+
+  .app-mobile-menu-btn .material-symbols-rounded {
+    font-size: 24px;
+  }
+
+  .app-mobile-title {
+    font-size: 1.05rem;
+    font-weight: 800;
+    color: #1c1917;
   }
 
   .app-nav {

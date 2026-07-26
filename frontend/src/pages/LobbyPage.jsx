@@ -473,7 +473,7 @@ function useUnreadNotifications(activeTab) {
   return unread;
 }
 
-function Sidebar({ activeTab, onChangeTab }) {
+function Sidebar({ activeTab, onChangeTab, open, onClose }) {
   const { state } = useSession();
   const identity = getIdentity() || {};
   const unreadNotifications = useUnreadNotifications(activeTab);
@@ -483,7 +483,7 @@ function Sidebar({ activeTab, onChangeTab }) {
   const role = (state.myUserRole || identity.userRole) === 'mentor' ? 'Mentor' : 'Học viên IELTS';
 
   return (
-    <aside className="app-sidebar">
+    <aside className={`app-sidebar ${open ? 'app-sidebar-open' : ''}`}>
       <div className="app-brand">
         <div className="app-brand-icon">
           <span className="material-symbols-rounded icon-fill">record_voice_over</span>
@@ -492,6 +492,14 @@ function Sidebar({ activeTab, onChangeTab }) {
           <h1>Try Your Speech</h1>
           <p>IELTS Speaking Lab</p>
         </div>
+        <button
+          type="button"
+          className="app-sidebar-close"
+          onClick={onClose}
+          aria-label="Đóng menu"
+        >
+          <span className="material-symbols-rounded">close</span>
+        </button>
       </div>
 
       <nav className="app-nav">
@@ -3665,6 +3673,7 @@ function ProfilePanelReal() {
 
 export default function LobbyPage() {
   const [activeTab, setActiveTab] = useState('practice');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [displayName, setDisplayName] = useState('');
   const [band, setBand] = useState(5);
   const [nameError, setNameError] = useState('');
@@ -3724,9 +3733,31 @@ export default function LobbyPage() {
 
   return (
     <div className="app-shell">
-      <Sidebar activeTab={activeTab} onChangeTab={setActiveTab} />
+      <Sidebar
+        activeTab={activeTab}
+        onChangeTab={(key) => { setActiveTab(key); setSidebarOpen(false); }}
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+      />
+      {sidebarOpen && (
+        <div className="app-sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
+      )}
 
       <main className={`app-main ${activeTab === 'practice' ? 'app-main-practice' : ''}`}>
+        <div className="app-mobile-bar">
+          <button
+            type="button"
+            className="app-mobile-menu-btn"
+            onClick={() => setSidebarOpen(true)}
+            aria-label="Mở menu"
+          >
+            <span className="material-symbols-rounded">menu</span>
+          </button>
+          <span className="app-mobile-title">
+            {activeTab === 'profile' ? 'Hồ sơ' : NAV_ITEMS.find((item) => item.key === activeTab)?.label}
+          </span>
+        </div>
+
         {activeTab !== 'practice' && (
           <header className="app-topbar">
             <div>
