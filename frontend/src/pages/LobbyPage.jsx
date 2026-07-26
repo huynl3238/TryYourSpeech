@@ -42,7 +42,7 @@ import MentorHostPage from './MentorHostPage';
 
 const NAV_ITEMS = [
   { key: 'practice', label: 'Ghép cặp thực hành', icon: 'groups' },
-  { key: 'mentorLearner', label: 'Luyện với Mentor', icon: 'school' },
+  { key: 'mentorLearner', label: 'Luyện với Mentor', icon: 'cast_for_education' },
   { key: 'mentorHost', label: 'Phiên của Mentor', icon: 'co_present' },
   { key: 'classroom', label: 'Lớp học', icon: 'forum' },
   { key: 'history', label: 'Lịch sử luyện tập', icon: 'history' },

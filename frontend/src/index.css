@@ -3797,3 +3797,42 @@ input[type="range"]::-webkit-slider-thumb:hover {
     padding: 12px;
   }
 }
+
+/* --- Phones: keep the full-screen practice room usable on small portrait
+   screens. All rules are scoped to small viewports, so desktop is untouched. --- */
+@media (max-width: 640px) {
+  .app-main {
+    padding: 14px;
+  }
+
+  .session-header,
+  .session-footer {
+    padding: 10px 12px;
+  }
+
+  /* Let the header contents wrap instead of overflowing on a narrow screen. */
+  .session-header {
+    flex-wrap: wrap;
+    gap: 8px 10px;
+  }
+
+  .session-header-tall {
+    height: auto;
+    min-height: 64px;
+  }
+
+  /* Warm-up shows two video panes side by side; on a portrait phone stack them
+     so each pane gets the full width instead of two thin columns. */
+  .warmup-stage {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr 1fr;
+  }
+
+  /* Shrink the picture-in-picture self view so it doesn't cover the partner. */
+  .video-self-preview {
+    width: 104px;
+    height: 74px;
+    bottom: 12px;
+    right: 12px;
+  }
+}
