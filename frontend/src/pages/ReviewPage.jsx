@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSession } from '../context/SessionContext';
-import { uploadAudio, submitPeerNotes } from '../services/api';
+import { uploadAudio, submitPeerNotes, completeReview } from '../services/api';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -22,7 +22,10 @@ const ERROR_TYPE_CONFIG = {
   fluency:              { label: 'Trôi chảy',                  badgeClass: 'bg-violet-100 text-violet-700', borderColor: '#7c3aed' },
 };
 
-const AI_AUDIO_UPLOAD_ENABLED = false;
+// Enabled in production so each user's audio is uploaded and the AI pipeline
+// runs. Set VITE_AI_AUDIO_UPLOAD_ENABLED=false to test the video-call flow
+// without AI (keeps the old "Kết thúc test" behaviour).
+const AI_AUDIO_UPLOAD_ENABLED = import.meta.env.VITE_AI_AUDIO_UPLOAD_ENABLED !== 'false';
 
 export default function ReviewPage() {
   const { state, dispatch } = useSession();
@@ -144,11 +147,23 @@ export default function ReviewPage() {
     try {
       const notes = state.peerNotes.map((n) => ({ ...n, noteText: noteEdits[n.clientNoteId] !== undefined ? noteEdits[n.clientNoteId] : n.noteText }));
       if (notes.length > 0) await submitPeerNotes({ sessionId: state.sessionId, listenerId: state.userId, notes });
-      dispatch({ type: 'RESET' });
-      navigate('/');
+
+      if (AI_AUDIO_UPLOAD_ENABLED) {
+        // Peer notes are saved above (the AI feedback uses them as input), so now
+        // flag this user's review as done. The backend starts the AI pipeline
+        // once BOTH peers have completed. That request runs the pipeline
+        // synchronously and can take 1-3 min, so fire it without awaiting and go
+        // to the waiting screen, which polls for results. Do NOT RESET here —
+        // WaitingAI/Results still need sessionId, userId, turns and partnerName.
+        completeReview({ sessionId: state.sessionId, userId: state.userId })
+          .catch((err) => console.error('[Review] completeReview failed:', err.message));
+        navigate('/waiting-review');
+      } else {
+        dispatch({ type: 'RESET' });
+        navigate('/');
+      }
     } catch (err) {
       console.error('[Review] Complete review failed:', err.message);
-    } finally {
       setIsSubmitting(false);
     }
   }
@@ -200,7 +215,7 @@ export default function ReviewPage() {
           <Button
             id="complete-review-btn"
             onClick={handleCompleteReview}
-            disabled={isSubmitting || failedUploads.length > 0}
+            disabled={isSubmitting || failedUploads.length > 0 || myTurns.some((t) => uploadStatuses[t.id] === 'uploading')}
             size="sm"
           >
             {isSubmitting ? (

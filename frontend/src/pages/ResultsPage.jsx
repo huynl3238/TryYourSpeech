@@ -200,12 +200,24 @@ export default function ResultsPage() {
   const [selectedTurnId, setSelectedTurnId] = useState('summary');
   const [retrying, setRetrying] = useState(false);
 
+  // If we landed here without any session context (e.g. a hard refresh cleared
+  // the in-memory state), there is nothing to load — send the user home instead
+  // of leaving the spinner up forever.
+  useEffect(() => {
+    if (!results && !state.sessionId) {
+      navigate('/', { replace: true });
+    }
+  }, [results, state.sessionId, navigate]);
+
   if (!results) {
     return (
       <div className="min-h-screen bg-zinc-50 flex items-center justify-center">
         <div className="text-center">
           <div className="w-8 h-8 rounded-full border-2 border-zinc-200 border-t-[#D97757] animate-spin-slow mx-auto mb-3" />
           <p className="text-sm text-zinc-400">Đang tải kết quả...</p>
+          <Button variant="outline" size="sm" className="mt-4" onClick={() => { dispatch({ type: 'RESET' }); navigate('/'); }}>
+            Về trang chủ
+          </Button>
         </div>
       </div>
     );
