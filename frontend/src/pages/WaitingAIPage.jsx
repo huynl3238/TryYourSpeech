@@ -27,6 +27,15 @@ export default function WaitingAIPage() {
   const [sessionStatus, setSessionStatus] = useState('reviewing');
   const [pollAttempts, setPollAttempts] = useState(0);
 
+  // Guard against a hard refresh / direct navigation that cleared the in-memory
+  // session — without a session there is nothing to poll, so go home instead of
+  // showing the "AI đang xử lý" screen forever.
+  useEffect(() => {
+    if (!state.sessionId || !state.userId) {
+      navigate('/', { replace: true });
+    }
+  }, [state.sessionId, state.userId, navigate]);
+
   useEffect(() => {
     const id = setInterval(() => {
       setStepIndex((prev) => (prev < PIPELINE_STEPS.length - 1 ? prev + 1 : prev));
@@ -90,8 +99,8 @@ export default function WaitingAIPage() {
               )}
               <span className="text-sm text-zinc-700">
                 {partnerDone
-                  ? `${state.partnerName} đã hoàn tất`
-                  : `Đang chờ ${state.partnerName} hoàn tất review...`}
+                  ? `${state.partnerName || 'Đối tác'} đã hoàn tất`
+                  : `Đang chờ ${state.partnerName || 'đối tác'} hoàn tất review...`}
               </span>
             </div>
           </CardContent>
