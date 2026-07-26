@@ -237,6 +237,19 @@ export async function completeReview({ sessionId, userId }) {
       [sessionId]
     );
 
+    // This user has finished reviewing, so any of their own turns whose audio
+    // never uploaded won't arrive anymore. Mark them 'failed' so the processing
+    // gate (which waits on still-pending uploads) isn't blocked forever by a
+    // lost recording — the pipeline then runs on whatever audio did upload.
+    await client.query(
+      `
+        UPDATE turns
+        SET upload_status = 'failed'
+        WHERE session_id = $1 AND speaker_id = $2 AND upload_status = 'pending'
+      `,
+      [sessionId, userId]
+    );
+
     const updatedSession = await getSessionWithReviewState(client, sessionId);
     const bothCompleted =
       updatedSession.user_a_review_done_at !== null &&

@@ -129,20 +129,10 @@ export default function ReviewPage() {
   }
 
   async function handleCompleteReview() {
-    if (AI_AUDIO_UPLOAD_ENABLED) {
-      const missingAudioTurns = myTurns.filter((t) => !state.localAudioByTurnId[t.id] && uploadStatuses[t.id] !== 'done');
-      if (missingAudioTurns.length > 0) {
-        setUploadStatuses((prev) => {
-          const next = { ...prev };
-          missingAudioTurns.forEach((t) => { next[t.id] = 'no_audio'; });
-          return next;
-        });
-        return;
-      }
-      const blockedUploads = myTurns.filter((t) => ['error','no_audio'].includes(uploadStatuses[t.id]));
-      if (blockedUploads.length > 0) return;
-    }
-
+    // We no longer hard-block completion when a turn's audio failed to upload:
+    // the backend marks any un-uploaded turns as failed so the AI pipeline still
+    // runs on the audio that made it, and the partner isn't blocked from getting
+    // results. The button stays disabled only while an upload is in flight.
     setIsSubmitting(true);
     try {
       const notes = state.peerNotes.map((n) => ({ ...n, noteText: noteEdits[n.clientNoteId] !== undefined ? noteEdits[n.clientNoteId] : n.noteText }));
@@ -215,7 +205,7 @@ export default function ReviewPage() {
           <Button
             id="complete-review-btn"
             onClick={handleCompleteReview}
-            disabled={isSubmitting || failedUploads.length > 0 || myTurns.some((t) => uploadStatuses[t.id] === 'uploading')}
+            disabled={isSubmitting || myTurns.some((t) => uploadStatuses[t.id] === 'uploading')}
             size="sm"
           >
             {isSubmitting ? (

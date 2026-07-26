@@ -36,12 +36,16 @@ async function getSessionMode(client, sessionId) {
   return result.rows[0]?.session_mode || 'peer';
 }
 
+// True once no turn is still waiting on an in-flight upload. Turns marked
+// 'failed' (upload gave up / review completed without the audio) do NOT block
+// processing — otherwise one lost recording would stall the whole session
+// forever. The pipeline simply runs on the turns that were 'uploaded'.
 async function hasAllAudioUploaded(client, sessionId) {
   const result = await client.query(
     `
       SELECT COUNT(*)::int AS pending_count
       FROM turns
-      WHERE session_id = $1 AND upload_status <> 'uploaded'
+      WHERE session_id = $1 AND upload_status = 'pending'
     `,
     [sessionId]
   );
