@@ -1321,11 +1321,14 @@ function ClassroomPanel() {
 function formatClassroomTime(value) {
   if (!value) return 'Vừa đăng';
 
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+
   return new Intl.DateTimeFormat('vi-VN', {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
-  }).format(new Date(value));
+  }).format(date);
 }
 
 function normalizeClassroomPost(post) {
@@ -1640,11 +1643,14 @@ function getStoredCurrentUserId() {
 function formatHistoryDate(value) {
   if (!value) return 'Chưa bắt đầu';
 
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+
   return new Intl.DateTimeFormat('vi-VN', {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
-  }).format(new Date(value));
+  }).format(date);
 }
 
 function formatHistoryDuration(durationMs) {
@@ -1918,13 +1924,16 @@ function getNotificationIcon(type) {
 function formatNotificationDate(value) {
   if (!value) return 'Vua xong';
 
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+
   return new Intl.DateTimeFormat('vi-VN', {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
-  }).format(new Date(value));
+  }).format(date);
 }
 
 const NOTI_STYLE = {
@@ -3397,11 +3406,14 @@ function ProfilePanel() {
 function formatProfileDate(value) {
   if (!value) return 'Chưa có dữ liệu';
 
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+
   return new Intl.DateTimeFormat('vi-VN', {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
-  }).format(new Date(value));
+  }).format(date);
 }
 
 function getInitials(name) {
