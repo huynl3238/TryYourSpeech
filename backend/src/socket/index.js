@@ -570,6 +570,16 @@ async function handleDisconnect(io, socket) {
   deleteRoom(roomId);
 }
 
+// Realtime snapshot for the admin dashboard. Reads the in-memory matchmaking
+// state (not stored in the DB) so admins can see who is waiting / practising now.
+export function getLiveStats() {
+  return {
+    waitingPeer: waitingQueue.length,
+    waitingMentor: mentorQueue.length + mentorStudentQueue.length,
+    activeRooms: rooms.size,
+  };
+}
+
 export function setupSocket(io) {
   setIo(io);
 

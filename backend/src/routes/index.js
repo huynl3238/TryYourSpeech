@@ -50,6 +50,8 @@ import {
   markNotificationRead,
 } from '../models/notificationModel.js';
 import { convertWebmToWav } from '../services/audioConversion.js';
+import { getAdminStats } from '../models/adminStatsModel.js';
+import { getLiveStats } from '../socket/index.js';
 
 const router = Router();
 const uploadsDirectory = fileURLToPath(new URL('../../uploads', import.meta.url));
@@ -275,6 +277,20 @@ router.get('/health', async (_req, res) => {
       ai,
     },
   });
+});
+
+// Admin dashboard aggregate stats. NOTE: access control is intentionally not
+// wired yet (preview only) — gate this behind a user_role='admin' check before
+// exposing anything sensitive in production.
+router.get('/admin/stats', async (_req, res) => {
+  try {
+    res.set('Cache-Control', 'no-store');
+    const stats = await getAdminStats();
+    res.json({ ...stats, live: getLiveStats() });
+  } catch (err) {
+    console.error('Failed to build admin stats:', err.message);
+    res.status(500).json({ error: 'Không thể tải thống kê quản trị' });
+  }
 });
 
 router.get('/sessions/:sessionId', async (req, res) => {

@@ -40,6 +40,10 @@ export async function getConfig() {
   return request('/config');
 }
 
+export async function getAdminStats() {
+  return request('/admin/stats', { cache: 'no-store' });
+}
+
 export async function getSession(sessionId) {
   return request(`/sessions/${sessionId}`, { cache: 'no-store' });
 }
