@@ -15,6 +15,8 @@ export function getBackendFileUrl(path) {
 async function request(path, options = {}) {
   const response = await fetch(`${BASE_URL}/api${path}`, {
     headers: { 'Content-Type': 'application/json', ...options.headers },
+    // Auth tokens live in httpOnly cookies, so every API call must send them.
+    credentials: 'include',
     ...options,
   });
 
@@ -42,6 +44,26 @@ export async function getConfig() {
 
 export async function getAdminStats() {
   return request('/admin/stats', { cache: 'no-store' });
+}
+
+// --- Authentication (Google OAuth2 + JWT cookies) ---
+export async function loginWithGoogle(idToken) {
+  return request('/auth/google', {
+    method: 'POST',
+    body: JSON.stringify({ idToken }),
+  });
+}
+
+export async function refreshSession() {
+  return request('/auth/refresh', { method: 'POST' });
+}
+
+export async function logout() {
+  return request('/auth/logout', { method: 'POST' });
+}
+
+export async function getCurrentUser() {
+  return request('/auth/me', { cache: 'no-store' });
 }
 
 export async function getSession(sessionId) {
@@ -249,6 +271,7 @@ export async function uploadAudio({ audio, turnId, sessionId, speakerId, questio
 
   const response = await fetch(`${BASE_URL}/api/audio/upload`, {
     method: 'POST',
+    credentials: 'include',
     body: formData,
   });
 

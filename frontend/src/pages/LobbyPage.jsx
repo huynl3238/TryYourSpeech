@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSocket } from '../hooks/useSocket';
 import { useSession } from '../context/SessionContext';
+import { useAuth } from '../context/AuthContext';
 import {
   addClassroomComment,
   approveClassroomPost,
@@ -556,7 +557,61 @@ function Sidebar({ activeTab, onChangeTab, open, onClose }) {
           {activeTab === 'profile' ? 'expand_less' : 'chevron_right'}
         </span>
       </button>
+
+      <SidebarAccount />
     </aside>
+  );
+}
+
+// Google account strip under the profile card. During this phase signing in is
+// optional (the app still runs on the device identity), so it only surfaces the
+// account state and the admin shortcut.
+function SidebarAccount() {
+  const { isLoading, isAuthenticated, user, isAdmin, logout } = useAuth();
+  const navigate = useNavigate();
+
+  if (isLoading) {
+    return <div className="mt-2 px-1 text-[11.5px] text-[#A8A29E]">Đang kiểm tra đăng nhập…</div>;
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <button
+        type="button"
+        onClick={() => navigate('/login')}
+        className="mt-2 w-full flex items-center justify-center gap-1.5 h-10 rounded-xl border border-[#EAE7E3] bg-white text-[13px] font-semibold text-[#57534E] hover:border-[#EAC7B9] hover:text-[#8A4A33] hover:bg-[#FBF4EF] transition-colors"
+      >
+        <span className="material-symbols-rounded" style={{ fontSize: 18 }}>login</span>
+        Đăng nhập bằng Google
+      </button>
+    );
+  }
+
+  return (
+    <div className="mt-2 rounded-xl border border-[#EAE7E3] bg-white p-2.5">
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="material-symbols-rounded text-[#22C55E] shrink-0" style={{ fontSize: 17 }}>verified_user</span>
+        <span className="text-[11.5px] text-[#78716C] truncate flex-1">{user?.email || user?.displayName}</span>
+      </div>
+      <div className="flex items-center gap-1.5 mt-2">
+        {isAdmin && (
+          <button
+            type="button"
+            onClick={() => navigate('/admin')}
+            className="flex-1 h-8 rounded-lg border border-[#EAE7E3] text-[12px] font-semibold text-[#57534E] hover:bg-[#F1EEEA]"
+          >
+            Quản trị
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => logout()}
+          className="flex-1 h-8 rounded-lg border border-[#EAE7E3] text-[12px] font-semibold text-[#57534E] hover:bg-[#F1EEEA]"
+        >
+          Đăng xuất
+        </button>
+      </div>
+    </div>
   );
 }
 

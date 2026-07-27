@@ -225,7 +225,9 @@ test('database flow creates session, stores idempotent peer notes, and completes
 
     assert.equal(userAReview.bothCompleted, false);
     assert.equal(userBReview.bothCompleted, true);
-    assert.equal(reviewedDetail.session.status, 'reviewing');
+    // No audio was uploaded in this flow, so review completion runs the pipeline
+    // over zero turns and the session closes out right away instead of waiting.
+    assert.equal(reviewedDetail.session.status, 'completed');
 
     const history = await getPracticeHistoryForUser({
       userId: session.userA.id,
@@ -239,7 +241,7 @@ test('database flow creates session, stores idempotent peer notes, and completes
     assert.equal(historySession.speakingTurnCount, 3);
     assert.equal(historySession.notesReceivedCount, 1);
     assert.equal(historySession.notesGivenCount, 0);
-    assert.equal(historySession.resultStatus, 'reviewing');
+    assert.equal(historySession.resultStatus, 'completed');
 
     const profile = await getUserProfile(session.userA.id);
     assert.equal(profile.user.displayName, 'Integration A');

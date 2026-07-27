@@ -31,4 +31,8 @@ export const corsOptions = {
 
     callback(new Error('Origin is not allowed'));
   },
+  // Auth cookies only travel cross-origin when credentials are allowed. In
+  // production the SPA and API share an origin (nginx), so this matters for the
+  // local dev setup where Vite runs on :5173 and the API on :3001.
+  credentials: true,
 };

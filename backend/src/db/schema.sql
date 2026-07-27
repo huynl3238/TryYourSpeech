@@ -17,6 +17,69 @@ ALTER TABLE users
 ADD CONSTRAINT users_user_role_check
 CHECK (user_role IN ('student', 'mentor', 'admin'));
 
+-- --- Authentication (Google OAuth2 + JWT) --------------------------------
+-- A users row is the app-level person. Sign-in credentials live in
+-- user_identities, so a user can later link more providers without changing
+-- their id (every session/turn/note already references users.id).
+ALTER TABLE users
+ADD COLUMN IF NOT EXISTS email VARCHAR(255);
+
+ALTER TABLE users
+ADD COLUMN IF NOT EXISTS avatar_url VARCHAR(500);
+
+ALTER TABLE users
+ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(LOWER(email))
+WHERE email IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS user_identities (
+  id UUID PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider VARCHAR(20) NOT NULL,
+  provider_user_id VARCHAR(255) NOT NULL,
+  email VARCHAR(255),
+  created_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE (provider, provider_user_id),
+  CHECK (provider IN ('google'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_identities_user_id ON user_identities(user_id);
+
+-- Refresh tokens are stored hashed (never in plaintext) so a DB leak cannot be
+-- replayed, and rows can be revoked individually (logout) or in bulk (ban).
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+  id UUID PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash VARCHAR(64) NOT NULL UNIQUE,
+  expires_at TIMESTAMP NOT NULL,
+  revoked_at TIMESTAMP,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id);
+
+-- Students apply to become a mentor; an admin approves or rejects.
+CREATE TABLE IF NOT EXISTS mentor_applications (
+  id UUID PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  message TEXT,
+  status VARCHAR(20) NOT NULL DEFAULT 'pending',
+  reviewed_by UUID REFERENCES users(id),
+  reviewed_at TIMESTAMP,
+  review_note TEXT,
+  created_at TIMESTAMP DEFAULT NOW(),
+  CHECK (status IN ('pending', 'approved', 'rejected'))
+);
+
+-- Only one open application per user at a time.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mentor_applications_pending
+ON mentor_applications(user_id)
+WHERE status = 'pending';
+
+CREATE INDEX IF NOT EXISTS idx_mentor_applications_status
+ON mentor_applications(status, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS topics (
   id UUID PRIMARY KEY,
   name VARCHAR(100) NOT NULL UNIQUE,

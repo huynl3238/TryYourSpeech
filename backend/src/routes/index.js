@@ -52,6 +52,8 @@ import {
 import { convertWebmToWav } from '../services/audioConversion.js';
 import { getAdminStats } from '../models/adminStatsModel.js';
 import { getLiveStats } from '../socket/index.js';
+import { getAuthConfigStatus } from '../config/auth.js';
+import { requireRole } from '../middleware/auth.js';
 
 const router = Router();
 const uploadsDirectory = fileURLToPath(new URL('../../uploads', import.meta.url));
@@ -266,6 +268,7 @@ router.get('/health', async (_req, res) => {
     checkRedisConnection(),
   ]);
   const ai = getAiConfigStatus();
+  const auth = getAuthConfigStatus();
 
   const isHealthy = database.ok && redis.ok;
 
@@ -275,14 +278,14 @@ router.get('/health', async (_req, res) => {
       database,
       redis,
       ai,
+      auth,
     },
   });
 });
 
-// Admin dashboard aggregate stats. NOTE: access control is intentionally not
-// wired yet (preview only) — gate this behind a user_role='admin' check before
-// exposing anything sensitive in production.
-router.get('/admin/stats', async (_req, res) => {
+// Admin dashboard aggregate stats. Admin-only: the route guard in the SPA is
+// just UX, this check is what actually protects the data.
+router.get('/admin/stats', requireRole('admin'), async (_req, res) => {
   try {
     res.set('Cache-Control', 'no-store');
     const stats = await getAdminStats();
