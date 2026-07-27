@@ -525,14 +525,36 @@ function Sidebar({ activeTab, onChangeTab, open, onClose }) {
 
       </nav>
 
+      <SidebarProfileCard
+        activeTab={activeTab}
+        onChangeTab={onChangeTab}
+        displayName={displayName}
+        role={role}
+        band={band}
+      />
+    </aside>
+  );
+}
+
+// The account strip lives inside the profile card instead of beside it: one card
+// for "who am I", with the Google state and its actions folded in underneath.
+function SidebarProfileCard({ activeTab, onChangeTab, displayName, role, band }) {
+  const { isLoading, isAuthenticated, user, isAdmin, logout } = useAuth();
+  const navigate = useNavigate();
+  const active = activeTab === 'profile';
+
+  return (
+    <div
+      className={`mt-auto rounded-2xl border transition-all ${
+        active
+          ? 'border-[#EAC7B9] bg-[#FBF4EF] shadow-[0_8px_24px_-8px_rgba(217,119,87,.35)]'
+          : 'border-[#EAE7E3] bg-white'
+      }`}
+    >
       <button
         type="button"
         onClick={() => onChangeTab('profile')}
-        className={`group mt-auto w-full flex items-center gap-3 p-2.5 rounded-2xl border text-left transition-all ${
-          activeTab === 'profile'
-            ? 'border-[#EAC7B9] bg-[#FBF4EF] shadow-[0_8px_24px_-8px_rgba(217,119,87,.35)]'
-            : 'border-[#EAE7E3] bg-white hover:border-[#EAC7B9] hover:bg-[#FEF9F6]'
-        }`}
+        className="group w-full flex items-center gap-3 p-2.5 rounded-2xl text-left"
       >
         <div className="relative shrink-0">
           <div className="w-11 h-11 rounded-xl grid place-items-center text-white font-bold text-[15px] tracking-wide bg-[#D97757] shadow-[0_6px_16px_-4px_rgba(217,119,87,.55)]">
@@ -552,65 +574,51 @@ function Sidebar({ activeTab, onChangeTab, open, onClose }) {
               </span>
             )}
           </div>
+          {isAuthenticated && user?.email && (
+            <div className="flex items-center gap-1 mt-1 min-w-0">
+              <span className="material-symbols-rounded shrink-0 text-[#22C55E]" style={{ fontSize: 13 }}>verified_user</span>
+              <span className="text-[11px] text-[#A8A29E] truncate">{user.email}</span>
+            </div>
+          )}
         </div>
         <span className="material-symbols-rounded shrink-0 text-[#A8A29E] group-hover:text-[#D97757] transition-colors" style={{ fontSize: 20 }}>
-          {activeTab === 'profile' ? 'expand_less' : 'chevron_right'}
+          {active ? 'expand_less' : 'chevron_right'}
         </span>
       </button>
 
-      <SidebarAccount />
-    </aside>
-  );
-}
-
-// Google account strip under the profile card. During this phase signing in is
-// optional (the app still runs on the device identity), so it only surfaces the
-// account state and the admin shortcut.
-function SidebarAccount() {
-  const { isLoading, isAuthenticated, user, isAdmin, logout } = useAuth();
-  const navigate = useNavigate();
-
-  if (isLoading) {
-    return <div className="mt-2 px-1 text-[11.5px] text-[#A8A29E]">Đang kiểm tra đăng nhập…</div>;
-  }
-
-  if (!isAuthenticated) {
-    return (
-      <button
-        type="button"
-        onClick={() => navigate('/login')}
-        className="mt-2 w-full flex items-center justify-center gap-1.5 h-10 rounded-xl border border-[#EAE7E3] bg-white text-[13px] font-semibold text-[#57534E] hover:border-[#EAC7B9] hover:text-[#8A4A33] hover:bg-[#FBF4EF] transition-colors"
-      >
-        <span className="material-symbols-rounded" style={{ fontSize: 18 }}>login</span>
-        Đăng nhập bằng Google
-      </button>
-    );
-  }
-
-  return (
-    <div className="mt-2 rounded-xl border border-[#EAE7E3] bg-white p-2.5">
-      <div className="flex items-center gap-2 min-w-0">
-        <span className="material-symbols-rounded text-[#22C55E] shrink-0" style={{ fontSize: 17 }}>verified_user</span>
-        <span className="text-[11.5px] text-[#78716C] truncate flex-1">{user?.email || user?.displayName}</span>
-      </div>
-      <div className="flex items-center gap-1.5 mt-2">
-        {isAdmin && (
-          <button
-            type="button"
-            onClick={() => navigate('/admin')}
-            className="flex-1 h-8 rounded-lg border border-[#EAE7E3] text-[12px] font-semibold text-[#57534E] hover:bg-[#F1EEEA]"
-          >
-            Quản trị
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={() => logout()}
-          className="flex-1 h-8 rounded-lg border border-[#EAE7E3] text-[12px] font-semibold text-[#57534E] hover:bg-[#F1EEEA]"
-        >
-          Đăng xuất
-        </button>
-      </div>
+      {isLoading ? null : (
+        <div className="flex items-center gap-1.5 px-2.5 pb-2.5 -mt-0.5">
+          {isAuthenticated ? (
+            <>
+              {isAdmin && (
+                <button
+                  type="button"
+                  onClick={() => navigate('/admin')}
+                  className="flex-1 h-8 rounded-lg border border-[#EAE7E3] bg-white text-[12px] font-semibold text-[#57534E] hover:border-[#EAC7B9] hover:text-[#8A4A33] hover:bg-[#FBF4EF] transition-colors"
+                >
+                  Quản trị
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => logout()}
+                className="flex-1 h-8 rounded-lg border border-[#EAE7E3] bg-white text-[12px] font-semibold text-[#57534E] hover:border-[#EAC7B9] hover:text-[#8A4A33] hover:bg-[#FBF4EF] transition-colors"
+              >
+                Đăng xuất
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={() => navigate('/login')}
+              className="flex-1 inline-flex items-center justify-center gap-1.5 h-8 rounded-lg border border-[#EAE7E3] bg-white text-[12px] font-semibold text-[#57534E] hover:border-[#EAC7B9] hover:text-[#8A4A33] hover:bg-[#FBF4EF] transition-colors"
+            >
+              <span className="material-symbols-rounded" style={{ fontSize: 16 }}>login</span>
+              Đăng nhập bằng Google
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
