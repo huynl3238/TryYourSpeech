@@ -10,6 +10,10 @@ import { runSessionAiPipeline } from './processingModel.js';
 // Sessions are only swept after a grace period. Without it, the sweep would race
 // the run that is currently in flight for a freshly claimed session — harmless
 // thanks to the advisory lock, but it would burn a connection every minute.
+//
+// A session that keeps failing is not swept forever: runSessionAiPipeline enforces
+// MAX_AI_ATTEMPTS and, once those are used up, marks the session's remaining work
+// failed so it leaves 'processing' and stops matching the query below.
 const STALE_AFTER_MINUTES = 10;
 const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 

@@ -6,6 +6,67 @@ import {
   markSessionCompletedIfAllResultsTerminal,
 } from './sessionLifecycleModel.js';
 
+// How many times grading may be started for one session before we stop trying.
+// The first attempt is the hand-off from the request that finished the review, so
+// this allows the initial run plus two rescues by the recovery sweep. A user can
+// still ask for more explicitly: POST /results/retry resets the counter.
+export const MAX_AI_ATTEMPTS = 3;
+
+const ATTEMPTS_EXHAUSTED_MESSAGE =
+  'Chấm điểm AI đã thử lại nhiều lần nhưng không thành công. Bạn có thể bấm "Chấm lại cả bài" để thử thêm.';
+
+// Reserves one attempt, atomically. Returns the attempt number, or null when the
+// ceiling has already been reached. Doing it as a single conditional UPDATE means
+// two runners racing for the same session cannot both get the last attempt, and
+// the counter never grows past the limit.
+async function claimAiAttempt(client, sessionId) {
+  const result = await client.query(
+    `
+      UPDATE sessions
+      SET ai_attempts = ai_attempts + 1
+      WHERE id = $1 AND ai_attempts < $2
+      RETURNING ai_attempts
+    `,
+    [sessionId, MAX_AI_ATTEMPTS]
+  );
+
+  return result.rows[0]?.ai_attempts ?? null;
+}
+
+// Stops a session that has used up its attempts: everything still unfinished is
+// recorded as failed so the session can leave 'processing'. That both frees the
+// user from a spinner that would never resolve and takes the session out of the
+// sweep's reach. The rows stay retryable by hand from the results screen.
+async function giveUpOnAiGrading(client, sessionId) {
+  await client.query(
+    `
+      UPDATE ai_results ar
+      SET status = 'failed',
+          error_message = $2,
+          updated_at = NOW()
+      FROM turns tr
+      WHERE ar.turn_id = tr.id
+        AND tr.session_id = $1
+        AND ar.status = 'processing'
+    `,
+    [sessionId, ATTEMPTS_EXHAUSTED_MESSAGE]
+  );
+
+  await client.query(
+    `
+      UPDATE session_ai_results
+      SET status = 'failed',
+          error_message = $2,
+          updated_at = NOW()
+      WHERE session_id = $1
+        AND status = 'processing'
+    `,
+    [sessionId, ATTEMPTS_EXHAUSTED_MESSAGE]
+  );
+
+  return await markSessionCompletedIfAllResultsTerminal(client, sessionId);
+}
+
 async function hasBothReviewsCompleted(client, sessionId) {
   const result = await client.query(
     `
@@ -139,6 +200,16 @@ export async function runAiForClaimedSession(client, sessionId) {
   const status = await getSessionStatus(client, sessionId);
   if (status !== 'processing') {
     return { skipped: `status-${status}` };
+  }
+
+  const attempt = await claimAiAttempt(client, sessionId);
+  if (attempt === null) {
+    console.warn(
+      `Giving up on AI grading for session ${sessionId} after ${MAX_AI_ATTEMPTS} attempts`
+    );
+    const sessionStatus = await giveUpOnAiGrading(client, sessionId);
+
+    return { skipped: 'attempts-exhausted', attempts: MAX_AI_ATTEMPTS, sessionStatus };
   }
 
   const pipeline = await prepareAiPipeline(client, sessionId);

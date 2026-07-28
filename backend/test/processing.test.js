@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  MAX_AI_ATTEMPTS,
   maybeStartSessionProcessing,
   runAiForClaimedSession,
 } from '../src/models/processingModel.js';
@@ -159,6 +160,10 @@ test('the background run marks turns failed when AI is not configured', async ()
       return { rows: [{ status: 'processing' }] };
     }
 
+    if (sql.includes('RETURNING ai_attempts')) {
+      return { rows: [{ ai_attempts: 1 }] };
+    }
+
     if (sql.includes('SELECT') && sql.includes('json_agg')) {
       return { rows: [{ turn_id: 'turn-1', speaker_id: 'user-1', peer_notes: [] }] };
     }
@@ -194,6 +199,70 @@ test('the background run skips a session that is no longer processing', async ()
 
   assert.equal(result.skipped, 'status-completed');
   assert.equal(result.ran, undefined);
+});
+
+// The recovery sweep retries anything stuck in 'processing'. A session that fails
+// for a permanent reason would otherwise be retried every five minutes forever,
+// paying OpenAI and Azure each time.
+test('the background run gives up once the attempts are used up', async () => {
+  const client = createClient((sql) => {
+    if (sql.includes('SELECT status')) {
+      return { rows: [{ status: 'processing' }] };
+    }
+
+    // No row means the ceiling was already reached.
+    if (sql.includes('RETURNING ai_attempts')) {
+      return { rows: [], rowCount: 0 };
+    }
+
+    if (sql.includes('json_agg')) {
+      throw new Error('không được gọi API khi đã hết lượt thử');
+    }
+
+    if (sql.includes('UPDATE sessions') && sql.includes('RETURNING status')) {
+      return { rows: [{ status: 'completed' }], rowCount: 1 };
+    }
+
+    return { rows: [], rowCount: 1 };
+  });
+
+  const result = await runAiForClaimedSession(client, SESSION_ID);
+
+  assert.equal(result.skipped, 'attempts-exhausted');
+  assert.equal(result.ran, undefined);
+  assert.equal(result.sessionStatus, 'completed');
+
+  // Everything unfinished must be recorded as failed, otherwise the session can
+  // never leave 'processing' and the user waits on a spinner forever.
+  const failed = client.calls.filter(
+    (call) => call.sql.includes("status = 'failed'") && call.params?.[0] === SESSION_ID
+  );
+  assert.equal(failed.length, 2, 'phải đánh dấu thất bại cả từng lượt và kết quả cả bài');
+});
+
+test('the background run spends one attempt per run, capped at the limit', async () => {
+  const client = createClient((sql) => {
+    if (sql.includes('SELECT status')) {
+      return { rows: [{ status: 'processing' }] };
+    }
+
+    if (sql.includes('RETURNING ai_attempts')) {
+      return { rows: [{ ai_attempts: 2 }] };
+    }
+
+    if (sql.includes('json_agg')) {
+      return { rows: [] };
+    }
+
+    return { rows: [], rowCount: 1 };
+  });
+
+  const result = await runAiForClaimedSession(client, SESSION_ID);
+  const claims = client.calls.filter((call) => call.sql.includes('RETURNING ai_attempts'));
+
+  assert.equal(result.ran, true);
+  assert.equal(claims.length, 1, 'mỗi lần chạy chỉ được tính đúng một lượt thử');
+  assert.deepEqual(claims[0].params, [SESSION_ID, MAX_AI_ATTEMPTS]);
 });
 
 test('maybeStartSessionProcessing does not start AI for mentor sessions', async () => {

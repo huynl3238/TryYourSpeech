@@ -5,7 +5,7 @@ import pool from '../src/config/db.js';
 import { createMatchedSession, markSessionActive } from '../src/models/sessionModel.js';
 import { completeReview } from '../src/models/reviewModel.js';
 import { getSessionStatus } from '../src/models/sessionLifecycleModel.js';
-import { runSessionAiPipeline } from '../src/models/processingModel.js';
+import { MAX_AI_ATTEMPTS, runSessionAiPipeline } from '../src/models/processingModel.js';
 
 // AI is deliberately left unconfigured, so the "grading" is the failure path:
 // fast, free, and still exercising the hand-off, the background run and the
@@ -118,6 +118,81 @@ test('finishing review hands AI grading off and returns without doing it', async
     assert.ok(
       results.rows.every((row) => row.status === 'failed'),
       'AI chưa cấu hình nên mọi lượt phải được ghi là failed, không treo ở processing'
+    );
+  } finally {
+    await cleanup(session);
+  }
+});
+
+// Reproduces what a session interrupted mid-grading looks like to the recovery
+// sweep: claimed, with result rows still sitting at 'processing'.
+async function makeSessionLookStuck(sessionId) {
+  await pool.query("UPDATE sessions SET status = 'processing' WHERE id = $1", [sessionId]);
+  await pool.query(
+    `
+      INSERT INTO ai_results (id, turn_id, status)
+      SELECT gen_random_uuid(), id, 'processing' FROM turns WHERE session_id = $1
+      ON CONFLICT (turn_id) DO UPDATE SET status = 'processing', error_message = NULL
+    `,
+    [sessionId]
+  );
+}
+
+// The sweep re-runs anything stuck in 'processing' every five minutes. A session
+// that fails for a permanent reason would be retried — and charged for — forever
+// without this ceiling.
+test('a session that keeps getting stuck is retried a limited number of times', async (t) => {
+  if (!(await canUseDatabase())) {
+    t.skip('Bỏ qua: cần Postgres đã chạy npm run db:migrate');
+    return;
+  }
+
+  let session = null;
+
+  try {
+    session = await createMatchedSession(
+      `ai-limit-${randomUUID().slice(0, 8)}`,
+      { userId: await createUser('Limit A', 6.5), band: 6.5 },
+      { userId: await createUser('Limit B', 6), band: 6 }
+    );
+    await markSessionActive(session.sessionId);
+    await markEveryTurnUploaded(session.sessionId);
+
+    // Each pass is a crash-and-resume cycle: the session looks stuck again, so the
+    // sweep picks it up, exactly as a permanently failing session would behave.
+    const outcomes = [];
+    for (let pass = 0; pass < MAX_AI_ATTEMPTS + 1; pass += 1) {
+      await makeSessionLookStuck(session.sessionId);
+      outcomes.push(await runSessionAiPipeline(session.sessionId));
+    }
+
+    assert.equal(
+      outcomes.filter((outcome) => outcome.ran).length,
+      MAX_AI_ATTEMPTS,
+      'số lần chấm thật phải đúng bằng giới hạn'
+    );
+    assert.equal(outcomes.at(-1).skipped, 'attempts-exhausted');
+
+    // Giving up must still leave the session finished, not stuck on a spinner —
+    // and out of 'processing', so the sweep stops finding it.
+    assert.equal(await getSessionStatus(pool, session.sessionId), 'completed');
+
+    const rows = await pool.query(
+      `
+        SELECT ar.status, ar.error_message
+        FROM ai_results ar
+        JOIN turns tr ON tr.id = ar.turn_id
+        WHERE tr.session_id = $1
+      `,
+      [session.sessionId]
+    );
+    assert.ok(
+      rows.rows.every((row) => row.status === 'failed'),
+      'mọi lượt phải được ghi là failed thay vì treo ở processing'
+    );
+    assert.ok(
+      rows.rows.some((row) => row.error_message?.includes('Chấm lại cả bài')),
+      'người dùng phải được nói cho biết cách thử lại'
     );
   } finally {
     await cleanup(session);

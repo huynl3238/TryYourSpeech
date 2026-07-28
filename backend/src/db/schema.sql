@@ -229,6 +229,13 @@ ALTER TABLE sessions
 ADD CONSTRAINT sessions_session_mode_check
 CHECK (session_mode IN ('peer', 'mentor'));
 
+-- Counts how many times AI grading has been started for this session. The recovery
+-- sweep retries anything stuck in 'processing', so without a ceiling a session that
+-- fails for a permanent reason (a corrupt recording, say) would be retried every few
+-- minutes forever and cost money on the paid APIs each time.
+ALTER TABLE sessions
+ADD COLUMN IF NOT EXISTS ai_attempts INTEGER NOT NULL DEFAULT 0;
+
 CREATE INDEX IF NOT EXISTS idx_sessions_user_a_id ON sessions(user_a_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user_b_id ON sessions(user_b_id);
 

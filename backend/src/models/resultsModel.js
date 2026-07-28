@@ -280,7 +280,11 @@ async function markSessionProcessingForRetry(client, sessionId) {
     `
       UPDATE sessions
       SET status = 'processing',
-          ended_at = NULL
+          ended_at = NULL,
+          -- A retry the user asked for buys a fresh set of automatic attempts;
+          -- otherwise a session that had already exhausted them would be given up
+          -- on immediately, before the pipeline ran even once.
+          ai_attempts = 0
       WHERE id = $1
         AND status IN ('processing', 'completed')
     `,
