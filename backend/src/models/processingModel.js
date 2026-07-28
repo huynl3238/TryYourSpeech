@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import pool from '../config/db.js';
 import { prepareAiPipeline } from './aiPipelineModel.js';
 import {
   getSessionStatus,
@@ -82,6 +83,16 @@ async function createMissingAiResults(client, sessionId) {
   }
 }
 
+// Decides whether the session is ready for AI and, if so, claims it — but does
+// NOT grade anything. Grading is minutes of OpenAI and Azure calls; running it
+// here would hold the caller's HTTP request and its database transaction open
+// for that whole time, which meant one slow session could exhaust the connection
+// pool and stall the entire app, and a client timeout mid-way rolled back scores
+// that had already been paid for.
+//
+// The claim is durable: sessions.status = 'processing' plus an ai_results row per
+// uploaded turn. That state is what runSessionAiPipeline() and the recovery sweep
+// both read, so nothing is lost if the process dies between the two.
 export async function maybeStartSessionProcessing(client, sessionId) {
   const sessionMode = await getSessionMode(client, sessionId);
   if (sessionMode === 'mentor') {
@@ -106,16 +117,72 @@ export async function maybeStartSessionProcessing(client, sessionId) {
   );
 
   await createMissingAiResults(client, sessionId);
-  const pipeline = await prepareAiPipeline(client, sessionId);
+
+  // A session with no usable audio has nothing to grade, so it can finish right
+  // here instead of waiting on a background run that would do nothing.
   const completedStatus = await markSessionCompletedIfAllResultsTerminal(client, sessionId);
-
-  if (pipeline.status) {
-    return pipeline.status;
-  }
-
   if (completedStatus) {
     return completedStatus;
   }
 
+  // Handing off after the caller's transaction commits, so the worker sees the
+  // claim we just wrote. The frontend already polls GET /results and knows how
+  // to render 'processing', so returning early needs no client change.
+  scheduleSessionAiPipeline(sessionId);
+
   return await getSessionStatus(client, sessionId);
+}
+
+// The grading itself, once a session is known to be claimed. Split out from the
+// connection and locking below so it can be exercised directly.
+export async function runAiForClaimedSession(client, sessionId) {
+  const status = await getSessionStatus(client, sessionId);
+  if (status !== 'processing') {
+    return { skipped: `status-${status}` };
+  }
+
+  const pipeline = await prepareAiPipeline(client, sessionId);
+  await markSessionCompletedIfAllResultsTerminal(client, sessionId);
+
+  return { ran: true, ...pipeline };
+}
+
+// Runs the pipeline for one session on its own connection, outside any caller's
+// transaction. Safe to call for a session that is already done or already being
+// worked on: the advisory lock and the status checks both no-op in that case.
+export async function runSessionAiPipeline(sessionId) {
+  const client = await pool.connect();
+
+  try {
+    // Two callers can easily race here (both reviews finishing at once, or a
+    // recovery sweep overlapping a fresh hand-off). This lock is held for the
+    // session's lifetime on this connection and is released automatically if the
+    // process dies, so a crash cannot leave a session locked forever.
+    const lock = await client.query('SELECT pg_try_advisory_lock(hashtext($1)) AS acquired', [
+      `session-ai:${sessionId}`,
+    ]);
+
+    if (!lock.rows[0].acquired) {
+      return { skipped: 'already-running' };
+    }
+
+    try {
+      return await runAiForClaimedSession(client, sessionId);
+    } finally {
+      await client.query('SELECT pg_advisory_unlock(hashtext($1))', [`session-ai:${sessionId}`]);
+    }
+  } finally {
+    client.release();
+  }
+}
+
+// Deliberately not awaited by the request path. Failures are logged and leave
+// the session in 'processing', which the recovery sweep picks up later — the
+// request must not fail because grading did.
+export function scheduleSessionAiPipeline(sessionId) {
+  setImmediate(() => {
+    runSessionAiPipeline(sessionId).catch((err) => {
+      console.error(`Background AI pipeline failed for session ${sessionId}:`, err.message);
+    });
+  });
 }

@@ -1,5 +1,5 @@
 import pool from '../config/db.js';
-import { prepareAiPipeline } from './aiPipelineModel.js';
+import { scheduleSessionAiPipeline } from './processingModel.js';
 import { getMentorReviewForSession } from './mentorReviewModel.js';
 import {
   getSessionStatus,
@@ -323,16 +323,19 @@ export async function retryFailedResults({ sessionId, userId, turnId }) {
     await markSessionProcessingForRetry(client, sessionId);
     await resetUserResultsForRetry(client, sessionId, userId);
 
-    const pipeline = await prepareAiPipeline(client, sessionId);
-    const completedStatus = await markSessionCompletedIfAllResultsTerminal(client, sessionId);
-    const sessionStatus = completedStatus || await getSessionStatus(client, sessionId);
+    const sessionStatus = await getSessionStatus(client, sessionId);
 
     await client.query('COMMIT');
+
+    // Same reason as the first attempt: grading is minutes of external API calls
+    // and must not run inside this transaction. The reset above is the claim, and
+    // the client polls GET /results for the outcome.
+    scheduleSessionAiPipeline(sessionId);
 
     return {
       sessionId,
       userId,
-      aiStatus: pipeline.status || sessionStatus,
+      aiStatus: sessionStatus,
       sessionStatus,
     };
   } catch (err) {

@@ -54,12 +54,26 @@ async function canUseDatabase() {
   }
 }
 
-async function prepareDatabase() {
-  const schemaSql = await readFile(join(dbDir, 'schema.sql'), 'utf8');
-  const seedSql = await readFile(join(dbDir, 'seed.sql'), 'utf8');
+// Re-applying the schema takes exclusive table locks. Test files therefore run
+// one at a time (see the --test-concurrency=1 in the test script): in parallel,
+// these ALTER TABLEs deadlock against ordinary queries in the other suites.
+//
+// Cached because every test in this file asks for it, and schema + seed is by
+// far the slowest thing here — running it once instead of eight times.
+let databaseReady = null;
 
-  await pool.query(schemaSql);
-  await pool.query(seedSql);
+async function prepareDatabase() {
+  if (!databaseReady) {
+    databaseReady = (async () => {
+      const schemaSql = await readFile(join(dbDir, 'schema.sql'), 'utf8');
+      const seedSql = await readFile(join(dbDir, 'seed.sql'), 'utf8');
+
+      await pool.query(schemaSql);
+      await pool.query(seedSql);
+    })();
+  }
+
+  return databaseReady;
 }
 
 // Matchmaking no longer creates users — participants must be real accounts, so

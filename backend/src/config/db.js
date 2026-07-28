@@ -23,6 +23,11 @@ const pool = new pg.Pool({
   user: process.env.DB_USER || 'postgres',
   password: process.env.DB_PASSWORD || 'postgres',
   connectionTimeoutMillis: 2000,
+  // Idle pooled connections otherwise keep the event loop alive for their full
+  // idle timeout, which made every test file that touches the database hang for
+  // ten seconds after finishing. The server itself is kept alive by its HTTP
+  // listener, so nothing changes in production.
+  allowExitOnIdle: true,
 });
 
 export async function checkDbConnection() {
