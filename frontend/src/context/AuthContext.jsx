@@ -2,8 +2,10 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import {
   getCurrentUser,
   loginWithGoogle as loginWithGoogleRequest,
+  loginWithPassword as loginWithPasswordRequest,
   logout as logoutRequest,
   refreshSession,
+  verifyEmail as verifyEmailRequest,
 } from '../services/api';
 import { setIdentityFromAccount } from '../utils/identity';
 
@@ -86,6 +88,22 @@ export function AuthProvider({ children }) {
     return data.user;
   }, []);
 
+  // Password sign-in and email verification both end in a signed-in session,
+  // so they update state exactly like the Google path does.
+  const loginWithPassword = useCallback(async ({ email, password }) => {
+    const data = await loginWithPasswordRequest({ email, password });
+    setUser(data.user);
+    setStatus('authenticated');
+    return data.user;
+  }, []);
+
+  const verifyEmailToken = useCallback(async (token) => {
+    const data = await verifyEmailRequest(token);
+    setUser(data.user);
+    setStatus('authenticated');
+    return data.user;
+  }, []);
+
   const logout = useCallback(async () => {
     try {
       await logoutRequest();
@@ -115,9 +133,11 @@ export function AuthProvider({ children }) {
     isAdmin: user?.userRole === 'admin',
     isMentor: user?.userRole === 'mentor',
     loginWithGoogle,
+    loginWithPassword,
+    verifyEmailToken,
     logout,
     applyUserUpdate,
-  }), [user, status, loginWithGoogle, logout, applyUserUpdate]);
+  }), [user, status, loginWithGoogle, loginWithPassword, verifyEmailToken, logout, applyUserUpdate]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

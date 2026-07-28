@@ -47,6 +47,7 @@ There is no linter configured. Backend uses Node's built-in test runner (no test
 
 Backend reads `backend/.env` (`process.env.X`); frontend reads `import.meta.env.VITE_X`. See `AGENTS.md` "Environment Variables" for the full list. Key points:
 - AI runs only when `OPENAI_API_KEY`, `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION` are set; `GET /api/health` reports config status.
+- Sign-in needs `JWT_SECRET` + `GOOGLE_CLIENT_ID` (and `VITE_GOOGLE_CLIENT_ID` on the frontend). Email + password sign-in additionally needs `RESEND_API_KEY`, `EMAIL_FROM`, `APP_URL` — without them those endpoints return 503 and only Google sign-in works. `/api/health` reports `auth` and `email` the same way it reports `ai`.
 - Audio upload + AI assessment is gated behind `AI_AUDIO_UPLOAD_ENABLED=true` (returns 503 otherwise) — currently used to test the video-call flow without AI.
 - Frontend never reads ICE/TURN config directly; it fetches it from `GET /api/config`. `ICE_SERVERS` is a JSON array of TURN servers (empty locally; STUN is always added by the backend).
 

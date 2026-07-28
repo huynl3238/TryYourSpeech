@@ -13,6 +13,7 @@
     "db:set-role": "node src/db/setRole.js"
   },
   "dependencies": {
+    "bcryptjs": "^3.0.3",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",

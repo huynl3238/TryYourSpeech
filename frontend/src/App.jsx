@@ -12,6 +12,9 @@ import MentorLearnerPage from './pages/MentorLearnerPage';
 import MentorReviewPage from './pages/MentorReviewPage';
 import AdminDashboardPage from './pages/AdminDashboardPage';
 import LoginPage from './pages/LoginPage';
+import VerifyEmailPage from './pages/VerifyEmailPage';
+import ForgotPasswordPage from './pages/ForgotPasswordPage';
+import ResetPasswordPage from './pages/ResetPasswordPage';
 import { NotificationToaster } from './components/ui/NotificationToaster';
 import { RequireRole } from './components/RequireRole';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -36,7 +39,11 @@ function App() {
         <Route path="/mentor" element={<RequireRole><MentorLearnerPage /></RequireRole>} />
         <Route path="/mentor/host" element={<RequireRole roles={['mentor', 'admin']}><MentorHostPage /></RequireRole>} />
         <Route path="/mentor/review" element={<RequireRole><MentorReviewPage /></RequireRole>} />
+        {/* Reached from links in email, so they must work while signed out. */}
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/verify-email" element={<VerifyEmailPage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route
           path="/admin"
           element={(

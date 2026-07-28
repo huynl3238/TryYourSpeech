@@ -54,6 +54,48 @@ export async function loginWithGoogle(idToken) {
   });
 }
 
+export async function registerWithPassword({ email, password, displayName }) {
+  return request('/auth/register', {
+    method: 'POST',
+    body: JSON.stringify({ email, password, displayName }),
+  });
+}
+
+export async function loginWithPassword({ email, password }) {
+  return request('/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+export async function verifyEmail(token) {
+  return request('/auth/verify-email', {
+    method: 'POST',
+    body: JSON.stringify({ token }),
+  });
+}
+
+export async function resendVerification(email) {
+  return request('/auth/resend-verification', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function forgotPassword(email) {
+  return request('/auth/forgot-password', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function resetPassword({ token, password }) {
+  return request('/auth/reset-password', {
+    method: 'POST',
+    body: JSON.stringify({ token, password }),
+  });
+}
+
 export async function refreshSession() {
   return request('/auth/refresh', { method: 'POST' });
 }

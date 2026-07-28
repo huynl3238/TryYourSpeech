@@ -46,6 +46,42 @@ CREATE TABLE IF NOT EXISTS user_identities (
 
 CREATE INDEX IF NOT EXISTS idx_user_identities_user_id ON user_identities(user_id);
 
+-- Email + password sign-in is a second provider on the same users row, so a
+-- person who signs up both ways keeps one history.
+--   provider = 'password', provider_user_id = the lowercased email.
+ALTER TABLE user_identities
+ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);
+
+-- Verification is per identity, NOT per user. A Google account already proves
+-- the email, but that must not let someone attach a password to it: they would
+-- take over the account just by knowing the address. A password identity is
+-- unusable until the person clicks the link mailed to that address.
+ALTER TABLE user_identities
+ADD COLUMN IF NOT EXISTS verified_at TIMESTAMP;
+
+ALTER TABLE user_identities
+DROP CONSTRAINT IF EXISTS user_identities_provider_check;
+
+ALTER TABLE user_identities
+ADD CONSTRAINT user_identities_provider_check
+CHECK (provider IN ('google', 'password'));
+
+-- Single-use links mailed to the user: confirming an address, or resetting a
+-- forgotten password. Stored hashed for the same reason refresh tokens are.
+CREATE TABLE IF NOT EXISTS email_tokens (
+  id UUID PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  purpose VARCHAR(20) NOT NULL,
+  token_hash VARCHAR(64) NOT NULL UNIQUE,
+  expires_at TIMESTAMP NOT NULL,
+  used_at TIMESTAMP,
+  created_at TIMESTAMP DEFAULT NOW(),
+  CHECK (purpose IN ('verify_email', 'reset_password'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_email_tokens_user
+ON email_tokens(user_id, purpose, created_at DESC);
+
 -- Refresh tokens are stored hashed (never in plaintext) so a DB leak cannot be
 -- replayed, and rows can be revoked individually (logout) or in bulk (ban).
 CREATE TABLE IF NOT EXISTS refresh_tokens (

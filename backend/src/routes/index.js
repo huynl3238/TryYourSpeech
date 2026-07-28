@@ -53,6 +53,7 @@ import { convertWebmToWav } from '../services/audioConversion.js';
 import { getAdminStats } from '../models/adminStatsModel.js';
 import { getLiveStats } from '../socket/index.js';
 import { getAuthConfigStatus } from '../config/auth.js';
+import { getEmailConfigStatus } from '../config/email.js';
 import { requireAuth, requireRole, requireSelfParam } from '../middleware/auth.js';
 
 const router = Router();
@@ -280,6 +281,7 @@ router.get('/health', async (_req, res) => {
   ]);
   const ai = getAiConfigStatus();
   const auth = getAuthConfigStatus();
+  const email = getEmailConfigStatus();
 
   const isHealthy = database.ok && redis.ok;
 
@@ -290,6 +292,7 @@ router.get('/health', async (_req, res) => {
       redis,
       ai,
       auth,
+      email,
     },
   });
 });

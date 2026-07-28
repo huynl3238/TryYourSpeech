@@ -35,8 +35,9 @@ export function mapAuthUser(row) {
 }
 
 // Refresh tokens are opaque random strings; only their SHA-256 hash is stored,
-// so a database leak cannot be replayed against the API.
-function hashToken(token) {
+// so a database leak cannot be replayed against the API. Email links are hashed
+// the same way, hence the export.
+export function hashToken(token) {
   return createHash('sha256').update(token).digest('hex');
 }
 
@@ -77,6 +78,21 @@ async function insertRefreshToken(client, userId) {
   );
 
   return { token, expiresAt };
+}
+
+// Turns a users row into a signed-in session. Shared by every way of proving
+// who you are (Google today, email + password as well) so all of them mint
+// tokens with the same lifetimes and rotation rules.
+export async function issueSessionForUser(client, userRow) {
+  const user = mapAuthUser(userRow);
+  const refreshToken = await insertRefreshToken(client, user.id);
+
+  return {
+    user,
+    accessToken: signAccessToken(user),
+    refreshToken: refreshToken.token,
+    refreshTokenExpiresAt: refreshToken.expiresAt,
+  };
 }
 
 async function findUserByEmail(client, email) {
@@ -154,17 +170,11 @@ export async function findOrCreateUserFromGoogle({ providerUserId, email, displa
       [user.id, avatarUrl, email]
     );
 
-    const finalUser = mapAuthUser(refreshed.rows[0]);
-    const refreshToken = await insertRefreshToken(client, finalUser.id);
+    const session = await issueSessionForUser(client, refreshed.rows[0]);
 
     await client.query('COMMIT');
 
-    return {
-      user: finalUser,
-      accessToken: signAccessToken(finalUser),
-      refreshToken: refreshToken.token,
-      refreshTokenExpiresAt: refreshToken.expiresAt,
-    };
+    return session;
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
