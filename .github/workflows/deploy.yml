@@ -43,6 +43,15 @@ jobs:
             cd "$APP_DIR/backend"
             npm ci
 
+            # Chạy TRƯỚC khi restart: code mới thường cần cột/bảng mới, nên cấu
+            # trúc database phải sẵn sàng trước khi backend mới khởi động.
+            # schema.sql chỉ toàn CREATE/ALTER ... IF NOT EXISTS nên chạy lại bao
+            # nhiêu lần cũng an toàn, và mọi thay đổi đều là thêm mới — bản backend
+            # đang chạy không bị ảnh hưởng trong lúc chờ restart.
+            # Nếu migration lỗi, set -e cắt deploy ngay tại đây và bản cũ vẫn chạy.
+            echo "==> Cập nhật cấu trúc database"
+            npm run db:migrate
+
             echo "==> Build frontend"
             cd "$APP_DIR/frontend"
             npm ci
