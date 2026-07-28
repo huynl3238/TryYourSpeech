@@ -20,6 +20,8 @@ import {
   getTopicDetail,
   getTopics,
   getUserProfile,
+  getMyMentorApplication,
+  submitMentorApplication,
   getNotifications,
   markAllNotificationsRead,
   markNotificationRead,
@@ -3507,6 +3509,153 @@ function formatBand(value) {
   return Number.isFinite(Number(value)) ? Number(value).toFixed(1) : 'Chưa có';
 }
 
+// Shown on a student's own profile. A mentor or admin never sees it: they either
+// already hold the role or outrank it.
+function MentorApplicationCard() {
+  const [application, setApplication] = useState(null);
+  const [loaded, setLoaded] = useState(false);
+  const [isWriting, setIsWriting] = useState(false);
+  const [message, setMessage] = useState('');
+  const [status, setStatus] = useState('idle');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      try {
+        const data = await getMyMentorApplication();
+        if (!cancelled) setApplication(data.application);
+      } catch {
+        // A profile that loads fine shouldn't look broken because this one extra
+        // card failed; the button simply won't appear.
+      } finally {
+        if (!cancelled) setLoaded(true);
+      }
+    }
+
+    load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function handleSubmit() {
+    setStatus('sending');
+    setError('');
+
+    try {
+      const data = await submitMentorApplication(message);
+      setApplication(data.application);
+      setIsWriting(false);
+      setMessage('');
+      setStatus('sent');
+    } catch (err) {
+      setError(err.message);
+      setStatus('error');
+    }
+  }
+
+  if (!loaded) return null;
+
+  const isPending = application?.status === 'pending';
+  const isRejected = application?.status === 'rejected';
+
+  return (
+    <div className="bg-white border border-[#EAE7E3] rounded-2xl shadow-sm p-5 mb-5">
+      <div className="flex items-start gap-3">
+        <span className="material-symbols-rounded text-[#D97757] mt-0.5" style={{ fontSize: 22 }}>
+          cast_for_education
+        </span>
+        <div className="flex-1 min-w-0">
+          <h3 className="text-[15px] font-bold text-[#1C1917]">Trở thành mentor</h3>
+          <p className="text-[13px] text-[#78716C] mt-0.5">
+            Mentor có thể mở buổi hướng dẫn và viết nhận xét chi tiết cho học viên.
+          </p>
+
+          {isPending && (
+            <div className="mt-3 rounded-xl border border-[#EAC7B9] bg-[#FBF5F2] px-3.5 py-2.5">
+              <p className="text-[13px] font-semibold text-[#8A4A33]">Đơn của bạn đang chờ duyệt</p>
+              <p className="text-[12.5px] text-[#8A4A33]/80 mt-0.5">
+                Bạn sẽ nhận được thông báo ngay khi quản trị viên xem xong.
+              </p>
+            </div>
+          )}
+
+          {isRejected && !isWriting && (
+            <div className="mt-3 rounded-xl border border-[#E7E5E4] bg-[#F7F6F4] px-3.5 py-2.5">
+              <p className="text-[13px] font-semibold text-[#57534E]">Đơn trước chưa được duyệt</p>
+              {application.reviewNote && (
+                <p className="text-[12.5px] text-[#78716C] mt-0.5">
+                  Lý do: {application.reviewNote}
+                </p>
+              )}
+            </div>
+          )}
+
+          {!isPending && !isWriting && (
+            <button
+              type="button"
+              onClick={() => setIsWriting(true)}
+              className="inline-flex items-center gap-1.5 h-10 px-4 mt-3 rounded-xl border border-[#EAE7E3] text-sm font-semibold text-[#57534E] hover:bg-[#F1EEEA]"
+            >
+              <span className="material-symbols-rounded" style={{ fontSize: 18 }}>
+                {isRejected ? 'refresh' : 'send'}
+              </span>
+              {isRejected ? 'Gửi lại đơn' : 'Đăng ký làm mentor'}
+            </button>
+          )}
+
+          {isWriting && (
+            <div className="mt-3">
+              <label
+                htmlFor="mentor-application-message"
+                className="block text-[13px] font-semibold text-[#1C1917] mb-1.5"
+              >
+                Giới thiệu về bạn
+              </label>
+              <textarea
+                id="mentor-application-message"
+                value={message}
+                maxLength={1000}
+                rows={4}
+                onChange={(event) => setMessage(event.target.value)}
+                placeholder="Kinh nghiệm giảng dạy, band của bạn, vì sao bạn muốn làm mentor…"
+                className="w-full px-3.5 py-2.5 rounded-xl border border-[#EAE7E3] text-sm focus:outline-none focus:border-[#D97757] focus:ring-2 focus:ring-[#F7ECE6]"
+              />
+              <p className="text-[12px] text-[#A8A29E] mt-1 tabular-nums">{message.length}/1000</p>
+
+              {error && <p className="text-sm text-red-600 mt-2">{error}</p>}
+
+              <div className="flex items-center gap-2 mt-3">
+                <button
+                  type="button"
+                  onClick={handleSubmit}
+                  disabled={status === 'sending' || message.trim().length === 0}
+                  className="inline-flex items-center gap-1.5 h-10 px-5 rounded-xl bg-[#D97757] text-white text-sm font-semibold hover:brightness-105 disabled:opacity-60"
+                >
+                  {status === 'sending' ? 'Đang gửi…' : 'Gửi đơn'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsWriting(false);
+                    setError('');
+                  }}
+                  className="h-10 px-4 rounded-xl border border-[#EAE7E3] text-sm font-semibold text-[#57534E] hover:bg-[#F1EEEA]"
+                >
+                  Hủy
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ProfilePanelReal() {
   const { dispatch } = useSession();
   const { user: account, applyUserUpdate } = useAuth();
@@ -3717,6 +3866,8 @@ function ProfilePanelReal() {
           )}
         </div>
       </div>
+
+      {user.userRole === 'student' && <MentorApplicationCard />}
 
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3.5 mb-5">

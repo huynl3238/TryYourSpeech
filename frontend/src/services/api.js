@@ -46,6 +46,42 @@ export async function getAdminStats() {
   return request('/admin/stats', { cache: 'no-store' });
 }
 
+// --- Becoming a mentor ---
+export async function submitMentorApplication(message) {
+  return request('/mentor-applications', {
+    method: 'POST',
+    body: JSON.stringify({ message }),
+  });
+}
+
+export async function getMyMentorApplication() {
+  return request('/mentor-applications/me', { cache: 'no-store' });
+}
+
+export async function getMentorApplications(status = 'pending') {
+  return request(`/admin/mentor-applications?status=${encodeURIComponent(status)}`, {
+    cache: 'no-store',
+  });
+}
+
+export async function reviewMentorApplication({ applicationId, decision, reviewNote }) {
+  return request(`/admin/mentor-applications/${applicationId}/review`, {
+    method: 'POST',
+    body: JSON.stringify({ decision, reviewNote }),
+  });
+}
+
+export async function getMentors() {
+  return request('/admin/mentors', { cache: 'no-store' });
+}
+
+export async function revokeMentor({ userId, reason }) {
+  return request(`/admin/mentors/${userId}/revoke`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}
+
 // --- Authentication (Google OAuth2 + JWT cookies) ---
 export async function loginWithGoogle(idToken) {
   return request('/auth/google', {

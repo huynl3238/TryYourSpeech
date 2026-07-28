@@ -54,6 +54,12 @@ const PROTECTED_ROUTES = [
   ['POST', '/api/mentor-reviews', { sessionId: SESSION_UUID, studentId: SESSION_UUID, overallComment: 'X' }],
   ['POST', '/api/review/complete', { sessionId: SESSION_UUID }],
   ['GET', '/api/admin/stats'],
+  ['POST', '/api/mentor-applications', { message: 'X' }],
+  ['GET', '/api/mentor-applications/me'],
+  ['GET', '/api/admin/mentor-applications'],
+  ['POST', `/api/admin/mentor-applications/${SESSION_UUID}/review`, { decision: 'approved' }],
+  ['GET', '/api/admin/mentors'],
+  ['POST', `/api/admin/mentors/${SESSION_UUID}/revoke`, {}],
 ];
 
 async function callRoute(baseUrl, [method, path, body]) {

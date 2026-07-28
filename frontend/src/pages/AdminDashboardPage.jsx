@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { getAdminStats } from '../services/api';
+import {
+  getAdminStats,
+  getMentorApplications,
+  getMentors,
+  reviewMentorApplication,
+  revokeMentor,
+} from '../services/api';
 
 const STATUS_LABELS = {
   matched: 'Đã ghép',
@@ -125,6 +131,201 @@ function DayChart({ items }) {
   );
 }
 
+// Granting and removing the mentor role. Until this existed both were only
+// possible by running npm run db:set-role over SSH on the server.
+function MentorAdminPanel() {
+  const [applications, setApplications] = useState([]);
+  const [mentors, setMentors] = useState([]);
+  const [statusFilter, setStatusFilter] = useState('pending');
+  const [notes, setNotes] = useState({});
+  const [busyId, setBusyId] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const [applicationData, mentorData] = await Promise.all([
+        getMentorApplications(statusFilter),
+        getMentors(),
+      ]);
+      setApplications(applicationData.applications);
+      setMentors(mentorData.mentors);
+    } catch (err) {
+      setError(err.message || 'Không thể tải danh sách đơn');
+    } finally {
+      setLoading(false);
+    }
+  }, [statusFilter]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function handleReview(applicationId, decision) {
+    setBusyId(applicationId);
+    setError('');
+    try {
+      await reviewMentorApplication({
+        applicationId,
+        decision,
+        reviewNote: notes[applicationId] || '',
+      });
+      setNotes((current) => ({ ...current, [applicationId]: '' }));
+      await load();
+    } catch (err) {
+      setError(err.message || 'Không xử lý được đơn này');
+    } finally {
+      setBusyId('');
+    }
+  }
+
+  async function handleRevoke(mentor) {
+    setBusyId(mentor.id);
+    setError('');
+    try {
+      await revokeMentor({ userId: mentor.id, reason: '' });
+      await load();
+    } catch (err) {
+      setError(err.message || 'Không gỡ được quyền mentor');
+    } finally {
+      setBusyId('');
+    }
+  }
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      <Panel
+        title="Đơn xin làm mentor"
+        subtitle={loading ? 'Đang tải…' : `${applications.length} đơn`}
+        right={
+          <select
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value)}
+            className="h-9 rounded-xl border border-[#EAE7E3] bg-white px-2.5 text-[12.5px] font-semibold text-[#57534E]"
+          >
+            <option value="pending">Chờ duyệt</option>
+            <option value="approved">Đã duyệt</option>
+            <option value="rejected">Đã từ chối</option>
+            <option value="all">Tất cả</option>
+          </select>
+        }
+      >
+        {error && (
+          <div className="mb-3 rounded-xl border border-[#F0C0B0] bg-[#FBF0EB] px-3.5 py-2.5 text-[13px] text-[#8A4A33]">
+            {error}
+          </div>
+        )}
+
+        {!loading && applications.length === 0 && (
+          <p className="text-[13px] text-[#A8A29E]">Không có đơn nào.</p>
+        )}
+
+        <div className="space-y-3">
+          {applications.map((application) => (
+            <div key={application.id} className="rounded-xl border border-[#EAE7E3] p-3.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[14px] font-bold text-[#1C1917]">
+                  {application.applicant.displayName}
+                </span>
+                <span className="rounded-full bg-[#F1EEEA] px-2 py-0.5 text-[11.5px] font-semibold text-[#57534E] tabular-nums">
+                  Band {application.applicant.band ?? '—'}
+                </span>
+                <span className="rounded-full bg-[#F1EEEA] px-2 py-0.5 text-[11.5px] font-semibold text-[#57534E] tabular-nums">
+                  {application.applicant.completedSessions} phiên hoàn thành
+                </span>
+                <span className="text-[11.5px] text-[#A8A29E]">
+                  {formatDate(application.createdAt)}
+                </span>
+              </div>
+
+              {application.applicant.email && (
+                <p className="mt-1 text-[12px] text-[#A8A29E]">{application.applicant.email}</p>
+              )}
+
+              <p className="mt-2 whitespace-pre-wrap text-[13px] text-[#57534E]">
+                {application.message}
+              </p>
+
+              {application.status === 'pending' ? (
+                <div className="mt-3">
+                  <input
+                    value={notes[application.id] || ''}
+                    maxLength={500}
+                    onChange={(event) =>
+                      setNotes((current) => ({ ...current, [application.id]: event.target.value }))
+                    }
+                    placeholder="Ghi chú gửi kèm (không bắt buộc khi duyệt, nên có khi từ chối)"
+                    className="h-10 w-full rounded-xl border border-[#EAE7E3] px-3 text-[13px] focus:border-[#D97757] focus:outline-none"
+                  />
+                  <div className="mt-2 flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={busyId === application.id}
+                      onClick={() => handleReview(application.id, 'approved')}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-[#16A34A] px-4 text-[13px] font-semibold text-white hover:brightness-105 disabled:opacity-60"
+                    >
+                      <span className="material-symbols-rounded" style={{ fontSize: 17 }}>check</span>
+                      Duyệt
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busyId === application.id}
+                      onClick={() => handleReview(application.id, 'rejected')}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-[#EAE7E3] px-4 text-[13px] font-semibold text-[#57534E] hover:bg-[#F1EEEA] disabled:opacity-60"
+                    >
+                      <span className="material-symbols-rounded" style={{ fontSize: 17 }}>close</span>
+                      Từ chối
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="mt-2 text-[12.5px] text-[#A8A29E]">
+                  {statusLabel(application.status)}
+                  {application.reviewer ? ` bởi ${application.reviewer.displayName}` : ''}
+                  {application.reviewedAt ? ` · ${formatDate(application.reviewedAt)}` : ''}
+                  {application.reviewNote ? ` · ${application.reviewNote}` : ''}
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+      </Panel>
+
+      <Panel title="Mentor hiện tại" subtitle={`${mentors.length} người`}>
+        {mentors.length === 0 && <p className="text-[13px] text-[#A8A29E]">Chưa có mentor nào.</p>}
+
+        <div className="space-y-2.5">
+          {mentors.map((mentor) => (
+            <div
+              key={mentor.id}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#EAE7E3] p-3"
+            >
+              <div className="min-w-0">
+                <p className="text-[13.5px] font-bold text-[#1C1917]">{mentor.displayName}</p>
+                <p className="text-[11.5px] text-[#A8A29E] tabular-nums">
+                  Band {mentor.band ?? '—'} · {mentor.hostedSessions} buổi đã mở ·{' '}
+                  {mentor.reviewsWritten} nhận xét
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={busyId === mentor.id}
+                onClick={() => handleRevoke(mentor)}
+                className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-[#EAE7E3] px-3 text-[12.5px] font-semibold text-[#B91C1C] hover:bg-[#FBF0EB] disabled:opacity-60"
+              >
+                <span className="material-symbols-rounded" style={{ fontSize: 17 }}>person_remove</span>
+                Gỡ quyền
+              </button>
+            </div>
+          ))}
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
 export default function AdminDashboardPage() {
   const [stats, setStats] = useState(null);
   const [error, setError] = useState('');
@@ -193,6 +394,12 @@ export default function AdminDashboardPage() {
         {loading && !stats && (
           <p className="text-[14px] text-[#78716C]">Đang tải thống kê…</p>
         )}
+
+        {/* Deliberately outside the stats block: granting a mentor role must stay
+            possible even on a day when the stats query is what broke. */}
+        <div className="mb-6">
+          <MentorAdminPanel />
+        </div>
 
         {stats && (
           <div className="space-y-6">

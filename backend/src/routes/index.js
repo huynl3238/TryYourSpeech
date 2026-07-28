@@ -49,6 +49,14 @@ import {
   markAllNotificationsRead,
   markNotificationRead,
 } from '../models/notificationModel.js';
+import {
+  getLatestMentorApplication,
+  listMentorApplications,
+  listMentors,
+  revokeMentorRole,
+  reviewMentorApplication,
+  submitMentorApplication,
+} from '../models/mentorApplicationModel.js';
 import { convertWebmToWav } from '../services/audioConversion.js';
 import { getAdminStats } from '../models/adminStatsModel.js';
 import { getLiveStats } from '../socket/index.js';
@@ -307,6 +315,111 @@ router.get('/admin/stats', requireRole('admin'), async (_req, res) => {
   } catch (err) {
     console.error('Failed to build admin stats:', err.message);
     res.status(500).json({ error: 'Không thể tải thống kê quản trị' });
+  }
+});
+
+// --- Becoming a mentor ---------------------------------------------------
+// Applying is open to any signed-in student; the model refuses anyone who already
+// holds the role. Granting it is admin-only — before this existed, the only way to
+// make someone a mentor was `npm run db:set-role` on the server.
+router.post('/mentor-applications', requireAuth, async (req, res) => {
+  try {
+    requireRequestObject(req.body);
+
+    const result = await submitMentorApplication({
+      userId: req.user.id,
+      message: req.body.message,
+    });
+    res.status(201).json(result);
+  } catch (err) {
+    console.warn('Failed to submit mentor application:', err.message);
+    if (err.message.endsWith('not found')) {
+      res.status(404).json({ error: err.message });
+      return;
+    }
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.get('/mentor-applications/me', requireAuth, async (req, res) => {
+  try {
+    res.set('Cache-Control', 'no-store');
+    const result = await getLatestMentorApplication(req.user.id);
+    res.json(result);
+  } catch (err) {
+    console.warn('Failed to load mentor application:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.get('/admin/mentor-applications', requireRole('admin'), async (req, res) => {
+  try {
+    res.set('Cache-Control', 'no-store');
+    const result = await listMentorApplications({ status: req.query.status || 'pending' });
+    res.json(result);
+  } catch (err) {
+    console.warn('Failed to list mentor applications:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.post(
+  '/admin/mentor-applications/:applicationId/review',
+  requireRole('admin'),
+  async (req, res) => {
+    try {
+      requireUuid(req.params.applicationId, 'applicationId');
+      requireRequestObject(req.body);
+
+      const result = await reviewMentorApplication({
+        applicationId: req.params.applicationId,
+        reviewerId: req.user.id,
+        decision: req.body.decision,
+        reviewNote: req.body.reviewNote,
+      });
+      res.json(result);
+    } catch (err) {
+      console.warn('Failed to review mentor application:', err.message);
+      if (err.message.endsWith('not found')) {
+        res.status(404).json({ error: err.message });
+        return;
+      }
+      res.status(400).json({ error: err.message });
+    }
+  }
+);
+
+router.get('/admin/mentors', requireRole('admin'), async (_req, res) => {
+  try {
+    res.set('Cache-Control', 'no-store');
+    const result = await listMentors();
+    res.json(result);
+  } catch (err) {
+    console.warn('Failed to list mentors:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.post('/admin/mentors/:userId/revoke', requireRole('admin'), async (req, res) => {
+  try {
+    requireUuid(req.params.userId, 'userId');
+
+    // An admin demoting themselves would lock the app out of its own admin tools,
+    // and the model only demotes mentors anyway — this is the clearer error.
+    if (req.params.userId === req.user.id) {
+      res.status(400).json({ error: 'Bạn không thể tự gỡ quyền của chính mình' });
+      return;
+    }
+
+    const result = await revokeMentorRole({
+      userId: req.params.userId,
+      adminId: req.user.id,
+      reason: req.body?.reason,
+    });
+    res.json(result);
+  } catch (err) {
+    console.warn('Failed to revoke mentor role:', err.message);
+    res.status(400).json({ error: err.message });
   }
 });
 

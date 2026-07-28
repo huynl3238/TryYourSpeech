@@ -8,8 +8,17 @@ import {
   verifyEmail as verifyEmailRequest,
 } from '../services/api';
 import { setIdentityFromAccount } from '../utils/identity';
+import { onNotification } from '../services/notificationsRealtime';
 
 const AuthContext = createContext(null);
+
+// Notifications that mean the signed-in account's own role just changed. The
+// sidebar, the nav items and the mentor screens all read the role from here, so
+// they would otherwise keep showing the old one until the next token refresh.
+const ROLE_CHANGING_NOTIFICATIONS = new Set([
+  'mentor_application_approved',
+  'mentor_role_revoked',
+]);
 
 // Access tokens last 15 minutes; refresh a little early so a long practice
 // session never fails mid-request because the token expired.
@@ -123,6 +132,27 @@ export function AuthProvider({ children }) {
   const applyUserUpdate = useCallback((nextUser) => {
     setUser((current) => ({ ...current, ...nextUser }));
   }, []);
+
+  // An admin approving a mentor application changes this account's role on the
+  // server. Only listening here — starting the realtime connection is the
+  // lobby's job, so signing in on its own never opens a socket.
+  useEffect(() => {
+    if (status !== 'authenticated') {
+      return undefined;
+    }
+
+    return onNotification((payload) => {
+      if (!ROLE_CHANGING_NOTIFICATIONS.has(payload?.type)) {
+        return;
+      }
+
+      getCurrentUser()
+        .then((data) => setUser(data.user))
+        .catch(() => {
+          // The periodic refresh will pick the new role up regardless.
+        });
+    });
+  }, [status]);
 
   const value = useMemo(() => ({
     user,
