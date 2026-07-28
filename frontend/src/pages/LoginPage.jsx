@@ -97,6 +97,7 @@ function SignUpForm() {
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmation, setConfirmation] = useState('');
   const [error, setError] = useState('');
   const [sentTo, setSentTo] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -106,6 +107,13 @@ function SignUpForm() {
 
     if (password.length < MIN_PASSWORD_LENGTH) {
       setError(`Mật khẩu phải có ít nhất ${MIN_PASSWORD_LENGTH} ký tự`);
+      return;
+    }
+
+    // A typo here would lock the person out of an account they cannot yet log
+    // into to fix, so catch it before the account exists.
+    if (password !== confirmation) {
+      setError('Hai lần nhập mật khẩu không khớp');
       return;
     }
 
@@ -168,6 +176,16 @@ function SignUpForm() {
         placeholder={`Ít nhất ${MIN_PASSWORD_LENGTH} ký tự`}
         autoComplete="new-password"
         hint="Nên dùng một cụm từ dài, dễ nhớ với bạn nhưng khó đoán với người khác."
+        required
+      />
+      <AuthField
+        id="signup-password-confirm"
+        label="Nhập lại mật khẩu"
+        type="password"
+        value={confirmation}
+        onChange={(value) => { setConfirmation(value); setError(''); }}
+        placeholder="Nhập lại mật khẩu vừa tạo"
+        autoComplete="new-password"
         required
       />
 
