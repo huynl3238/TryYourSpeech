@@ -74,12 +74,8 @@ export async function getPracticeHistory(userId) {
   return request(`/users/${userId}/practice-history`, { cache: 'no-store' });
 }
 
-export async function createIdentity({ displayName, band, userRole }) {
-  return request('/users', {
-    method: 'POST',
-    body: JSON.stringify({ displayName, band, userRole }),
-  });
-}
+// createIdentity() is gone: accounts come from Google sign-in only. It used to
+// POST /users with a caller-chosen userRole, which let anyone become a mentor.
 
 export async function getUserProfile(userId) {
   return request(`/users/${userId}/profile`, { cache: 'no-store' });

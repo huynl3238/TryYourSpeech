@@ -1,5 +1,4 @@
-import { createContext, useContext, useEffect, useReducer, useRef } from 'react';
-import { getIdentity, saveIdentity } from '../utils/identity';
+import { createContext, useContext, useReducer, useRef } from 'react';
 
 const SessionContext = createContext(null);
 
@@ -191,25 +190,9 @@ function sessionReducer(state, action) {
 export function SessionProvider({ children }) {
   const [state, dispatch] = useReducer(sessionReducer, initialState);
 
-  // Keep the persisted identity (userId + role + name + band) consistent with
-  // the active session's user. Merge so we never clobber known values with
-  // nulls — a peer match fully switches identity to the fresh peer user, while
-  // a mentor session keeps the mentor's signed-in name/band.
-  useEffect(() => {
-    if (!state.userId) {
-      return;
-    }
-
-    const existing = getIdentity() || {};
-    const sameUser = existing.userId === state.userId;
-
-    saveIdentity({
-      userId: state.userId,
-      userRole: state.myUserRole || (sameUser ? existing.userRole : 'student'),
-      displayName: state.displayName || (sameUser ? existing.displayName : ''),
-      band: state.band != null ? state.band : (sameUser ? existing.band : null),
-    });
-  }, [state.userId, state.myUserRole, state.displayName, state.band]);
+  // A session no longer defines who you are: matchmaking reuses the signed-in
+  // account instead of minting a user per match, so there is nothing to persist
+  // back here. AuthContext is the single source of identity.
 
   // Refs for WebRTC and MediaRecorder (not part of render state)
   const refs = useRef({

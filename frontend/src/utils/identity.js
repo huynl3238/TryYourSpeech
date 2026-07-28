@@ -1,39 +1,30 @@
-// Lightweight per-device identity. Backs a real users row (id + role) so the
-// mentor/student flows can call the API with a stable userId.
-const ID_KEY = 'tryYourSpeech.currentUserId';
-const ROLE_KEY = 'tryYourSpeech.userRole';
-const NAME_KEY = 'tryYourSpeech.displayName';
-const BAND_KEY = 'tryYourSpeech.band';
+// Who the app thinks you are.
+//
+// This used to be a per-device identity kept in localStorage: the browser made
+// up a userId, chose its own role, and every API call carried it. That is gone —
+// the signed-in Google account is the only identity now, and the backend derives
+// it from the auth cookie instead of believing what the client sends.
+//
+// What remains is an in-memory mirror of the signed-in user so the few non-React
+// helpers (realtime notifications, toasts) can read it synchronously without
+// threading context through them. AuthContext owns it and keeps it in sync.
+let currentIdentity = null;
+
+export function setIdentityFromAccount(user) {
+  currentIdentity = user
+    ? {
+      userId: user.id,
+      userRole: user.userRole || 'student',
+      displayName: user.displayName || '',
+      band: user.band ?? null,
+    }
+    : null;
+}
 
 export function getIdentity() {
-  const userId = localStorage.getItem(ID_KEY);
-  if (!userId) {
-    return null;
-  }
-
-  const bandRaw = localStorage.getItem(BAND_KEY);
-  return {
-    userId,
-    userRole: localStorage.getItem(ROLE_KEY) || 'student',
-    displayName: localStorage.getItem(NAME_KEY) || '',
-    band: bandRaw === null || bandRaw === '' ? null : Number(bandRaw),
-  };
-}
-
-export function saveIdentity({ userId, userRole, displayName, band }) {
-  localStorage.setItem(ID_KEY, userId);
-  localStorage.setItem(ROLE_KEY, userRole || 'student');
-  localStorage.setItem(NAME_KEY, displayName || '');
-  localStorage.setItem(BAND_KEY, band === null || band === undefined ? '' : String(band));
-}
-
-export function clearIdentity() {
-  localStorage.removeItem(ID_KEY);
-  localStorage.removeItem(ROLE_KEY);
-  localStorage.removeItem(NAME_KEY);
-  localStorage.removeItem(BAND_KEY);
+  return currentIdentity;
 }
 
 export function isMentor() {
-  return localStorage.getItem(ROLE_KEY) === 'mentor';
+  return currentIdentity?.userRole === 'mentor';
 }

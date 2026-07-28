@@ -24,15 +24,18 @@ function App() {
       <SessionProvider>
         <NotificationToaster />
         <Routes>
-        <Route path="/" element={<LobbyPage />} />
-        <Route path="/device-check" element={<DeviceCheckPage />} />
-        <Route path="/session" element={<SessionPage />} />
-        <Route path="/review" element={<ReviewPage />} />
-        <Route path="/waiting-review" element={<WaitingAIPage />} />
-        <Route path="/results" element={<ResultsPage />} />
-        <Route path="/mentor" element={<MentorLearnerPage />} />
-        <Route path="/mentor/host" element={<MentorHostPage />} />
-        <Route path="/mentor/review" element={<MentorReviewPage />} />
+        {/* Everything except the login screen needs an account: practising,
+            reviewing and results all belong to a specific person now, and the
+            API refuses anonymous calls anyway. */}
+        <Route path="/" element={<RequireRole><LobbyPage /></RequireRole>} />
+        <Route path="/device-check" element={<RequireRole><DeviceCheckPage /></RequireRole>} />
+        <Route path="/session" element={<RequireRole><SessionPage /></RequireRole>} />
+        <Route path="/review" element={<RequireRole><ReviewPage /></RequireRole>} />
+        <Route path="/waiting-review" element={<RequireRole><WaitingAIPage /></RequireRole>} />
+        <Route path="/results" element={<RequireRole><ResultsPage /></RequireRole>} />
+        <Route path="/mentor" element={<RequireRole><MentorLearnerPage /></RequireRole>} />
+        <Route path="/mentor/host" element={<RequireRole roles={['mentor', 'admin']}><MentorHostPage /></RequireRole>} />
+        <Route path="/mentor/review" element={<RequireRole><MentorReviewPage /></RequireRole>} />
         <Route path="/login" element={<LoginPage />} />
         <Route
           path="/admin"

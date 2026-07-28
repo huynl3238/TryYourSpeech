@@ -6,6 +6,7 @@ import {
   markSessionActive,
 } from '../models/sessionModel.js';
 import { setIo, registerUserSocket, unregisterSocket } from './notifier.js';
+import { authenticateSocket } from './auth.js';
 
 const MAX_BAND_DIFFERENCE = 1.0;
 const MAX_DISPLAY_NAME_LENGTH = 100;
@@ -36,6 +37,12 @@ function removeFromQueue(socketId) {
 function isSocketQueued(socketId) {
   return [waitingQueue, mentorQueue, mentorStudentQueue].some((queue) =>
     queue.some((user) => user.socketId === socketId)
+  );
+}
+
+function isUserQueued(userId) {
+  return [waitingQueue, mentorQueue, mentorStudentQueue].some((queue) =>
+    queue.some((user) => user.userId === userId)
   );
 }
 
@@ -99,12 +106,15 @@ function parseUserRole(userRole, sessionMode) {
   return userRole;
 }
 
-function validateMatchRequest(data) {
+// `account` is the signed-in user resolved at handshake time. Display name and
+// role come from it, never from the payload — the client only gets to choose the
+// band it wants to be matched at and which mode it is joining.
+function validateMatchRequest(data, account) {
   if (!data || typeof data !== 'object') {
     return { error: 'Thong tin tim doi tac khong hop le' };
   }
 
-  const displayName = normalizeDisplayName(data.displayName);
+  const displayName = normalizeDisplayName(account.displayName);
   if (!displayName) {
     return { error: 'Ten hien thi khong hop le' };
   }
@@ -114,7 +124,7 @@ function validateMatchRequest(data) {
     return { error: 'Che do ghep cap khong hop le' };
   }
 
-  const userRole = parseUserRole(data.userRole, sessionMode);
+  const userRole = parseUserRole(account.userRole === 'admin' ? 'mentor' : account.userRole, sessionMode);
   if (!userRole) {
     return { error: 'Vai tro nguoi dung khong hop le' };
   }
@@ -289,6 +299,7 @@ function emitPracticeReadyState(io, room) {
 function createMatchUser(socket, matchRequest) {
   return {
     socketId: socket.id,
+    userId: socket.data.user.id,
     displayName: matchRequest.displayName,
     band: matchRequest.band,
     userRole: matchRequest.userRole,
@@ -363,9 +374,16 @@ async function handleFindMatch(io, socket, data) {
   if (userRoom.has(socket.id)) return;
   if (isSocketQueued(socket.id)) return;
 
-  const matchRequest = validateMatchRequest(data);
+  const matchRequest = validateMatchRequest(data, socket.data.user);
   if (matchRequest.error) {
     socket.emit('match_error', { error: matchRequest.error });
+    return;
+  }
+
+  // Two tabs signed into the same account would otherwise be matched with each
+  // other, creating a session where both sides are the same person.
+  if (isUserQueued(socket.data.user.id)) {
+    socket.emit('match_error', { error: 'Tài khoản của bạn đang tìm đối tác ở một tab khác' });
     return;
   }
 
@@ -477,8 +495,8 @@ async function handleJoinMentorRoom(io, socket, data) {
   if (userRoom.has(socket.id)) return;
 
   const sessionId = data && typeof data.sessionId === 'string' ? data.sessionId : null;
-  const userId = data && typeof data.userId === 'string' ? data.userId : null;
-  if (!sessionId || !userId) {
+  const userId = socket.data.user.id;
+  if (!sessionId) {
     socket.emit('match_error', { error: 'Thong tin phien khong hop le' });
     return;
   }
@@ -583,17 +601,15 @@ export function getLiveStats() {
 export function setupSocket(io) {
   setIo(io);
 
-  io.on('connection', (socket) => {
-    console.log(`[Socket] Connected: ${socket.id}`);
+  io.use(authenticateSocket);
 
-    // Associate this socket with a signed-in user so we can push realtime
-    // notifications to them regardless of matchmaking state.
-    socket.on('identify', (data) => {
-      const userId = data && typeof data.userId === 'string' ? data.userId.trim() : '';
-      if (userId) {
-        registerUserSocket(userId, socket.id);
-      }
-    });
+  io.on('connection', (socket) => {
+    console.log(`[Socket] Connected: ${socket.id} (${socket.data.user.id})`);
+
+    // The handshake already told us who this is, so realtime notifications are
+    // wired up immediately. The old 'identify' event let a client name itself
+    // and is gone — it was enough to subscribe to anyone else's notifications.
+    registerUserSocket(socket.data.user.id, socket.id);
 
     socket.on('find_match', (data) => {
       handleFindMatch(io, socket, data).catch((err) => {

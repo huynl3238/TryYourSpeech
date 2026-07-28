@@ -42,20 +42,32 @@ function mapTurnRow(row) {
   };
 }
 
-async function createUser(client, user) {
-  const id = randomUUID();
-  const userRole = user.userRole || 'student';
+// Matchmaking used to INSERT a throwaway users row per session, taking
+// display_name/band/user_role straight from the socket payload — which is how
+// the app ended up with one identity per device and a way to self-declare a
+// role. Participants are now real signed-in accounts; the only thing a match
+// may write back is the band the learner chose for this session.
+async function syncSessionUser(client, user) {
+  if (!user.userId) {
+    throw new Error('Phiên luyện tập cần tài khoản đã đăng nhập');
+  }
 
   const result = await client.query(
     `
-      INSERT INTO users (id, display_name, band, user_role)
-      VALUES ($1, $2, $3, $4)
+      UPDATE users
+      SET band = COALESCE($2, band)
+      WHERE id = $1
       RETURNING id, display_name, band, user_role
     `,
-    [id, user.displayName, user.band, userRole]
+    [user.userId, user.band]
   );
 
-  return result.rows[0];
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error('Không tìm thấy tài khoản người dùng');
+  }
+
+  return row;
 }
 
 async function selectEligibleTopic(client) {
@@ -248,8 +260,12 @@ export async function createMatchedSession(roomId, userA, userB, sessionMode = '
       throw new Error('Chưa có đủ câu hỏi để tạo phiên luyện tập');
     }
 
-    const createdUserA = await createUser(client, userA);
-    const createdUserB = await createUser(client, userB);
+    const createdUserA = await syncSessionUser(client, userA);
+    const createdUserB = await syncSessionUser(client, userB);
+
+    if (createdUserA.id === createdUserB.id) {
+      throw new Error('Không thể ghép một người với chính họ');
+    }
 
     const sessionId = randomUUID();
     await client.query(

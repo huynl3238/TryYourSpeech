@@ -5,6 +5,7 @@ import {
   logout as logoutRequest,
   refreshSession,
 } from '../services/api';
+import { setIdentityFromAccount } from '../utils/identity';
 
 const AuthContext = createContext(null);
 
@@ -94,6 +95,17 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
+  // Mirror the account into the plain-module identity during render, not in an
+  // effect: child effects run before the parent's, so an effect-based sync would
+  // let a child read a stale (or null) identity on the render right after login.
+  setIdentityFromAccount(status === 'authenticated' ? user : null);
+
+  // Lets the profile screen push a new display name / band without a round trip
+  // through sign-in, keeping the sidebar and the identity mirror in step.
+  const applyUserUpdate = useCallback((nextUser) => {
+    setUser((current) => ({ ...current, ...nextUser }));
+  }, []);
+
   const value = useMemo(() => ({
     user,
     status,
@@ -104,7 +116,8 @@ export function AuthProvider({ children }) {
     isMentor: user?.userRole === 'mentor',
     loginWithGoogle,
     logout,
-  }), [user, status, loginWithGoogle, logout]);
+    applyUserUpdate,
+  }), [user, status, loginWithGoogle, logout, applyUserUpdate]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

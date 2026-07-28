@@ -2,20 +2,14 @@
 //
 // The socket connection is normally used for matchmaking/WebRTC. Here we reuse
 // it to receive live "notification:new" pings so the lobby can update without a
-// manual refresh. We identify the current device's userId to the server so it
-// knows which sockets belong to us, and re-identify on every (re)connect.
+// manual refresh. The server binds the socket to the signed-in account during
+// the handshake, so there is nothing to announce from this side — we used to
+// emit an 'identify' event with our own userId, which meant anyone could
+// subscribe to another person's notifications by sending their id.
 import { socket } from './socket';
-import { getIdentity } from '../utils/identity';
 
 const listeners = new Set();
 let wired = false;
-
-function emitIdentify() {
-  const userId = getIdentity()?.userId;
-  if (userId && socket.connected) {
-    socket.emit('identify', { userId });
-  }
-}
 
 function handleNew(payload) {
   for (const listener of listeners) {
@@ -27,19 +21,16 @@ function handleNew(payload) {
   }
 }
 
-// Connect (if needed), identify, and start relaying notification events.
+// Connect (if needed) and start relaying notification events.
 // Safe to call repeatedly; wiring happens only once.
 export function startNotificationsRealtime() {
   if (!wired) {
     wired = true;
-    socket.on('connect', emitIdentify);
     socket.on('notification:new', handleNew);
   }
 
   if (!socket.connected) {
     socket.connect();
-  } else {
-    emitIdentify();
   }
 }
 

@@ -62,6 +62,21 @@ async function prepareDatabase() {
   await pool.query(seedSql);
 }
 
+// Matchmaking no longer creates users — participants must be real accounts, so
+// the test seeds them the way Google sign-in would.
+async function createTestUser(displayName, band, userRole = 'student') {
+  const result = await pool.query(
+    `
+      INSERT INTO users (id, display_name, band, user_role)
+      VALUES (gen_random_uuid(), $1, $2, $3)
+      RETURNING id
+    `,
+    [displayName, band, userRole]
+  );
+
+  return result.rows[0].id;
+}
+
 async function cleanupSession(session) {
   if (!session) {
     return;
@@ -166,8 +181,8 @@ test('database flow creates session, stores idempotent peer notes, and completes
   try {
     session = await createMatchedSession(
       'integration-test-room',
-      { displayName: 'Integration A', band: 6.5 },
-      { displayName: 'Integration B', band: 6 }
+      { userId: await createTestUser('Integration A', 6.5), band: 6.5 },
+      { userId: await createTestUser('Integration B', 6), band: 6 }
     );
     const detail = await getSessionDetail(session.sessionId);
 
@@ -274,8 +289,8 @@ test('mentor session creates student-only turns and completes with mentor review
   try {
     session = await createMatchedSession(
       'mentor-integration-test-room',
-      { displayName: 'Student Integration', band: 5.5, userRole: 'student' },
-      { displayName: 'Mentor Integration', band: null, userRole: 'mentor' },
+      { userId: await createTestUser('Student Integration', 5.5), band: 5.5 },
+      { userId: await createTestUser('Mentor Integration', null, 'mentor'), band: null },
       'mentor'
     );
     const detail = await getSessionDetail(session.sessionId);
@@ -502,8 +517,8 @@ test('topic management protects content already used by sessions', async (t) => 
   try {
     session = await createMatchedSession(
       'topic-protection-test-room',
-      { displayName: 'Topic Test A', band: 6.5 },
-      { displayName: 'Topic Test B', band: 6 }
+      { userId: await createTestUser('Topic Test A', 6.5), band: 6.5 },
+      { userId: await createTestUser('Topic Test B', 6), band: 6 }
     );
     const detail = await getSessionDetail(session.sessionId);
     const usedQuestionId = detail.turns[0].questionId;
@@ -534,8 +549,8 @@ test('classroom posts publish completed sessions and appear in the feed', async 
   try {
     session = await createMatchedSession(
       'classroom-integration-test-room',
-      { displayName: 'Classroom Student', band: 6, userRole: 'student' },
-      { displayName: 'Classroom Mentor', band: null, userRole: 'mentor' },
+      { userId: await createTestUser('Classroom Student', 6), band: 6 },
+      { userId: await createTestUser('Classroom Mentor', null, 'mentor'), band: null },
       'mentor'
     );
     const detail = await getSessionDetail(session.sessionId);
@@ -642,8 +657,8 @@ test('student work list exposes completed sessions and public status', async (t)
   try {
     session = await createMatchedSession(
       'student-work-integration-room',
-      { displayName: 'Student Work A', band: 6.5, userRole: 'student' },
-      { displayName: 'Student Work Mentor', band: null, userRole: 'mentor' },
+      { userId: await createTestUser('Student Work A', 6.5), band: 6.5 },
+      { userId: await createTestUser('Student Work Mentor', null, 'mentor'), band: null },
       'mentor'
     );
     await markSessionActive(session.sessionId);
@@ -700,8 +715,8 @@ test('notifications are created for mentor reviews and classroom publishing', as
   try {
     session = await createMatchedSession(
       'notification-integration-room',
-      { displayName: 'Notification Student', band: 6, userRole: 'student' },
-      { displayName: 'Notification Mentor', band: null, userRole: 'mentor' },
+      { userId: await createTestUser('Notification Student', 6), band: 6 },
+      { userId: await createTestUser('Notification Mentor', null, 'mentor'), band: null },
       'mentor'
     );
     await markSessionActive(session.sessionId);

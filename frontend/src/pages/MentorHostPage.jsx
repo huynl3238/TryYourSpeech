@@ -2,13 +2,12 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import {
   closeMentorSession,
-  createIdentity,
   getMentorHostedSessions,
   getTopics,
   openMentorSession,
   startMentorSession,
 } from '../services/api';
-import { getIdentity, isMentor, saveIdentity } from '../utils/identity';
+import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../hooks/useSocket';
 import { useSession } from '../context/SessionContext';
 import MentorLearnerPage from './MentorLearnerPage';
@@ -49,120 +48,6 @@ function formatWait(appliedAt) {
   if (!appliedAt) return '';
   const minutes = Math.max(0, Math.round((Date.now() - new Date(appliedAt).getTime()) / 60000));
   return minutes === 0 ? 'vừa xong' : `chờ ${minutes} phút`;
-}
-
-// --- Account creation with a role step (teacher / student) ---
-// Shown only when there is no usable account on this device. Choosing "Giáo viên"
-// lands on session management; choosing "Học viên" goes to the learner page.
-function AccountSignIn({ onSignedIn, embedded }) {
-  const navigate = useNavigate();
-  const [role, setRole] = useState('mentor');
-  const [displayName, setDisplayName] = useState('');
-  const [band, setBand] = useState(role === 'mentor' ? 8 : 6);
-  const [error, setError] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-
-  function pickRole(next) {
-    setRole(next);
-    setBand(next === 'mentor' ? 8 : 6);
-  }
-
-  async function handleSubmit(event) {
-    event.preventDefault();
-    if (!displayName.trim()) {
-      setError('Vui lòng nhập tên hiển thị');
-      return;
-    }
-
-    setSubmitting(true);
-    setError('');
-    try {
-      const { user } = await createIdentity({
-        displayName: displayName.trim(),
-        band: Number(band),
-        userRole: role,
-      });
-      saveIdentity({
-        userId: user.id,
-        userRole: role,
-        displayName: user.displayName,
-        band: user.band,
-      });
-      if (role === 'student' && !embedded) {
-        navigate('/mentor');
-      } else {
-        // Embedded in the lobby: a fresh student identity surfaces the learner
-        // view in place (the parent re-renders) instead of leaving the lobby.
-        onSignedIn();
-      }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  const roles = [
-    { value: 'mentor', label: 'Giáo viên', icon: 'co_present', desc: 'Mở phiên, chọn học viên' },
-    { value: 'student', label: 'Học viên', icon: 'school', desc: 'Apply vào phiên mentor' },
-  ];
-
-  return (
-    <div className={embedded ? 'grid place-items-center py-10' : 'relative min-h-screen grid place-items-center bg-[#FAFAF8] p-6'}>
-      {!embedded && (
-        <Link to="/" className="absolute top-6 left-6 inline-flex items-center gap-1.5 h-10 px-4 rounded-xl border border-[#EAE7E3] bg-white text-[13.5px] font-semibold text-[#57534E] hover:border-[#EAC7B9] hover:text-[#8A4A33] hover:bg-[#FBF4EF] transition-colors">
-          <span className="material-symbols-rounded" style={{ fontSize: 18 }}>arrow_back</span>
-          Về trang chính
-        </Link>
-      )}
-      <form onSubmit={handleSubmit} className="w-full max-w-sm bg-white border border-[#EAE7E3] rounded-2xl shadow-sm p-6">
-        <h1 className="text-lg font-bold tracking-tight text-[#1C1917]">Tạo tài khoản</h1>
-        <p className="text-sm text-[#78716C] mt-1">Chọn vai trò và nhập thông tin để bắt đầu.</p>
-
-        <label className="block text-xs font-semibold text-[#57534E] mt-5 mb-2">Bạn là</label>
-        <div className="grid grid-cols-2 gap-2">
-          {roles.map((r) => (
-            <button
-              key={r.value}
-              type="button"
-              onClick={() => pickRole(r.value)}
-              className={`text-left p-3 rounded-xl border transition-colors ${role === r.value ? 'border-[#D97757] bg-[#F7ECE6]' : 'border-[#EAE7E3] hover:bg-[#F1EEEA]'}`}
-            >
-              <span className={`material-symbols-rounded ${role === r.value ? 'text-[#D97757]' : 'text-[#78716C]'}`} style={{ fontSize: 22 }}>{r.icon}</span>
-              <div className={`text-[13.5px] font-bold mt-1 ${role === r.value ? 'text-[#8A4A33]' : 'text-[#1C1917]'}`}>{r.label}</div>
-              <div className="text-[11px] text-[#A8A29E] mt-0.5">{r.desc}</div>
-            </button>
-          ))}
-        </div>
-
-        <label className="block text-xs font-semibold text-[#57534E] mt-4 mb-1.5">Tên hiển thị</label>
-        <input
-          value={displayName}
-          onChange={(e) => { setDisplayName(e.target.value); setError(''); }}
-          placeholder={role === 'mentor' ? 'Ví dụ: Cô Minh Anh' : 'Ví dụ: Nguyễn Lê Huy'}
-          maxLength={100}
-          autoFocus
-          className="w-full h-11 px-3 rounded-lg border border-[#EAE7E3] text-sm focus:outline-none focus:border-[#D97757] focus:ring-2 focus:ring-[#F7ECE6]"
-        />
-
-        <div className="flex items-center justify-between mt-4 mb-1.5">
-          <label className="text-xs font-semibold text-[#57534E]">Band của bạn</label>
-          <span className="text-sm font-bold text-[#D97757] tabular-nums">{Number(band).toFixed(1)}</span>
-        </div>
-        <input type="range" min="0" max="9" step="0.5" value={band} onChange={(e) => setBand(Number(e.target.value))} className="w-full accent-[#D97757]" />
-
-        {error && <p className="text-xs text-red-500 mt-3">{error}</p>}
-
-        <button
-          type="submit"
-          disabled={submitting}
-          className="w-full h-11 mt-5 rounded-xl text-white font-semibold text-sm bg-[#D97757] hover:brightness-105 disabled:opacity-60"
-        >
-          {submitting ? 'Đang tạo...' : role === 'mentor' ? 'Tạo & vào quản lý phiên' : 'Tạo & xem phiên mentor'}
-        </button>
-      </form>
-    </div>
-  );
 }
 
 // --- Create-session modal ---
@@ -275,7 +160,7 @@ function OpenSessionModal({ topics, onClose, onCreate, submitting }) {
 }
 
 export default function MentorHostPage({ embedded = false }) {
-  const [identity, setIdentity] = useState(() => getIdentity());
+  const { user, isMentor, isAdmin } = useAuth();
   const [sessions, setSessions] = useState([]);
   const [loadStatus, setLoadStatus] = useState('idle');
   const [error, setError] = useState('');
@@ -284,8 +169,10 @@ export default function MentorHostPage({ embedded = false }) {
   const [creating, setCreating] = useState(false);
   const [startingKey, setStartingKey] = useState(null);
 
-  const mentorReady = identity && isMentor();
-  const mentorId = identity?.userId;
+  // Hosting is a mentor privilege granted by an admin — it is no longer
+  // something the browser can decide for itself.
+  const mentorReady = isMentor || isAdmin;
+  const mentorId = user?.id;
 
   const navigate = useNavigate();
   const { joinMentorRoom } = useSocket();
@@ -349,7 +236,7 @@ export default function MentorHostPage({ embedded = false }) {
       const result = await startMentorSession({ mentorSessionId, mentorId, studentId });
       // Enter the realtime room; the chosen student joins from their side.
       if (result?.sessionId) {
-        joinMentorRoom(result.sessionId, mentorId);
+        joinMentorRoom(result.sessionId);
       }
       await loadSessions();
     } catch (err) {
@@ -370,18 +257,14 @@ export default function MentorHostPage({ embedded = false }) {
 
   function handleEnterStartedSession(session) {
     if (session?.sessionId && mentorId) {
-      joinMentorRoom(session.sessionId, mentorId);
+      joinMentorRoom(session.sessionId);
     }
   }
 
   if (!mentorReady) {
-    // A student account already exists → show the learner view instead of making
-    // them create a second account. Embedded keeps the lobby sidebar; the
-    // standalone route redirects as before.
-    if (identity && !isMentor()) {
-      return embedded ? <MentorLearnerPage embedded /> : <Navigate to="/mentor" replace />;
-    }
-    return <AccountSignIn embedded={embedded} onSignedIn={() => setIdentity(getIdentity())} />;
+    // Students see the learner view instead. Embedded keeps the lobby sidebar;
+    // the standalone route redirects as before.
+    return embedded ? <MentorLearnerPage embedded /> : <Navigate to="/mentor" replace />;
   }
 
   return (
@@ -397,7 +280,7 @@ export default function MentorHostPage({ embedded = false }) {
           <div>
             <div className="text-[11px] uppercase tracking-[0.1em] text-[#D97757] font-bold">Giảng dạy</div>
             <h1 className="text-2xl font-extrabold tracking-tight text-[#1C1917] mt-1">Phiên học của tôi</h1>
-            <p className="text-sm text-[#78716C] mt-1">Xin chào {identity.displayName}. Mở phiên, xem hàng chờ và chọn học viên để bắt đầu.</p>
+            <p className="text-sm text-[#78716C] mt-1">Xin chào {user?.displayName}. Mở phiên, xem hàng chờ và chọn học viên để bắt đầu.</p>
           </div>
           <button onClick={() => setModalOpen(true)} className="h-10 px-4 rounded-xl bg-[#D97757] text-white text-sm font-semibold hover:brightness-105 whitespace-nowrap">+ Mở phiên mới</button>
         </div>

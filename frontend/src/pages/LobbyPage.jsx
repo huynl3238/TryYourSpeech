@@ -41,14 +41,19 @@ import { startNotificationsRealtime, onNotification } from '../services/notifica
 import MentorLearnerPage from './MentorLearnerPage';
 import MentorHostPage from './MentorHostPage';
 
+// `mentorOnly` items call endpoints the API only allows for mentors/admins, so
+// showing them to a learner would just be a dead end ending in "Bạn không có
+// quyền". Hiding them is cosmetic — the server is what actually refuses.
 const NAV_ITEMS = [
-  { key: 'practice', label: 'Ghép cặp thực hành', icon: 'groups' },
+  // Peer matchmaking pairs learners with each other; the server refuses a
+  // mentor account in peer mode, so don't offer it to them.
+  { key: 'practice', label: 'Ghép cặp thực hành', icon: 'groups', studentOnly: true },
   { key: 'mentorLearner', label: 'Luyện với Mentor', icon: 'cast_for_education' },
-  { key: 'mentorHost', label: 'Phiên của Mentor', icon: 'co_present' },
+  { key: 'mentorHost', label: 'Phiên của Mentor', icon: 'co_present', mentorOnly: true },
   { key: 'classroom', label: 'Lớp học', icon: 'forum' },
   { key: 'history', label: 'Lịch sử luyện tập', icon: 'history' },
-  { key: 'topicBuilder', label: 'Quản lý bộ câu hỏi', icon: 'library_add' },
-  { key: 'teacherReviews', label: 'Bài học viên', icon: 'school' },
+  { key: 'topicBuilder', label: 'Quản lý bộ câu hỏi', icon: 'library_add', mentorOnly: true },
+  { key: 'teacherReviews', label: 'Bài học viên', icon: 'school', mentorOnly: true },
   { key: 'notifications', label: 'Thông báo', icon: 'notifications' },
 ];
 
@@ -475,13 +480,16 @@ function useUnreadNotifications(activeTab) {
 }
 
 function Sidebar({ activeTab, onChangeTab, open, onClose }) {
-  const { state } = useSession();
-  const identity = getIdentity() || {};
+  const { user, isMentor, isAdmin } = useAuth();
   const unreadNotifications = useUnreadNotifications(activeTab);
 
-  const displayName = state.displayName || identity.displayName || 'Khách';
-  const band = state.band ?? identity.band ?? null;
-  const role = (state.myUserRole || identity.userRole) === 'mentor' ? 'Mentor' : 'Học viên IELTS';
+  const displayName = user?.displayName || 'Khách';
+  const band = user?.band ?? null;
+  const role = isAdmin ? 'Quản trị viên' : isMentor ? 'Mentor' : 'Học viên IELTS';
+  const teaches = isMentor || isAdmin;
+  const navItems = NAV_ITEMS.filter((item) => (
+    (!item.mentorOnly || teaches) && (!item.studentOnly || !teaches)
+  ));
 
   return (
     <aside className={`app-sidebar ${open ? 'app-sidebar-open' : ''}`}>
@@ -504,7 +512,7 @@ function Sidebar({ activeTab, onChangeTab, open, onClose }) {
       </div>
 
       <nav className="app-nav">
-        {NAV_ITEMS.map((item) => (
+        {navItems.map((item) => (
           <button
             key={item.key}
             type="button"
@@ -734,14 +742,12 @@ function DeviceCheckModal({ onClose }) {
 
 function PracticePanel({
   displayName,
-  setDisplayName,
   band,
   setBand,
-  nameError,
-  setNameError,
   isSearching,
   onSubmit,
   onCancel,
+  onEditProfile,
 }) {
   const [checkOpen, setCheckOpen] = useState(false);
 
@@ -783,19 +789,20 @@ function PracticePanel({
           </div>
 
           <form onSubmit={onSubmit} className="flex flex-col items-center gap-4">
-            {/* Name */}
-            <div className="w-[min(360px,90vw)]">
-              <Input
-                id="display-name"
-                type="text"
-                placeholder="Nhập tên hiển thị của bạn"
-                value={displayName}
-                onChange={(e) => { setDisplayName(e.target.value); setNameError(''); }}
-                autoFocus
-                maxLength={100}
-                className={`text-center ${nameError ? 'border-red-400 focus-visible:ring-red-400' : ''}`}
-              />
-              {nameError && <p className="text-xs text-red-500 text-center mt-1.5">{nameError}</p>}
+            {/* Name — comes from the signed-in account, not a free-text field:
+                your partner sees who you actually are. */}
+            <div className="flex flex-col items-center gap-1">
+              <span className="text-[11px] uppercase tracking-[0.09em] text-[#A8A29E] font-bold">Bạn luyện với tên</span>
+              <div className="inline-flex items-center gap-2 text-[15px] font-bold text-[#1C1917]">
+                {displayName || 'Chưa đặt tên'}
+                <button
+                  type="button"
+                  onClick={onEditProfile}
+                  className="text-[12px] font-semibold text-[#8A4A33] underline underline-offset-2 hover:text-[#D97757]"
+                >
+                  Đổi tên
+                </button>
+              </div>
             </div>
 
             {/* Band dial */}
@@ -1702,8 +1709,11 @@ function UserHistoryPanel() {
   );
 }
 
+// The signed-in account id. Named "stored" for historical reasons — it used to
+// read a device id out of localStorage, which is exactly the identity the app
+// no longer has.
 function getStoredCurrentUserId() {
-  return localStorage.getItem('tryYourSpeech.currentUserId');
+  return getIdentity()?.userId || null;
 }
 
 function formatHistoryDate(value) {
@@ -3498,8 +3508,9 @@ function formatBand(value) {
 }
 
 function ProfilePanelReal() {
-  const { state, dispatch } = useSession();
-  const currentUserId = state.userId || getStoredCurrentUserId();
+  const { dispatch } = useSession();
+  const { user: account, applyUserUpdate } = useAuth();
+  const currentUserId = account?.id || null;
   const [profile, setProfile] = useState(null);
   const [loadStatus, setLoadStatus] = useState('idle');
   const [loadError, setLoadError] = useState('');
@@ -3559,6 +3570,12 @@ function ProfilePanelReal() {
       });
 
       setProfile(updatedProfile);
+      // Keep the account (sidebar, lobby, matchmaking name) in step with the
+      // profile the user just saved.
+      applyUserUpdate({
+        displayName: updatedProfile.user.displayName,
+        band: updatedProfile.user.band,
+      });
       dispatch({
         type: 'SET_USER',
         payload: {
@@ -3735,11 +3752,11 @@ function ProfilePanelReal() {
 }
 
 export default function LobbyPage() {
-  const [activeTab, setActiveTab] = useState('practice');
+  const { user, isMentor, isAdmin } = useAuth();
+  // Mentors have no peer-matchmaking tab, so they land on their own sessions.
+  const [activeTab, setActiveTab] = useState(isMentor || isAdmin ? 'mentorHost' : 'practice');
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [displayName, setDisplayName] = useState('');
-  const [band, setBand] = useState(5);
-  const [nameError, setNameError] = useState('');
+  const [band, setBand] = useState(user?.band ?? 5);
   const { state, dispatch, refs } = useSession();
   const { findMatch, cancelMatch } = useSocket();
   const navigate = useNavigate();
@@ -3759,19 +3776,12 @@ export default function LobbyPage() {
     }
   }, [isMatched, navigate]);
 
+  // The name is whatever the account says; the server uses its own copy anyway.
+  const displayName = user?.displayName || '';
+
   function handleSubmit(e) {
     e.preventDefault();
-    const name = displayName.trim();
-    if (!name) {
-      setNameError('Vui lòng nhập tên hiển thị');
-      return;
-    }
-    if (name.length > 100) {
-      setNameError('Tên không được vượt quá 100 ký tự');
-      return;
-    }
-    setNameError('');
-    findMatch(name, band);
+    findMatch(displayName, band);
   }
 
   if (state.error?.type === 'match_error') {
@@ -3833,14 +3843,12 @@ export default function LobbyPage() {
         {activeTab === 'practice' && (
           <PracticePanel
             displayName={displayName}
-            setDisplayName={setDisplayName}
             band={band}
             setBand={setBand}
-            nameError={nameError}
-            setNameError={setNameError}
             isSearching={isSearching}
             onSubmit={handleSubmit}
             onCancel={cancelMatch}
+            onEditProfile={() => setActiveTab('profile')}
           />
         )}
         {activeTab === 'mentorLearner' && <MentorLearnerPage embedded />}

@@ -70,3 +70,22 @@ export function requireRole(...roles) {
     next();
   };
 }
+
+// For routes whose path carries the user id (/users/:userId/...). The id in the
+// URL is a routing detail, not proof of anything, so it must match the signed-in
+// caller. Admins are allowed through for support work.
+export function requireSelfParam(paramName = 'userId') {
+  return (req, res, next) => {
+    if (!req.user) {
+      res.status(401).json({ error: 'Bạn cần đăng nhập để thực hiện thao tác này' });
+      return;
+    }
+
+    if (req.params[paramName] !== req.user.id && req.user.userRole !== 'admin') {
+      res.status(403).json({ error: 'Bạn không có quyền xem dữ liệu của người khác' });
+      return;
+    }
+
+    next();
+  };
+}

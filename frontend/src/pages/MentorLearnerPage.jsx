@@ -2,11 +2,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   applyToMentorSession,
-  createIdentity,
   getMentorSessions,
   leaveMentorSession,
 } from '../services/api';
-import { getIdentity, saveIdentity } from '../utils/identity';
+import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../hooks/useSocket';
 import { useSession } from '../context/SessionContext';
 
@@ -17,86 +16,6 @@ function initials(name) {
 }
 
 const FOCUS_ESTIMATE = { part1: '4–5 phút', part2: '3–4 phút', part3: '4–5 phút', full: '11–14 phút' };
-
-// --- Student sign-in (only when there is no identity on this device) ---
-function StudentSignIn({ onSignedIn, embedded }) {
-  const [displayName, setDisplayName] = useState('');
-  const [band, setBand] = useState(6);
-  const [error, setError] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-
-  async function handleSubmit(event) {
-    event.preventDefault();
-    if (!displayName.trim()) {
-      setError('Vui lòng nhập tên hiển thị');
-      return;
-    }
-
-    setSubmitting(true);
-    setError('');
-    try {
-      const { user } = await createIdentity({
-        displayName: displayName.trim(),
-        band: Number(band),
-        userRole: 'student',
-      });
-      saveIdentity({
-        userId: user.id,
-        userRole: 'student',
-        displayName: user.displayName,
-        band: user.band,
-      });
-      onSignedIn();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  const form = (
-    <form onSubmit={handleSubmit} className="w-full max-w-sm bg-white border border-[#EAE7E3] rounded-2xl shadow-sm p-6">
-      <h1 className="text-lg font-bold tracking-tight text-[#1C1917]">Vào với tư cách Học viên</h1>
-      <p className="text-sm text-[#78716C] mt-1">Tạo danh tính để apply vào phiên học của mentor.</p>
-
-      <label className="block text-xs font-semibold text-[#57534E] mt-5 mb-1.5">Tên hiển thị</label>
-      <input
-        value={displayName}
-        onChange={(e) => { setDisplayName(e.target.value); setError(''); }}
-        placeholder="Ví dụ: Nguyễn Lê Huy"
-        maxLength={100}
-        autoFocus
-        className="w-full h-10 px-3 rounded-lg border border-[#EAE7E3] text-sm focus:outline-none focus:border-[#D97757] focus:ring-2 focus:ring-[#F7ECE6]"
-      />
-
-      <div className="flex items-center justify-between mt-4 mb-1.5">
-        <label className="text-xs font-semibold text-[#57534E]">Band của bạn</label>
-        <span className="text-sm font-bold text-[#D97757] tabular-nums">{Number(band).toFixed(1)}</span>
-      </div>
-      <input type="range" min="0" max="9" step="0.5" value={band} onChange={(e) => setBand(Number(e.target.value))} className="w-full accent-[#D97757]" />
-
-      {error && <p className="text-xs text-red-500 mt-3">{error}</p>}
-
-      <button type="submit" disabled={submitting} className="w-full h-11 mt-5 rounded-xl text-white font-semibold text-sm bg-[#D97757] hover:brightness-105 disabled:opacity-60">
-        {submitting ? 'Đang tạo...' : 'Tiếp tục'}
-      </button>
-    </form>
-  );
-
-  if (embedded) {
-    return <div className="grid place-items-center py-10">{form}</div>;
-  }
-
-  return (
-    <div className="relative min-h-screen grid place-items-center bg-[#FAFAF8] p-6">
-      <Link to="/" className="absolute top-6 left-6 inline-flex items-center gap-1.5 h-10 px-4 rounded-xl border border-[#EAE7E3] bg-white text-[13.5px] font-semibold text-[#57534E] hover:border-[#EAC7B9] hover:text-[#8A4A33] hover:bg-[#FBF4EF] transition-colors">
-        <span className="material-symbols-rounded" style={{ fontSize: 18 }}>arrow_back</span>
-        Về trang chính
-      </Link>
-      {form}
-    </div>
-  );
-}
 
 function SessionCard({ session, busy, onApply, onLeave, onEnter }) {
   const open = session.status === 'open';
@@ -180,13 +99,13 @@ function SessionCard({ session, busy, onApply, onLeave, onEnter }) {
 }
 
 export default function MentorLearnerPage({ embedded = false }) {
-  const [identity, setIdentity] = useState(() => getIdentity());
+  const { user } = useAuth();
   const [sessions, setSessions] = useState([]);
   const [loadStatus, setLoadStatus] = useState('idle');
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState(null);
 
-  const studentId = identity?.userId;
+  const studentId = user?.id;
 
   const navigate = useNavigate();
   const { joinMentorRoom } = useSocket();
@@ -206,7 +125,7 @@ export default function MentorLearnerPage({ embedded = false }) {
 
   function handleEnter(session) {
     if (session?.sessionId && studentId) {
-      joinMentorRoom(session.sessionId, studentId);
+      joinMentorRoom(session.sessionId);
     }
   }
 
@@ -254,10 +173,6 @@ export default function MentorLearnerPage({ embedded = false }) {
     } finally {
       setBusyId(null);
     }
-  }
-
-  if (!identity) {
-    return <StudentSignIn embedded={embedded} onSignedIn={() => setIdentity(getIdentity())} />;
   }
 
   const heading = (

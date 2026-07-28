@@ -106,13 +106,15 @@ export function useSocket() {
     };
   }, [dispatch, refs]);
 
+  // The server takes the name and role from the signed-in account behind the
+  // handshake; band is the only thing this side still gets to choose.
   const findMatch = useCallback((displayName, band) => {
     dispatch({ type: 'SET_USER', payload: { displayName, band } });
     if (socket.connected) {
       socket.disconnect();
     }
     socket.connect();
-    socket.emit('find_match', { displayName, band });
+    socket.emit('find_match', { band });
   }, [dispatch]);
 
   const cancelMatch = useCallback(() => {
@@ -122,11 +124,11 @@ export function useSocket() {
 
   // Join the realtime room for a mentor session already created via REST.
   // Both the mentor and the chosen student call this; the server pairs them.
-  const joinMentorRoom = useCallback((sessionId, userId) => {
+  const joinMentorRoom = useCallback((sessionId) => {
     if (!socket.connected) {
       socket.connect();
     }
-    socket.emit('join_mentor_room', { sessionId, userId });
+    socket.emit('join_mentor_room', { sessionId });
   }, []);
 
   const sendSignal = useCallback((type, payload) => {

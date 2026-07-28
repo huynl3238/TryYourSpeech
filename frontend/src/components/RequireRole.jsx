@@ -28,7 +28,11 @@ export function RequireRole({ roles, children }) {
             <span className="material-symbols-rounded" style={{ fontSize: 28 }}>lock</span>
           </div>
           <h1 className="text-lg font-bold text-[#1C1917]">Không có quyền truy cập</h1>
-          <p className="text-sm text-[#78716C] mt-1.5">Trang này chỉ dành cho quản trị viên.</p>
+          <p className="text-sm text-[#78716C] mt-1.5">
+            {roles.includes('admin') && !roles.includes('mentor')
+              ? 'Trang này chỉ dành cho quản trị viên.'
+              : 'Trang này chỉ dành cho mentor. Quyền mentor do quản trị viên cấp.'}
+          </p>
           <a href="/" className="inline-block mt-6 h-11 px-6 leading-[44px] rounded-xl bg-[#D97757] text-white font-semibold text-sm hover:brightness-105">
             Về trang chính
           </a>

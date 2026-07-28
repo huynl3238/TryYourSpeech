@@ -57,11 +57,15 @@ test('emitToUser does not deliver to an unknown or disconnected user', () => {
   assert.equal(delivered.length, 0);
 });
 
-test('identify handler wires a socket so emitToUser reaches it', () => {
+// The socket is bound to its user at handshake time now, so simply connecting
+// is enough to receive that user's notifications — there is no 'identify' event
+// a client could use to subscribe to somebody else's feed.
+test('a connected socket receives its own user notifications', () => {
   const { io, delivered } = createRecordingIo();
   const handlers = {};
   const socket = {
     id: 'sock-identify',
+    data: { user: { id: 'user-d', displayName: 'D', band: 6, userRole: 'student' } },
     on(event, handler) {
       handlers[event] = handler;
     },
@@ -70,6 +74,7 @@ test('identify handler wires a socket so emitToUser reaches it', () => {
   // Drive a single connection through setupSocket, then re-point the notifier
   // at our recording io (setupSocket also calls setIo internally).
   setupSocket({
+    use() {},
     on(event, handler) {
       if (event === 'connection') handler(socket);
     },
@@ -79,7 +84,6 @@ test('identify handler wires a socket so emitToUser reaches it', () => {
   });
   setIo(io);
 
-  handlers.identify({ userId: 'user-d' });
   emitToUser('user-d', 'notification:new', { title: 'ping' });
 
   const hit = delivered.find((d) => d.socketId === 'sock-identify' && d.event === 'notification:new');

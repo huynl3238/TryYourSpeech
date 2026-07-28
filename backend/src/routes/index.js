@@ -12,7 +12,7 @@ import { getResultsForUser, retryFailedResults } from '../models/resultsModel.js
 import { getSessionDetail } from '../models/sessionModel.js';
 import { saveMentorReview } from '../models/mentorReviewModel.js';
 import { getPracticeHistoryForUser } from '../models/practiceHistoryModel.js';
-import { createIdentity, getUserProfile, updateUserProfile } from '../models/userProfileModel.js';
+import { getUserProfile, updateUserProfile } from '../models/userProfileModel.js';
 import { getAiConfigStatus } from '../models/aiPipelineModel.js';
 import {
   createQuestion,
@@ -53,7 +53,7 @@ import { convertWebmToWav } from '../services/audioConversion.js';
 import { getAdminStats } from '../models/adminStatsModel.js';
 import { getLiveStats } from '../socket/index.js';
 import { getAuthConfigStatus } from '../config/auth.js';
-import { requireRole } from '../middleware/auth.js';
+import { requireAuth, requireRole, requireSelfParam } from '../middleware/auth.js';
 
 const router = Router();
 const uploadsDirectory = fileURLToPath(new URL('../../uploads', import.meta.url));
@@ -236,6 +236,17 @@ async function restorePreviousFile(destinationPath, replacement) {
   }
 }
 
+// A session belongs to exactly two people. Admins are let through so they can
+// investigate a report without having to be in the room.
+function isSessionParticipant(sessionDetail, user) {
+  if (user.userRole === 'admin') {
+    return true;
+  }
+
+  return sessionDetail.session.userAId === user.id
+    || sessionDetail.session.userBId === user.id;
+}
+
 function getIceServers() {
   try {
     const configuredIceServers = JSON.parse(process.env.ICE_SERVERS || '[]');
@@ -296,7 +307,7 @@ router.get('/admin/stats', requireRole('admin'), async (_req, res) => {
   }
 });
 
-router.get('/sessions/:sessionId', async (req, res) => {
+router.get('/sessions/:sessionId', requireAuth, async (req, res) => {
   try {
     requireUuid(req.params.sessionId, 'sessionId');
     res.set('Cache-Control', 'no-store');
@@ -305,6 +316,11 @@ router.get('/sessions/:sessionId', async (req, res) => {
 
     if (!sessionDetail) {
       res.status(404).json({ error: 'Không tìm thấy phiên luyện tập' });
+      return;
+    }
+
+    if (!isSessionParticipant(sessionDetail, req.user)) {
+      res.status(403).json({ error: 'Bạn không tham gia phiên luyện tập này' });
       return;
     }
 
@@ -320,7 +336,7 @@ router.get('/sessions/:sessionId', async (req, res) => {
   }
 });
 
-router.get('/users/:userId/practice-history', async (req, res) => {
+router.get('/users/:userId/practice-history', requireSelfParam(), async (req, res) => {
   try {
     requireUuid(req.params.userId, 'userId');
     res.set('Cache-Control', 'no-store');
@@ -355,20 +371,12 @@ router.get('/users/:userId/practice-history', async (req, res) => {
   }
 });
 
-router.post('/users', async (req, res) => {
-  try {
-    requireRequestObject(req.body);
-    requireNonEmptyString(req.body.displayName, 'displayName');
+// POST /users is gone on purpose. It used to mint a users row from whatever the
+// browser sent — including user_role — so anyone could make themselves a mentor
+// with a single request. Accounts now come from Google sign-in only, and the
+// role is granted by an admin.
 
-    const result = await createIdentity(req.body);
-    res.status(201).json(result);
-  } catch (err) {
-    console.warn('Failed to create identity:', err.message);
-    res.status(400).json({ error: err.message });
-  }
-});
-
-router.get('/users/:userId/profile', async (req, res) => {
+router.get('/users/:userId/profile', requireSelfParam(), async (req, res) => {
   try {
     requireUuid(req.params.userId, 'userId');
     res.set('Cache-Control', 'no-store');
@@ -392,7 +400,7 @@ router.get('/users/:userId/profile', async (req, res) => {
   }
 });
 
-router.get('/users/:userId/notifications', async (req, res) => {
+router.get('/users/:userId/notifications', requireSelfParam(), async (req, res) => {
   try {
     requireUuid(req.params.userId, 'userId');
     const limit = req.query.limit === undefined
@@ -426,7 +434,7 @@ router.get('/users/:userId/notifications', async (req, res) => {
   }
 });
 
-router.patch('/users/:userId/notifications/:notificationId/read', async (req, res) => {
+router.patch('/users/:userId/notifications/:notificationId/read', requireSelfParam(), async (req, res) => {
   try {
     requireUuid(req.params.userId, 'userId');
     requireUuid(req.params.notificationId, 'notificationId');
@@ -448,7 +456,7 @@ router.patch('/users/:userId/notifications/:notificationId/read', async (req, re
   }
 });
 
-router.patch('/users/:userId/notifications/read-all', async (req, res) => {
+router.patch('/users/:userId/notifications/read-all', requireSelfParam(), async (req, res) => {
   try {
     requireUuid(req.params.userId, 'userId');
     const result = await markAllNotificationsRead(req.params.userId);
@@ -459,7 +467,7 @@ router.patch('/users/:userId/notifications/read-all', async (req, res) => {
   }
 });
 
-router.patch('/users/:userId/profile', async (req, res) => {
+router.patch('/users/:userId/profile', requireSelfParam(), async (req, res) => {
   try {
     requireUuid(req.params.userId, 'userId');
     requireRequestObject(req.body);
@@ -488,12 +496,13 @@ router.patch('/users/:userId/profile', async (req, res) => {
   }
 });
 
-router.get('/topics', async (req, res) => {
+router.get('/topics', requireAuth, async (req, res) => {
   try {
     res.set('Cache-Control', 'no-store');
-    const ownerId = typeof req.query.ownerId === 'string' && req.query.ownerId.trim()
-      ? req.query.ownerId.trim()
-      : null;
+    // ownerId decides whether private mentor sets are included, so it can only
+    // ever mean "me" — taking it from the query string would let anyone read
+    // another mentor's private question sets.
+    const ownerId = req.query.ownerId === undefined ? null : req.user.id;
     const result = await listTopics({ ownerId });
     res.json(result);
   } catch (err) {
@@ -502,13 +511,18 @@ router.get('/topics', async (req, res) => {
   }
 });
 
-router.post('/topics', async (req, res) => {
+router.post('/topics', requireRole('mentor', 'admin'), async (req, res) => {
   try {
     requireRequestObject(req.body);
     requireNonEmptyString(req.body.name, 'name');
-    requireUuid(req.body.actorUserId, 'actorUserId');
 
-    const result = await createTopic(req.body);
+    // A private question set can only be owned by its creator, so any ownerId
+    // the client sent is replaced with the caller; absent means a system set.
+    const result = await createTopic({
+      ...req.body,
+      actorUserId: req.user.id,
+      ownerId: req.body.ownerId ? req.user.id : null,
+    });
     res.status(201).json(result);
   } catch (err) {
     console.warn('Failed to create topic:', err.message);
@@ -516,7 +530,7 @@ router.post('/topics', async (req, res) => {
   }
 });
 
-router.get('/topics/:topicId', async (req, res) => {
+router.get('/topics/:topicId', requireAuth, async (req, res) => {
   try {
     requireUuid(req.params.topicId, 'topicId');
     res.set('Cache-Control', 'no-store');
@@ -535,16 +549,16 @@ router.get('/topics/:topicId', async (req, res) => {
   }
 });
 
-router.patch('/topics/:topicId', async (req, res) => {
+router.patch('/topics/:topicId', requireRole('mentor', 'admin'), async (req, res) => {
   try {
     requireUuid(req.params.topicId, 'topicId');
     requireRequestObject(req.body);
     requireNonEmptyString(req.body.name, 'name');
-    requireUuid(req.body.actorUserId, 'actorUserId');
 
     const result = await updateTopic({
       topicId: req.params.topicId,
       ...req.body,
+      actorUserId: req.user.id,
     });
 
     if (!result) {
@@ -559,12 +573,11 @@ router.patch('/topics/:topicId', async (req, res) => {
   }
 });
 
-router.delete('/topics/:topicId', async (req, res) => {
+router.delete('/topics/:topicId', requireRole('mentor', 'admin'), async (req, res) => {
   try {
     requireUuid(req.params.topicId, 'topicId');
-    requireUuid(req.query.actorUserId, 'actorUserId');
     const result = await deleteTopic(req.params.topicId, {
-      actorUserId: req.query.actorUserId,
+      actorUserId: req.user.id,
     });
     res.json(result);
   } catch (err) {
@@ -578,16 +591,16 @@ router.delete('/topics/:topicId', async (req, res) => {
   }
 });
 
-router.post('/topics/:topicId/questions', async (req, res) => {
+router.post('/topics/:topicId/questions', requireRole('mentor', 'admin'), async (req, res) => {
   try {
     requireUuid(req.params.topicId, 'topicId');
     requireRequestObject(req.body);
     requireNonEmptyString(req.body.questionText, 'questionText');
-    requireUuid(req.body.actorUserId, 'actorUserId');
 
     const result = await createQuestion({
       topicId: req.params.topicId,
       ...req.body,
+      actorUserId: req.user.id,
     });
 
     res.status(201).json(result);
@@ -602,16 +615,16 @@ router.post('/topics/:topicId/questions', async (req, res) => {
   }
 });
 
-router.patch('/questions/:questionId', async (req, res) => {
+router.patch('/questions/:questionId', requireRole('mentor', 'admin'), async (req, res) => {
   try {
     requireUuid(req.params.questionId, 'questionId');
     requireRequestObject(req.body);
     requireNonEmptyString(req.body.questionText, 'questionText');
-    requireUuid(req.body.actorUserId, 'actorUserId');
 
     const result = await updateQuestion({
       questionId: req.params.questionId,
       ...req.body,
+      actorUserId: req.user.id,
     });
 
     if (!result) {
@@ -626,12 +639,11 @@ router.patch('/questions/:questionId', async (req, res) => {
   }
 });
 
-router.delete('/questions/:questionId', async (req, res) => {
+router.delete('/questions/:questionId', requireRole('mentor', 'admin'), async (req, res) => {
   try {
     requireUuid(req.params.questionId, 'questionId');
-    requireUuid(req.query.actorUserId, 'actorUserId');
     const result = await deleteQuestion(req.params.questionId, {
-      actorUserId: req.query.actorUserId,
+      actorUserId: req.user.id,
     });
 
     if (!result) {
@@ -646,14 +658,11 @@ router.delete('/questions/:questionId', async (req, res) => {
   }
 });
 
-router.get('/classroom/posts', async (_req, res) => {
+router.get('/classroom/posts', requireAuth, async (req, res) => {
   try {
-    if (_req.query.userId !== undefined) {
-      requireUuid(_req.query.userId, 'userId');
-    }
-
     res.set('Cache-Control', 'no-store');
-    const result = await listClassroomPosts({ userId: _req.query.userId || null });
+    // userId only decides which posts show as liked/saved by the viewer.
+    const result = await listClassroomPosts({ userId: req.user.id });
     res.json(result);
   } catch (err) {
     console.warn('Failed to list classroom posts:', err.message);
@@ -666,7 +675,7 @@ router.get('/classroom/posts', async (_req, res) => {
   }
 });
 
-router.get('/teacher/student-work', async (req, res) => {
+router.get('/teacher/student-work', requireRole('mentor', 'admin'), async (req, res) => {
   try {
     const limit = req.query.limit === undefined
       ? 50
@@ -685,16 +694,12 @@ router.get('/teacher/student-work', async (req, res) => {
   }
 });
 
-router.get('/classroom/posts/:postId', async (req, res) => {
+router.get('/classroom/posts/:postId', requireAuth, async (req, res) => {
   try {
     requireUuid(req.params.postId, 'postId');
-    if (req.query.userId !== undefined) {
-      requireUuid(req.query.userId, 'userId');
-    }
-
     res.set('Cache-Control', 'no-store');
 
-    const result = await getClassroomPost(req.params.postId, { userId: req.query.userId || null });
+    const result = await getClassroomPost(req.params.postId, { userId: req.user.id });
     if (!result) {
       res.status(404).json({ error: 'Classroom post not found' });
       return;
@@ -707,14 +712,13 @@ router.get('/classroom/posts/:postId', async (req, res) => {
   }
 });
 
-router.post('/classroom/posts', async (req, res) => {
+router.post('/classroom/posts', requireAuth, async (req, res) => {
   try {
     requireRequestObject(req.body);
     requireUuid(req.body.sessionId, 'sessionId');
-    requireUuid(req.body.userId, 'userId');
     requireNonEmptyString(req.body.title, 'title');
 
-    const result = await publishClassroomPost(req.body);
+    const result = await publishClassroomPost({ ...req.body, userId: req.user.id });
     res.status(201).json(result);
   } catch (err) {
     console.warn('Failed to publish classroom post:', err.message);
@@ -727,16 +731,15 @@ router.post('/classroom/posts', async (req, res) => {
   }
 });
 
-router.post('/classroom/posts/:postId/comments', async (req, res) => {
+router.post('/classroom/posts/:postId/comments', requireAuth, async (req, res) => {
   try {
     requireUuid(req.params.postId, 'postId');
     requireRequestObject(req.body);
-    requireUuid(req.body.userId, 'userId');
     requireNonEmptyString(req.body.commentText, 'commentText');
 
     const result = await addClassroomComment({
       postId: req.params.postId,
-      userId: req.body.userId,
+      userId: req.user.id,
       commentText: req.body.commentText,
     });
 
@@ -752,15 +755,13 @@ router.post('/classroom/posts/:postId/comments', async (req, res) => {
   }
 });
 
-router.post('/classroom/posts/:postId/like', async (req, res) => {
+router.post('/classroom/posts/:postId/like', requireAuth, async (req, res) => {
   try {
     requireUuid(req.params.postId, 'postId');
-    requireRequestObject(req.body);
-    requireUuid(req.body.userId, 'userId');
 
     const result = await toggleClassroomLike({
       postId: req.params.postId,
-      userId: req.body.userId,
+      userId: req.user.id,
     });
 
     res.json(result);
@@ -775,15 +776,13 @@ router.post('/classroom/posts/:postId/like', async (req, res) => {
   }
 });
 
-router.post('/classroom/posts/:postId/save', async (req, res) => {
+router.post('/classroom/posts/:postId/save', requireAuth, async (req, res) => {
   try {
     requireUuid(req.params.postId, 'postId');
-    requireRequestObject(req.body);
-    requireUuid(req.body.userId, 'userId');
 
     const result = await toggleClassroomSave({
       postId: req.params.postId,
-      userId: req.body.userId,
+      userId: req.user.id,
     });
 
     res.json(result);
@@ -799,12 +798,11 @@ router.post('/classroom/posts/:postId/save', async (req, res) => {
 });
 
 // --- Mentor-led sessions -------------------------------------------------
-router.post('/mentor-sessions', async (req, res) => {
+router.post('/mentor-sessions', requireRole('mentor', 'admin'), async (req, res) => {
   try {
     requireRequestObject(req.body);
-    requireUuid(req.body.mentorId, 'mentorId');
 
-    const result = await openMentorSession(req.body);
+    const result = await openMentorSession({ ...req.body, mentorId: req.user.id });
     res.status(201).json(result);
   } catch (err) {
     console.warn('Failed to open mentor session:', err.message);
@@ -816,14 +814,10 @@ router.post('/mentor-sessions', async (req, res) => {
   }
 });
 
-router.get('/mentor-sessions', async (req, res) => {
+router.get('/mentor-sessions', requireAuth, async (req, res) => {
   try {
-    const studentId = req.query.studentId;
-    if (studentId !== undefined) {
-      requireUuid(studentId, 'studentId');
-    }
-
-    const result = await listOpenMentorSessions({ studentId: studentId || null });
+    // studentId only marks which open sessions the viewer already applied to.
+    const result = await listOpenMentorSessions({ studentId: req.user.id });
     res.json(result);
   } catch (err) {
     console.warn('Failed to list mentor sessions:', err.message);
@@ -831,7 +825,7 @@ router.get('/mentor-sessions', async (req, res) => {
   }
 });
 
-router.get('/mentors/:mentorId/sessions', async (req, res) => {
+router.get('/mentors/:mentorId/sessions', requireSelfParam('mentorId'), async (req, res) => {
   try {
     requireUuid(req.params.mentorId, 'mentorId');
 
@@ -843,15 +837,13 @@ router.get('/mentors/:mentorId/sessions', async (req, res) => {
   }
 });
 
-router.post('/mentor-sessions/:mentorSessionId/apply', async (req, res) => {
+router.post('/mentor-sessions/:mentorSessionId/apply', requireAuth, async (req, res) => {
   try {
     requireUuid(req.params.mentorSessionId, 'mentorSessionId');
-    requireRequestObject(req.body);
-    requireUuid(req.body.studentId, 'studentId');
 
     const result = await applyToMentorSession({
       mentorSessionId: req.params.mentorSessionId,
-      studentId: req.body.studentId,
+      studentId: req.user.id,
     });
     res.status(201).json(result);
   } catch (err) {
@@ -864,15 +856,13 @@ router.post('/mentor-sessions/:mentorSessionId/apply', async (req, res) => {
   }
 });
 
-router.post('/mentor-sessions/:mentorSessionId/leave', async (req, res) => {
+router.post('/mentor-sessions/:mentorSessionId/leave', requireAuth, async (req, res) => {
   try {
     requireUuid(req.params.mentorSessionId, 'mentorSessionId');
-    requireRequestObject(req.body);
-    requireUuid(req.body.studentId, 'studentId');
 
     const result = await leaveMentorSession({
       mentorSessionId: req.params.mentorSessionId,
-      studentId: req.body.studentId,
+      studentId: req.user.id,
     });
     res.json(result);
   } catch (err) {
@@ -881,16 +871,18 @@ router.post('/mentor-sessions/:mentorSessionId/leave', async (req, res) => {
   }
 });
 
-router.post('/mentor-sessions/:mentorSessionId/start', async (req, res) => {
+// studentId stays a body field here: the mentor is picking which applicant to
+// take. The model verifies the session belongs to this mentor and that the
+// student actually applied.
+router.post('/mentor-sessions/:mentorSessionId/start', requireRole('mentor', 'admin'), async (req, res) => {
   try {
     requireUuid(req.params.mentorSessionId, 'mentorSessionId');
     requireRequestObject(req.body);
-    requireUuid(req.body.mentorId, 'mentorId');
     requireUuid(req.body.studentId, 'studentId');
 
     const result = await chooseApplicantAndStart({
       mentorSessionId: req.params.mentorSessionId,
-      mentorId: req.body.mentorId,
+      mentorId: req.user.id,
       studentId: req.body.studentId,
     });
     res.status(201).json(result);
@@ -904,15 +896,13 @@ router.post('/mentor-sessions/:mentorSessionId/start', async (req, res) => {
   }
 });
 
-router.post('/mentor-sessions/:mentorSessionId/close', async (req, res) => {
+router.post('/mentor-sessions/:mentorSessionId/close', requireRole('mentor', 'admin'), async (req, res) => {
   try {
     requireUuid(req.params.mentorSessionId, 'mentorSessionId');
-    requireRequestObject(req.body);
-    requireUuid(req.body.mentorId, 'mentorId');
 
     const result = await closeMentorSession({
       mentorSessionId: req.params.mentorSessionId,
-      mentorId: req.body.mentorId,
+      mentorId: req.user.id,
     });
     res.json(result);
   } catch (err) {
@@ -921,15 +911,15 @@ router.post('/mentor-sessions/:mentorSessionId/close', async (req, res) => {
   }
 });
 
-router.post('/classroom/posts/:postId/approve', async (req, res) => {
+// Approving is done by the practice partner whose voice is in the recording,
+// not by a mentor — the model scopes the lookup to approver_id.
+router.post('/classroom/posts/:postId/approve', requireAuth, async (req, res) => {
   try {
     requireUuid(req.params.postId, 'postId');
-    requireRequestObject(req.body);
-    requireUuid(req.body.userId, 'userId');
 
     const result = await approveClassroomPost({
       postId: req.params.postId,
-      userId: req.body.userId,
+      userId: req.user.id,
     });
     res.json(result);
   } catch (err) {
@@ -942,15 +932,13 @@ router.post('/classroom/posts/:postId/approve', async (req, res) => {
   }
 });
 
-router.post('/classroom/posts/:postId/decline', async (req, res) => {
+router.post('/classroom/posts/:postId/decline', requireAuth, async (req, res) => {
   try {
     requireUuid(req.params.postId, 'postId');
-    requireRequestObject(req.body);
-    requireUuid(req.body.userId, 'userId');
 
     const result = await declineClassroomPost({
       postId: req.params.postId,
-      userId: req.body.userId,
+      userId: req.user.id,
     });
     res.json(result);
   } catch (err) {
@@ -963,14 +951,13 @@ router.post('/classroom/posts/:postId/decline', async (req, res) => {
   }
 });
 
-router.get('/results/:sessionId', async (req, res) => {
+router.get('/results/:sessionId', requireAuth, async (req, res) => {
   try {
     requireUuid(req.params.sessionId, 'sessionId');
-    requireUuid(req.query.userId, 'userId');
 
     const results = await getResultsForUser({
       sessionId: req.params.sessionId,
-      userId: req.query.userId,
+      userId: req.user.id,
     });
 
     if (!results) {
@@ -985,11 +972,10 @@ router.get('/results/:sessionId', async (req, res) => {
   }
 });
 
-router.post('/results/:sessionId/retry', async (req, res) => {
+router.post('/results/:sessionId/retry', requireAuth, async (req, res) => {
   try {
     requireUuid(req.params.sessionId, 'sessionId');
     requireRequestObject(req.body);
-    requireUuid(req.body.userId, 'userId');
 
     if (req.body.turnId !== undefined) {
       requireUuid(req.body.turnId, 'turnId');
@@ -997,7 +983,7 @@ router.post('/results/:sessionId/retry', async (req, res) => {
 
     const result = await retryFailedResults({
       sessionId: req.params.sessionId,
-      userId: req.body.userId,
+      userId: req.user.id,
       turnId: req.body.turnId,
     });
 
@@ -1008,7 +994,7 @@ router.post('/results/:sessionId/retry', async (req, res) => {
   }
 });
 
-router.post('/audio/upload', requireAudioUploadEnabled, uploadSingleAudio, async (req, res) => {
+router.post('/audio/upload', requireAuth, requireAudioUploadEnabled, uploadSingleAudio, async (req, res) => {
   let finalPath = null;
   let wavPath = null;
   let replacement = null;
@@ -1020,12 +1006,14 @@ router.post('/audio/upload', requireAudioUploadEnabled, uploadSingleAudio, async
 
     requireRequestObject(req.body);
 
-    const { turnId, sessionId, speakerId, questionId } = req.body;
+    const { turnId, sessionId, questionId } = req.body;
+    // You can only upload your own voice. validateAudioUpload then checks the
+    // turn really belongs to this speaker in this session.
+    const speakerId = req.user.id;
     const durationMs = parsePositiveInteger(req.body.durationMs);
 
     requireUuid(turnId, 'turnId');
     requireUuid(sessionId, 'sessionId');
-    requireUuid(speakerId, 'speakerId');
     requireUuid(questionId, 'questionId');
 
     await validateAudioUpload({
@@ -1065,12 +1053,13 @@ router.post('/audio/upload', requireAudioUploadEnabled, uploadSingleAudio, async
   }
 });
 
-router.post('/peer-notes/batch', async (req, res) => {
+router.post('/peer-notes/batch', requireAuth, async (req, res) => {
   try {
     requireRequestObject(req.body);
-    validatePeerNotesPayload(req.body);
+    const payload = { ...req.body, listenerId: req.user.id };
+    validatePeerNotesPayload(payload);
 
-    const result = await savePeerNotesBatch(req.body);
+    const result = await savePeerNotesBatch(payload);
     res.json(result);
   } catch (err) {
     console.warn('Failed to save peer notes:', err.message);
@@ -1078,15 +1067,16 @@ router.post('/peer-notes/batch', async (req, res) => {
   }
 });
 
-router.post('/mentor-reviews', async (req, res) => {
+router.post('/mentor-reviews', requireRole('mentor', 'admin'), async (req, res) => {
   try {
     requireRequestObject(req.body);
     requireUuid(req.body.sessionId, 'sessionId');
-    requireUuid(req.body.mentorId, 'mentorId');
     requireUuid(req.body.studentId, 'studentId');
     requireNonEmptyString(req.body.overallComment, 'overallComment');
 
-    const result = await saveMentorReview(req.body);
+    // saveMentorReview rejects the write unless both mentor and student are
+    // actually in that session.
+    const result = await saveMentorReview({ ...req.body, mentorId: req.user.id });
     res.json(result);
   } catch (err) {
     console.warn('Failed to save mentor review:', err.message);
@@ -1094,13 +1084,12 @@ router.post('/mentor-reviews', async (req, res) => {
   }
 });
 
-router.post('/review/complete', async (req, res) => {
+router.post('/review/complete', requireAuth, async (req, res) => {
   try {
     requireRequestObject(req.body);
     requireUuid(req.body.sessionId, 'sessionId');
-    requireUuid(req.body.userId, 'userId');
 
-    const result = await completeReview(req.body);
+    const result = await completeReview({ ...req.body, userId: req.user.id });
     res.json(result);
   } catch (err) {
     console.warn('Failed to complete review:', err.message);
