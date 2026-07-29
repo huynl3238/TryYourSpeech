@@ -85,9 +85,11 @@ function buildMessages({ parts, pronunciation }) {
 
 // parts: [{ partNumber, question, cueCard, transcript }] — every answer in the test.
 // pronunciation: optional aggregated acoustic scores (context only).
-export async function generateHolisticFeedback({ parts, pronunciation, model }) {
+// `onUsage` (optional) is passed straight through so the caller can record what
+// this call cost; omitting it changes nothing.
+export async function generateHolisticFeedback({ parts, pronunciation, model, onUsage }) {
   const messages = buildMessages({ parts, pronunciation });
-  const raw = await createJsonChatCompletion({ model, messages });
+  const raw = await createJsonChatCompletion({ model, messages, onUsage });
 
   return normalizeFeedbackResponse(raw);
 }

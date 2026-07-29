@@ -57,6 +57,9 @@ const NAV_ITEMS = [
   { key: 'topicBuilder', label: 'Quản lý bộ câu hỏi', icon: 'library_add', mentorOnly: true },
   { key: 'teacherReviews', label: 'Bài học viên', icon: 'school', mentorOnly: true },
   { key: 'notifications', label: 'Thông báo', icon: 'notifications' },
+  // Not a tab like the others: it leaves the lobby for the /admin route, so it
+  // carries `route` and the nav renders it as navigation instead of a tab switch.
+  { key: 'admin', label: 'Quản trị', icon: 'admin_panel_settings', adminOnly: true, route: '/admin' },
 ];
 
 const ERROR_TYPE_CONFIG = {
@@ -483,6 +486,7 @@ function useUnreadNotifications(activeTab) {
 
 function Sidebar({ activeTab, onChangeTab, open, onClose }) {
   const { user, isMentor, isAdmin } = useAuth();
+  const navigate = useNavigate();
   const unreadNotifications = useUnreadNotifications(activeTab);
 
   const displayName = user?.displayName || 'Khách';
@@ -490,7 +494,9 @@ function Sidebar({ activeTab, onChangeTab, open, onClose }) {
   const role = isAdmin ? 'Quản trị viên' : isMentor ? 'Mentor' : 'Học viên IELTS';
   const teaches = isMentor || isAdmin;
   const navItems = NAV_ITEMS.filter((item) => (
-    (!item.mentorOnly || teaches) && (!item.studentOnly || !teaches)
+    (!item.mentorOnly || teaches)
+    && (!item.studentOnly || !teaches)
+    && (!item.adminOnly || isAdmin)
   ));
 
   return (
@@ -519,7 +525,7 @@ function Sidebar({ activeTab, onChangeTab, open, onClose }) {
             key={item.key}
             type="button"
             className={`app-nav-item ${activeTab === item.key ? 'active' : ''}`}
-            onClick={() => onChangeTab(item.key)}
+            onClick={() => (item.route ? navigate(item.route) : onChangeTab(item.key))}
           >
             <span className="material-symbols-rounded">{item.icon}</span>
             {item.label}
@@ -549,7 +555,7 @@ function Sidebar({ activeTab, onChangeTab, open, onClose }) {
 // The account strip lives inside the profile card instead of beside it: one card
 // for "who am I", with the Google state and its actions folded in underneath.
 function SidebarProfileCard({ activeTab, onChangeTab, displayName, role, band }) {
-  const { isLoading, isAuthenticated, user, isAdmin, logout } = useAuth();
+  const { isLoading, isAuthenticated, user, logout } = useAuth();
   const navigate = useNavigate();
   const active = activeTab === 'profile';
 
@@ -600,15 +606,8 @@ function SidebarProfileCard({ activeTab, onChangeTab, displayName, role, band })
         <div className="flex items-center gap-1.5 px-2.5 pb-2.5 -mt-0.5">
           {isAuthenticated ? (
             <>
-              {isAdmin && (
-                <button
-                  type="button"
-                  onClick={() => navigate('/admin')}
-                  className="flex-1 h-8 rounded-lg border border-[#EAE7E3] bg-white text-[12px] font-semibold text-[#57534E] hover:border-[#EAC7B9] hover:text-[#8A4A33] hover:bg-[#FBF4EF] transition-colors"
-                >
-                  Quản trị
-                </button>
-              )}
+              {/* The admin entry point moved into the sidebar nav, where the rest
+                  of the app's destinations live. */}
               <button
                 type="button"
                 onClick={() => logout()}

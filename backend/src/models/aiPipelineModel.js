@@ -3,6 +3,7 @@ import { assessAzurePronunciation } from '../services/azurePronunciationAssessme
 import { azureToPronunciationBand } from '../services/pronunciationScoring.js';
 import { generateHolisticFeedback } from '../services/ieltsHolisticFeedback.js';
 import { transcribeAudioFile } from '../services/openaiClient.js';
+import { recordAiUsage } from './aiUsageModel.js';
 import { resolveUploadAudioPath } from '../services/uploadPaths.js';
 import {
   getAiConfigStatus,
@@ -219,24 +220,49 @@ async function upsertSessionResultFailed(client, sessionId, userId, errorMessage
   );
 }
 
-async function transcribeTurnAudio(turn) {
+// Both audio calls are billed by recording length, so the turn's own duration is
+// the billed quantity — no estimate involved. Usage is recorded only after the
+// call returns: a request that errors out is not charged.
+async function transcribeTurnAudio(turn, sessionId) {
   const filePath = resolveUploadAudioPath(turn.audio_url);
   const runtimeConfig = getAiRuntimeConfig();
 
-  return await transcribeAudioFile({
+  const transcript = await transcribeAudioFile({
     filePath,
     model: runtimeConfig.openAiTranscriptionModel,
     language: runtimeConfig.azureSpeechLanguage.split('-')[0],
   });
+
+  await recordAiUsage({
+    sessionId,
+    turnId: turn.turn_id,
+    provider: 'openai',
+    operation: 'transcription',
+    model: runtimeConfig.openAiTranscriptionModel,
+    audioSeconds: turn.duration_ms / 1000,
+  });
+
+  return transcript;
 }
 
 // Azure runs unscripted (no reference text): the candidate's speech is spontaneous,
 // so pronunciation is assessed against Azure's acoustic model, not a transcript.
-async function assessPronunciation(turn) {
-  return await assessAzurePronunciation({
+async function assessPronunciation(turn, sessionId) {
+  const pronunciation = await assessAzurePronunciation({
     audioUrl: turn.audio_url,
     durationMs: turn.duration_ms,
   });
+
+  await recordAiUsage({
+    sessionId,
+    turnId: turn.turn_id,
+    provider: 'azure',
+    operation: 'pronunciation',
+    model: getAiRuntimeConfig().azureSpeechLanguage,
+    audioSeconds: turn.duration_ms / 1000,
+  });
+
+  return pronunciation;
 }
 
 // Combines the per-turn Azure scores into one acoustic profile for the whole test so
@@ -252,7 +278,7 @@ function aggregatePronunciation(pronunciations) {
 
 // Grades Fluency/Lexical/Grammar once across every answer, then folds in the
 // aggregated pronunciation band. `processedTurns` is [{ turn, transcript, pronunciation }].
-async function runHolisticScoring(processedTurns) {
+async function runHolisticScoring(processedTurns, sessionId) {
   const runtimeConfig = getAiRuntimeConfig();
 
   const parts = processedTurns.map(({ turn, transcript }) => ({
@@ -271,6 +297,18 @@ async function runHolisticScoring(processedTurns) {
     parts,
     pronunciation: aggregatedPronunciation,
     model: runtimeConfig.openAiFeedbackModel,
+    // Fires as soon as OpenAI answers, before the reply is parsed — a response
+    // that turns out to be unusable was still paid for.
+    onUsage: ({ model, inputTokens, outputTokens }) => {
+      recordAiUsage({
+        sessionId,
+        provider: 'openai',
+        operation: 'feedback',
+        model,
+        inputTokens,
+        outputTokens,
+      });
+    },
   });
 
   const scores = {
@@ -304,8 +342,8 @@ async function runSpeakerPipeline(client, sessionId, speakerId, speakerTurns) {
 
   for (const turn of speakerTurns) {
     try {
-      const transcript = await transcribeTurnAudio(turn);
-      const pronunciation = await assessPronunciation(turn);
+      const transcript = await transcribeTurnAudio(turn, sessionId);
+      const pronunciation = await assessPronunciation(turn, sessionId);
       await markTurnTranscribed(client, turn.turn_id, transcript, pronunciation);
       processedTurns.push({ turn, transcript, pronunciation });
     } catch (err) {
@@ -321,7 +359,7 @@ async function runSpeakerPipeline(client, sessionId, speakerId, speakerTurns) {
   }
 
   try {
-    const holistic = await runHolisticScoring(processedTurns);
+    const holistic = await runHolisticScoring(processedTurns, sessionId);
     await upsertSessionResultCompleted(client, sessionId, speakerId, holistic);
     return true;
   } catch (err) {

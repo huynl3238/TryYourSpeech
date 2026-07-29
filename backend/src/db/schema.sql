@@ -540,3 +540,31 @@ ADD COLUMN IF NOT EXISTS approver_id UUID REFERENCES users(id);
 
 ALTER TABLE classroom_posts
 ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP;
+
+-- Nhật ký từng lần gọi API tính tiền (OpenAI phiên âm, Azure chấm phát âm,
+-- OpenAI nhận xét). Trước bảng này app hoàn toàn mù về chi phí: chỉ biết tiền đã
+-- tiêu khi nhận hoá đơn cuối tháng, và không biết phần nào tốn nhiều.
+--
+-- cost_usd được tính lúc ghi và lưu cứng lại, cố ý như vậy: nếu nhà cung cấp đổi
+-- giá thì chi phí lịch sử vẫn phản ánh giá tại thời điểm gọi, chứ không bị tính
+-- lại theo giá mới.
+CREATE TABLE IF NOT EXISTS ai_usage (
+  id UUID PRIMARY KEY,
+  -- Xoá phiên/lượt nói không được xoá lịch sử chi phí: tiền đã tiêu rồi.
+  session_id UUID REFERENCES sessions(id) ON DELETE SET NULL,
+  turn_id UUID REFERENCES turns(id) ON DELETE SET NULL,
+  provider VARCHAR(20) NOT NULL,
+  operation VARCHAR(20) NOT NULL,
+  model VARCHAR(120),
+  audio_seconds DECIMAL(10,2) NOT NULL DEFAULT 0,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  cost_usd DECIMAL(12,6) NOT NULL DEFAULT 0,
+  succeeded BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMP DEFAULT NOW(),
+  CHECK (provider IN ('openai', 'azure')),
+  CHECK (operation IN ('transcription', 'pronunciation', 'feedback'))
+);
+
+-- Mọi truy vấn của dashboard đều lọc theo khoảng thời gian (hôm nay / tháng này).
+CREATE INDEX IF NOT EXISTS idx_ai_usage_created_at ON ai_usage(created_at);

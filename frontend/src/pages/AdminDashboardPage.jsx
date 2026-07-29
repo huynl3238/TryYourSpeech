@@ -22,6 +22,12 @@ const STATUS_LABELS = {
   failed: 'Lỗi',
 };
 
+const OPERATION_LABELS = {
+  transcription: 'Phiên âm (OpenAI)',
+  pronunciation: 'Chấm phát âm (Azure)',
+  feedback: 'Nhận xét (OpenAI)',
+};
+
 function statusLabel(status) {
   return STATUS_LABELS[status] || status;
 }
@@ -54,6 +60,16 @@ function formatDuration(seconds) {
   return `${mins}p ${secs}s`;
 }
 
+// Amounts here are often fractions of a cent, so a flat 2 decimals would round a
+// real cost down to "$0.00" and make the pipeline look free.
+function formatUsd(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return '$0.00';
+  if (amount === 0) return '$0.00';
+  if (amount < 1) return `$${amount.toFixed(4)}`;
+  return `$${amount.toFixed(2)}`;
+}
+
 function StatCard({ icon, label, value, hint, accent }) {
   return (
     <div className="rounded-2xl border border-[#EAE7E3] bg-white p-4">
@@ -69,9 +85,9 @@ function StatCard({ icon, label, value, hint, accent }) {
   );
 }
 
-function Panel({ title, subtitle, children, right }) {
+function Panel({ title, subtitle, children, right, className = '' }) {
   return (
-    <section className="rounded-2xl border border-[#EAE7E3] bg-white p-5">
+    <section className={`rounded-2xl border border-[#EAE7E3] bg-white p-5 ${className}`}>
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 className="text-[15px] font-bold text-[#1C1917]">{title}</h2>
@@ -93,15 +109,15 @@ function BarList({ items, accent = '#D97757', emptyText = 'Chưa có dữ liệu
     <div className="space-y-2.5">
       {items.map((item) => (
         <div key={item.key} className="flex items-center gap-3">
-          <span className="w-28 shrink-0 text-[12.5px] text-[#57534E]">{item.label}</span>
+          <span className="w-36 shrink-0 text-[12.5px] text-[#57534E]">{item.label}</span>
           <div className="relative h-5 flex-1 overflow-hidden rounded-md bg-[#F1EEEA]">
             <div
               className="h-full rounded-md"
               style={{ width: `${(item.count / max) * 100}%`, backgroundColor: accent, minWidth: item.count ? 6 : 0 }}
             />
           </div>
-          <span className="w-10 shrink-0 text-right text-[12.5px] font-semibold tabular-nums text-[#1C1917]">
-            {item.count}
+          <span className="w-20 shrink-0 text-right text-[12.5px] font-semibold tabular-nums text-[#1C1917]">
+            {item.display ?? item.count}
           </span>
         </div>
       ))}
@@ -109,24 +125,61 @@ function BarList({ items, accent = '#D97757', emptyText = 'Chưa có dữ liệu
   );
 }
 
-function DayChart({ items }) {
+// Daily spend for the last two weeks. Kept when the session charts were dropped
+// because a cost spike is the one thing you want to notice the day it happens,
+// not at the end of the month.
+function CostChart({ items }) {
   if (!items.length) {
-    return <p className="text-[13px] text-[#A8A29E]">Chưa có phiên nào trong 14 ngày qua.</p>;
+    return <p className="text-[13px] text-[#A8A29E]">Chưa có chi phí nào được ghi nhận.</p>;
   }
-  const max = Math.max(...items.map((item) => item.count), 1);
+  const max = Math.max(...items.map((item) => item.costUsd), 0.000001);
   return (
-    <div className="flex h-40 items-end gap-1.5 overflow-x-auto">
+    <div className="flex h-32 items-end gap-1.5 overflow-x-auto">
       {items.map((item) => (
         <div key={item.day} className="flex min-w-[26px] flex-1 flex-col items-center gap-1">
-          <span className="text-[10px] font-semibold tabular-nums text-[#78716C]">{item.count || ''}</span>
           <div
-            className="w-full rounded-t-md bg-[#D97757]"
-            style={{ height: `${(item.count / max) * 100}%`, minHeight: item.count ? 4 : 0 }}
-            title={`${item.count} phiên`}
+            className="w-full rounded-t-md bg-[#16A34A]"
+            style={{ height: `${(item.costUsd / max) * 100}%`, minHeight: item.costUsd ? 4 : 0 }}
+            title={`${formatUsd(item.costUsd)}`}
           />
           <span className="text-[9.5px] text-[#A8A29E]">{formatDay(item.day)}</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+function QuotaBar({ used, limit }) {
+  if (!limit) {
+    return (
+      <p className="text-[12.5px] text-[#A8A29E]">
+        Không đặt hạn mức tháng — đã chấm <strong className="tabular-nums">{used}</strong> lượt nói tháng này.
+      </p>
+    );
+  }
+
+  const ratio = Math.min(used / limit, 1);
+  const nearLimit = ratio >= 0.8;
+
+  return (
+    <div>
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-[12.5px] text-[#57534E]">Hạn mức chấm trong tháng</span>
+        <span className={`text-[13px] font-bold tabular-nums ${nearLimit ? 'text-[#DC2626]' : 'text-[#1C1917]'}`}>
+          {used} / {limit}
+        </span>
+      </div>
+      <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-[#F1EEEA]">
+        <div
+          className="h-full rounded-full"
+          style={{ width: `${ratio * 100}%`, backgroundColor: nearLimit ? '#DC2626' : '#16A34A' }}
+        />
+      </div>
+      {nearLimit && (
+        <p className="mt-1.5 text-[11.5px] text-[#DC2626]">
+          Sắp chạm hạn mức. Khi đầy, các phiên mới sẽ không được chấm cho tới đầu tháng sau.
+        </p>
+      )}
     </div>
   );
 }
@@ -195,8 +248,11 @@ function MentorAdminPanel() {
   }
 
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
+    <div className="grid gap-4 lg:grid-cols-3">
+      {/* Two thirds of the row: reading an application means reading a paragraph
+          of free text, which a narrow half-width column cramps. */}
       <Panel
+        className="lg:col-span-2"
         title="Đơn xin làm mentor"
         subtitle={loading ? 'Đang tải…' : `${applications.length} đơn`}
         right={
@@ -224,9 +280,9 @@ function MentorAdminPanel() {
 
         <div className="space-y-3">
           {applications.map((application) => (
-            <div key={application.id} className="rounded-xl border border-[#EAE7E3] p-3.5">
+            <div key={application.id} className="rounded-xl border border-[#EAE7E3] p-4">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[14px] font-bold text-[#1C1917]">
+                <span className="text-[15px] font-bold text-[#1C1917]">
                   {application.applicant.displayName}
                 </span>
                 <span className="rounded-full bg-[#F1EEEA] px-2 py-0.5 text-[11.5px] font-semibold text-[#57534E] tabular-nums">
@@ -244,12 +300,12 @@ function MentorAdminPanel() {
                 <p className="mt-1 text-[12px] text-[#A8A29E]">{application.applicant.email}</p>
               )}
 
-              <p className="mt-2 whitespace-pre-wrap text-[13px] text-[#57534E]">
+              <p className="mt-2.5 whitespace-pre-wrap text-[14px] leading-relaxed text-[#57534E]">
                 {application.message}
               </p>
 
               {application.status === 'pending' ? (
-                <div className="mt-3">
+                <div className="mt-3.5">
                   <input
                     value={notes[application.id] || ''}
                     maxLength={500}
@@ -298,24 +354,19 @@ function MentorAdminPanel() {
 
         <div className="space-y-2.5">
           {mentors.map((mentor) => (
-            <div
-              key={mentor.id}
-              className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#EAE7E3] p-3"
-            >
-              <div className="min-w-0">
-                <p className="text-[13.5px] font-bold text-[#1C1917]">{mentor.displayName}</p>
-                <p className="text-[11.5px] text-[#A8A29E] tabular-nums">
-                  Band {mentor.band ?? '—'} · {mentor.hostedSessions} buổi đã mở ·{' '}
-                  {mentor.reviewsWritten} nhận xét
-                </p>
-              </div>
+            <div key={mentor.id} className="rounded-xl border border-[#EAE7E3] p-3">
+              <p className="text-[13.5px] font-bold text-[#1C1917]">{mentor.displayName}</p>
+              <p className="mt-0.5 text-[11.5px] text-[#A8A29E] tabular-nums">
+                Band {mentor.band ?? '—'} · {mentor.hostedSessions} buổi đã mở ·{' '}
+                {mentor.reviewsWritten} nhận xét
+              </p>
               <button
                 type="button"
                 disabled={busyId === mentor.id}
                 onClick={() => handleRevoke(mentor)}
-                className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-[#EAE7E3] px-3 text-[12.5px] font-semibold text-[#B91C1C] hover:bg-[#FBF0EB] disabled:opacity-60"
+                className="mt-2 inline-flex h-8 items-center gap-1.5 rounded-lg border border-[#EAE7E3] px-2.5 text-[12px] font-semibold text-[#B91C1C] hover:bg-[#FBF0EB] disabled:opacity-60"
               >
-                <span className="material-symbols-rounded" style={{ fontSize: 17 }}>person_remove</span>
+                <span className="material-symbols-rounded" style={{ fontSize: 16 }}>person_remove</span>
                 Gỡ quyền
               </button>
             </div>
@@ -323,6 +374,165 @@ function MentorAdminPanel() {
         </div>
       </Panel>
     </div>
+  );
+}
+
+function AiCostPanel({ ai }) {
+  const { cost, quota } = ai;
+
+  return (
+    <Panel
+      title="Chi phí & chất lượng AI"
+      subtitle="Số liệu ghi từ chính các lần gọi API, không phải ước tính"
+    >
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatCard
+          icon="today"
+          accent="#16A34A"
+          label="Chi phí hôm nay"
+          value={formatUsd(cost.costTodayUsd)}
+        />
+        <StatCard
+          icon="calendar_month"
+          accent="#16A34A"
+          label="Chi phí tháng này"
+          value={formatUsd(cost.costMonthUsd)}
+          hint={`${cost.callsMonth} lần gọi API`}
+        />
+        <StatCard
+          icon="trending_up"
+          accent="#D97757"
+          label="Dự phóng cả tháng"
+          value={formatUsd(cost.projectedMonthUsd)}
+          hint="Nếu giữ nguyên tốc độ hiện tại"
+        />
+        <StatCard
+          icon="receipt_long"
+          label="Trung bình mỗi phiên"
+          value={formatUsd(cost.costPerSessionUsd)}
+          hint={`${cost.sessionsMonth} phiên đã chấm tháng này`}
+        />
+      </div>
+
+      <div className="mt-5 grid gap-5 lg:grid-cols-2">
+        <div>
+          <h3 className="mb-2.5 text-[12.5px] font-semibold text-[#78716C]">
+            Tiền đi đâu (tháng này)
+          </h3>
+          <BarList
+            accent="#16A34A"
+            items={cost.byOperation.map((row) => ({
+              key: row.operation,
+              label: OPERATION_LABELS[row.operation] || row.operation,
+              count: row.costUsd,
+              display: formatUsd(row.costUsd),
+            }))}
+            emptyText="Chưa có lần gọi API nào trong tháng."
+          />
+          <div className="mt-4">
+            <QuotaBar used={quota.used} limit={quota.limit} />
+          </div>
+        </div>
+
+        <div>
+          <h3 className="mb-2.5 text-[12.5px] font-semibold text-[#78716C]">
+            Chi phí 14 ngày gần nhất
+          </h3>
+          <CostChart items={cost.daily} />
+        </div>
+      </div>
+
+      <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="rounded-xl bg-[#F7F5F2] px-3 py-2.5">
+          <div className="text-[11.5px] text-[#78716C]">Phút audio đã xử lý</div>
+          <div className="text-[18px] font-bold tabular-nums">{cost.audioMinutesMonth}</div>
+          <div className="text-[11px] text-[#A8A29E]">Trong tháng này</div>
+        </div>
+        <div className="rounded-xl bg-[#F7F5F2] px-3 py-2.5">
+          <div className="text-[11.5px] text-[#78716C]">Tiền vào phiên chấm hỏng</div>
+          <div className={`text-[18px] font-bold tabular-nums ${cost.wastedCostMonthUsd > 0 ? 'text-[#DC2626]' : ''}`}>
+            {formatUsd(cost.wastedCostMonthUsd)}
+          </div>
+          <div className="text-[11px] text-[#A8A29E]">{cost.wastedSessionsMonth} phiên</div>
+        </div>
+        <div className="rounded-xl bg-[#F7F5F2] px-3 py-2.5">
+          <div className="text-[11.5px] text-[#78716C]">Tổng chi phí từ trước tới nay</div>
+          <div className="text-[18px] font-bold tabular-nums">{formatUsd(cost.costTotalUsd)}</div>
+          <div className="text-[11px] text-[#A8A29E]">Tính từ lúc bật ghi nhận</div>
+        </div>
+        <div className="rounded-xl bg-[#F7F5F2] px-3 py-2.5">
+          <div className="text-[11.5px] text-[#78716C]">Lượt nói chấm lỗi</div>
+          <div className="text-[18px] font-bold tabular-nums">
+            {ai.byStatus.find((row) => row.status === 'failed')?.count ?? 0}
+          </div>
+          <div className="text-[11px] text-[#A8A29E]">Bài chấm thất bại</div>
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-5 lg:grid-cols-2">
+        <div>
+          <h3 className="mb-2.5 text-[12.5px] font-semibold text-[#78716C]">Trạng thái chấm (theo bài)</h3>
+          <BarList
+            accent="#0F62FE"
+            items={ai.byStatus.map((row) => ({
+              key: row.status,
+              label: statusLabel(row.status),
+              count: row.count,
+            }))}
+          />
+        </div>
+        <div>
+          <h3 className="mb-2.5 text-[12.5px] font-semibold text-[#78716C]">Phân bổ band AI chấm</h3>
+          <BarList
+            accent="#7C3AED"
+            items={ai.bandDistribution.map((row) => ({
+              key: String(row.band),
+              label: `Band ${row.band}`,
+              count: row.count,
+            }))}
+          />
+        </div>
+      </div>
+
+      {ai.failures.length > 0 && (
+        <div className="mt-5">
+          <h3 className="mb-2 text-[12.5px] font-semibold text-[#DC2626]">
+            Phiên chấm lỗi ({ai.failures.length})
+          </h3>
+          <div className="overflow-x-auto rounded-xl border border-[#EAE7E3]">
+            <table className="w-full min-w-[520px] text-left text-[12.5px]">
+              <thead className="bg-[#F7F5F2] text-[#78716C]">
+                <tr>
+                  <th className="px-3 py-2 font-semibold">Người dùng</th>
+                  <th className="px-3 py-2 font-semibold">Lỗi</th>
+                  <th className="px-3 py-2 font-semibold">Thời gian</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ai.failures.map((row) => (
+                  <tr key={`${row.sessionId}-${row.userId}`} className="border-t border-[#EAE7E3]">
+                    <td className="px-3 py-2 text-[#1C1917]">{row.displayName}</td>
+                    <td className="px-3 py-2 text-[#78716C]">{row.errorMessage || '—'}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-[#A8A29E]">{formatDate(row.updatedAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Showing the rates makes every number above checkable against the real
+          invoice. Providers change prices without notice, so a figure you cannot
+          trace back to a rate is a figure you cannot trust. */}
+      <p className="mt-5 text-[11px] leading-relaxed text-[#A8A29E]">
+        Đơn giá đang áp dụng: phiên âm {formatUsd(cost.pricing.transcriptionPerMinuteUsd)}/phút · chấm
+        phát âm {formatUsd(cost.pricing.pronunciationPerAudioHourUsd)}/giờ audio · nhận xét{' '}
+        {formatUsd(cost.pricing.feedbackInputPerMillionTokensUsd)} và{' '}
+        {formatUsd(cost.pricing.feedbackOutputPerMillionTokensUsd)} mỗi triệu token vào/ra. Sửa bằng
+        biến môi trường AI_PRICE_* nếu nhà cung cấp đổi giá.
+      </p>
+    </Panel>
   );
 }
 
@@ -404,175 +614,55 @@ export default function AdminDashboardPage() {
         {stats && (
           <div className="space-y-6">
             {/* Realtime */}
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-3">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               <StatCard
                 icon="sensors"
                 accent="#16A34A"
-                label="Phòng đang luyện"
+                label="Phiên đang luyện"
                 value={stats.live?.activeRooms ?? 0}
                 hint="Số cặp đang trong phiên"
               />
               <StatCard
                 icon="hourglass_top"
                 accent="#0F62FE"
-                label="Đang chờ ghép (peer)"
+                label="Đang chờ ghép"
                 value={stats.live?.waitingPeer ?? 0}
               />
               <StatCard
                 icon="school"
                 accent="#0F62FE"
-                label="Đang chờ (mentor)"
+                label="Phiên luyện mentor đang chờ"
                 value={stats.live?.waitingMentor ?? 0}
               />
             </div>
 
             {/* Overview KPIs */}
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-              <StatCard icon="group" label="Người dùng" value={stats.overview.totalUsers}
-                hint={`+${stats.overview.newUsers7d} trong 7 ngày`} />
-              <StatCard icon="cast_for_education" label="Mentor" value={stats.overview.mentorCount} />
-              <StatCard icon="forum" label="Tổng phiên" value={stats.overview.totalSessions}
-                hint={`Hôm nay: ${stats.overview.sessionsToday}`} />
-              <StatCard icon="task_alt" accent="#16A34A" label="Tỉ lệ hoàn thành"
-                value={`${stats.overview.completionRate}%`}
-                hint={`${stats.overview.completedSessions} hoàn thành`} />
-              <StatCard icon="cancel" accent="#DC2626" label="Bỏ giữa chừng"
-                value={stats.overview.abandonedSessions} />
-              <StatCard icon="timer" label="Thời lượng TB/phiên"
-                value={formatDuration(stats.overview.avgSessionSeconds)} />
-              <StatCard icon="hub" label="Peer / Mentor"
-                value={`${stats.overview.peerSessions} / ${stats.overview.mentorSessions}`} />
-              <StatCard icon="graphic_eq" label="Phút audio đã xử lý"
-                value={stats.ai.totalAudioMinutes}
-                hint={`${stats.ai.uploadedTurns} lượt nói`} />
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              <StatCard icon="group" label="Tổng người dùng" value={stats.overview.totalUsers} />
+              <StatCard icon="cast_for_education" label="Tổng mentor" value={stats.overview.mentorCount} />
+              <StatCard icon="forum" label="Phiên hôm nay" value={stats.overview.sessionsToday} />
+              <StatCard
+                icon="task_alt"
+                accent="#16A34A"
+                label="Phiên hoàn thành"
+                value={stats.overview.completedSessions}
+                hint={`Tỉ lệ ${stats.overview.completionRate}%`}
+              />
+              <StatCard
+                icon="cancel"
+                accent="#DC2626"
+                label="Bỏ giữa chừng"
+                value={stats.overview.abandonedSessions}
+              />
+              <StatCard
+                icon="timer"
+                label="Thời lượng TB/phiên"
+                value={formatDuration(stats.overview.avgSessionSeconds)}
+              />
             </div>
 
-            {/* Activity */}
-            <div className="grid gap-4 lg:grid-cols-2">
-              <Panel title="Phiên luyện tập theo ngày" subtitle="14 ngày gần nhất">
-                <DayChart items={stats.sessionsPerDay} />
-              </Panel>
-              <Panel title="Phiên theo trạng thái">
-                <BarList
-                  items={stats.sessionsByStatus.map((row) => ({
-                    key: row.status,
-                    label: statusLabel(row.status),
-                    count: row.count,
-                  }))}
-                />
-              </Panel>
-            </div>
+            <AiCostPanel ai={stats.ai} />
 
-            {/* AI quality */}
-            <Panel
-              title="Chất lượng & chi phí AI"
-              subtitle="Theo dõi để phát hiện lỗi chấm và ước lượng khối lượng xử lý"
-            >
-              <div className="grid gap-5 lg:grid-cols-2">
-                <div>
-                  <h3 className="mb-2.5 text-[12.5px] font-semibold text-[#78716C]">Trạng thái chấm (theo bài)</h3>
-                  <BarList
-                    accent="#0F62FE"
-                    items={stats.ai.byStatus.map((row) => ({
-                      key: row.status,
-                      label: statusLabel(row.status),
-                      count: row.count,
-                    }))}
-                  />
-                </div>
-                <div>
-                  <h3 className="mb-2.5 text-[12.5px] font-semibold text-[#78716C]">Phân bổ band AI chấm</h3>
-                  <BarList
-                    accent="#7C3AED"
-                    items={stats.ai.bandDistribution.map((row) => ({
-                      key: String(row.band),
-                      label: `Band ${row.band}`,
-                      count: row.count,
-                    }))}
-                  />
-                </div>
-              </div>
-
-              {stats.ai.failures.length > 0 && (
-                <div className="mt-5">
-                  <h3 className="mb-2 text-[12.5px] font-semibold text-[#DC2626]">
-                    Phiên chấm lỗi ({stats.ai.failures.length})
-                  </h3>
-                  <div className="overflow-x-auto rounded-xl border border-[#EAE7E3]">
-                    <table className="w-full min-w-[520px] text-left text-[12.5px]">
-                      <thead className="bg-[#F7F5F2] text-[#78716C]">
-                        <tr>
-                          <th className="px-3 py-2 font-semibold">Người dùng</th>
-                          <th className="px-3 py-2 font-semibold">Lỗi</th>
-                          <th className="px-3 py-2 font-semibold">Thời gian</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {stats.ai.failures.map((row) => (
-                          <tr key={`${row.sessionId}-${row.userId}`} className="border-t border-[#EAE7E3]">
-                            <td className="px-3 py-2 text-[#1C1917]">{row.displayName}</td>
-                            <td className="px-3 py-2 text-[#78716C]">{row.errorMessage || '—'}</td>
-                            <td className="whitespace-nowrap px-3 py-2 text-[#A8A29E]">{formatDate(row.updatedAt)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </Panel>
-
-            {/* Content moderation */}
-            <div className="grid gap-4 lg:grid-cols-2">
-              <Panel title="Kiểm duyệt Lớp học">
-                <div className="grid grid-cols-2 gap-3">
-                  {stats.content.classroomByStatus.length === 0 && (
-                    <p className="col-span-2 text-[13px] text-[#A8A29E]">Chưa có bài nào.</p>
-                  )}
-                  {stats.content.classroomByStatus.map((row) => (
-                    <div key={row.status} className="rounded-xl bg-[#F7F5F2] px-3 py-2.5">
-                      <div className="text-[11.5px] text-[#78716C]">{statusLabel(row.status)}</div>
-                      <div className="text-[18px] font-bold tabular-nums">{row.count}</div>
-                    </div>
-                  ))}
-                </div>
-                {stats.content.pendingPosts.length > 0 && (
-                  <div className="mt-4">
-                    <h3 className="mb-2 text-[12.5px] font-semibold text-[#D97757]">
-                      Bài chờ duyệt ({stats.content.pendingPosts.length})
-                    </h3>
-                    <ul className="space-y-1.5">
-                      {stats.content.pendingPosts.map((post) => (
-                        <li key={post.id} className="flex items-center justify-between gap-3 rounded-lg border border-[#EAE7E3] px-3 py-2">
-                          <div className="min-w-0">
-                            <div className="truncate text-[13px] font-medium">{post.title}</div>
-                            <div className="text-[11px] text-[#A8A29E]">{post.author} · {formatDate(post.createdAt)}</div>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </Panel>
-
-              <Panel title="Nội dung & bộ câu hỏi">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="rounded-xl bg-[#F7F5F2] px-3 py-2.5">
-                    <div className="text-[11.5px] text-[#78716C]">Chủ đề</div>
-                    <div className="text-[18px] font-bold tabular-nums">{stats.content.totalTopics}</div>
-                    <div className="text-[11px] text-[#A8A29E]">
-                      Hệ thống {stats.content.systemTopics} · Mentor {stats.content.mentorTopics}
-                    </div>
-                  </div>
-                  <div className="rounded-xl bg-[#F7F5F2] px-3 py-2.5">
-                    <div className="text-[11.5px] text-[#78716C]">Câu hỏi</div>
-                    <div className="text-[18px] font-bold tabular-nums">{stats.content.totalQuestions}</div>
-                  </div>
-                </div>
-              </Panel>
-            </div>
-
-            {/* Users + system health */}
             <div className="grid gap-4 lg:grid-cols-2">
               <Panel title="Phân bổ trình độ (band)">
                 <BarList
@@ -585,6 +675,7 @@ export default function AdminDashboardPage() {
                   emptyText="Chưa có người dùng nào đặt band."
                 />
               </Panel>
+
               <Panel title="Sức khỏe hệ thống">
                 <div className="grid grid-cols-2 gap-3">
                   <div className="rounded-xl bg-[#F7F5F2] px-3 py-2.5">
@@ -598,22 +689,51 @@ export default function AdminDashboardPage() {
                     <div className="text-[18px] font-bold tabular-nums">{stats.system.pendingUploads}</div>
                   </div>
                   <div className="rounded-xl bg-[#F7F5F2] px-3 py-2.5">
-                    <div className="text-[11.5px] text-[#78716C]">Phiên mentor đang mở</div>
-                    <div className="text-[18px] font-bold tabular-nums">{stats.system.openMentorSessions}</div>
-                  </div>
-                  <div className="rounded-xl bg-[#F7F5F2] px-3 py-2.5">
                     <div className="text-[11.5px] text-[#78716C]">Lượt nói chấm lỗi</div>
-                    <div className={`text-[18px] font-bold tabular-nums ${stats.ai.failedTurnResults ? 'text-[#DC2626]' : ''}`}>
-                      {stats.ai.failedTurnResults}
+                    <div className={`text-[18px] font-bold tabular-nums ${stats.system.failedTurnResults ? 'text-[#DC2626]' : ''}`}>
+                      {stats.system.failedTurnResults}
                     </div>
+                  </div>
+                  {/* A session stuck in 'processing' is a user watching a spinner
+                      that will never resolve on its own. */}
+                  <div className="rounded-xl bg-[#F7F5F2] px-3 py-2.5">
+                    <div className="text-[11.5px] text-[#78716C]">Phiên kẹt khi chấm</div>
+                    <div className={`text-[18px] font-bold tabular-nums ${stats.system.stuckProcessing ? 'text-[#DC2626]' : ''}`}>
+                      {stats.system.stuckProcessing}
+                    </div>
+                    <div className="text-[11px] text-[#A8A29E]">Quá 10 phút chưa xong</div>
                   </div>
                 </div>
               </Panel>
             </div>
 
-            <p className="pb-4 text-center text-[11.5px] text-[#C4BEB6]">
-              Trang này chưa có phân quyền — chỉ dùng để xem trước.
-            </p>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <Panel title="Lớp học">
+                <div className="rounded-xl bg-[#F7F5F2] px-3 py-2.5">
+                  <div className="text-[11.5px] text-[#78716C]">Bài đang chờ duyệt</div>
+                  <div className={`text-[18px] font-bold tabular-nums ${stats.content.pendingPosts ? 'text-[#D97757]' : ''}`}>
+                    {stats.content.pendingPosts}
+                  </div>
+                </div>
+              </Panel>
+
+              <Panel title="Bộ câu hỏi">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-xl bg-[#F7F5F2] px-3 py-2.5">
+                    <div className="text-[11.5px] text-[#78716C]">Của hệ thống</div>
+                    <div className="text-[18px] font-bold tabular-nums">
+                      {stats.content.systemQuestionSets}
+                    </div>
+                  </div>
+                  <div className="rounded-xl bg-[#F7F5F2] px-3 py-2.5">
+                    <div className="text-[11.5px] text-[#78716C]">Của mentor</div>
+                    <div className="text-[18px] font-bold tabular-nums">
+                      {stats.content.mentorQuestionSets}
+                    </div>
+                  </div>
+                </div>
+              </Panel>
+            </div>
           </div>
         )}
       </main>

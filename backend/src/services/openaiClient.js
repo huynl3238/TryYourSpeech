@@ -52,7 +52,10 @@ export async function transcribeAudioFile({ filePath, model, language }) {
   return (await response.text()).trim();
 }
 
-export async function createJsonChatCompletion({ model, messages, temperature = 0 }) {
+// `onUsage` is optional and receives the token counts OpenAI billed for this
+// call. It is a callback rather than part of the return value so existing
+// callers (and the eval scripts) keep working unchanged.
+export async function createJsonChatCompletion({ model, messages, temperature = 0, onUsage }) {
   const response = await fetch(`${getBaseUrl()}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -72,6 +75,17 @@ export async function createJsonChatCompletion({ model, messages, temperature = 
   }
 
   const data = await response.json();
+
+  // Reported before the content check on purpose: a reply that fails to parse
+  // was still billed, so it has to land in the cost total.
+  if (typeof onUsage === 'function') {
+    onUsage({
+      model: data?.model || model,
+      inputTokens: data?.usage?.prompt_tokens ?? 0,
+      outputTokens: data?.usage?.completion_tokens ?? 0,
+    });
+  }
+
   const content = data?.choices?.[0]?.message?.content;
   if (typeof content !== 'string' || content.trim().length === 0) {
     throw new Error('OpenAI feedback returned an empty response');

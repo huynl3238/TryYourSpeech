@@ -131,6 +131,15 @@ OPENAI_FEEDBACK_MODEL=gpt-4.1-mini
 AZURE_SPEECH_KEY=
 AZURE_SPEECH_REGION=
 AZURE_SPEECH_LANGUAGE=en-US
+
+# Đơn giá để quy đổi lượng dùng AI ra tiền trên dashboard quản trị (USD).
+# Để trống thì dùng giá niêm yết mặc định trong src/config/aiPricing.js.
+# Nhà cung cấp đổi giá lúc nào cũng được — đối chiếu hoá đơn thật rồi sửa ở đây.
+AI_PRICE_TRANSCRIPTION_PER_MINUTE_USD=
+AI_PRICE_PRONUNCIATION_PER_HOUR_USD=
+AI_PRICE_FEEDBACK_INPUT_PER_MILLION_USD=
+AI_PRICE_FEEDBACK_OUTPUT_PER_MILLION_USD=
+
 # Production: JSON array of TURN servers. Local: để trống.
 ICE_SERVERS=[]
 ```
