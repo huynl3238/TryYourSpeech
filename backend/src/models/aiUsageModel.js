@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import pool from '../config/db.js';
-import { calculateUsageCostUsd, getAiPricing } from '../config/aiPricing.js';
 
 function toNumber(value) {
   const number = Number(value);
@@ -11,14 +10,18 @@ function toInteger(value) {
   return Math.round(toNumber(value));
 }
 
+function toMinutes(seconds) {
+  return Math.round((toNumber(seconds) / 60) * 10) / 10;
+}
+
 // Deliberately writes on the pool, NOT on the caller's transaction client.
 //
 // The AI pipeline runs inside a transaction that rolls back when grading fails.
-// Rolling back the *results* is right; rolling back the *spend record* is not —
-// OpenAI and Azure already charged for that call. Recording outside the
-// transaction is what makes a failed run still show up in the cost total.
+// Rolling back the *results* is right; rolling back the *usage record* is not —
+// OpenAI and Azure already ran that call and will bill for it. Recording outside
+// the transaction is what makes a failed run still show up in the totals.
 //
-// Never throws: an accounting write must not be able to break grading.
+// Never throws: bookkeeping must not be able to break grading.
 export async function recordAiUsage({
   sessionId = null,
   turnId = null,
@@ -28,18 +31,15 @@ export async function recordAiUsage({
   audioSeconds = 0,
   inputTokens = 0,
   outputTokens = 0,
-  succeeded = true,
 }) {
   try {
-    const costUsd = calculateUsageCostUsd({ operation, audioSeconds, inputTokens, outputTokens });
-
     await pool.query(
       `
         INSERT INTO ai_usage (
           id, session_id, turn_id, provider, operation, model,
-          audio_seconds, input_tokens, output_tokens, cost_usd, succeeded
+          audio_seconds, input_tokens, output_tokens
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       `,
       [
         randomUUID(),
@@ -51,51 +51,60 @@ export async function recordAiUsage({
         toNumber(audioSeconds).toFixed(2),
         toInteger(inputTokens),
         toInteger(outputTokens),
-        costUsd.toFixed(6),
-        succeeded,
       ]
     );
   } catch (err) {
-    console.error('Không ghi được nhật ký chi phí AI:', err.message);
+    console.error('Không ghi được nhật ký sử dụng AI:', err.message);
   }
 }
 
-// Everything the admin dashboard needs to answer "tiền đang đi đâu".
-export async function getAiCostSummary() {
+// How much of the paid APIs the app consumed, in the units the providers
+// actually bill by: seconds of audio and tokens. No money anywhere — the
+// providers do not report a price per call, so any figure in dollars here would
+// be an estimate dressed up as a measurement.
+export async function getAiUsageSummary() {
   const [totals, byOperation, sessionScope, wasted, daily] = await Promise.all([
     pool.query(`
       SELECT
-        COALESCE(SUM(cost_usd) FILTER (WHERE created_at::date = NOW()::date), 0) AS cost_today,
-        COALESCE(SUM(cost_usd) FILTER (WHERE created_at >= date_trunc('month', NOW())), 0) AS cost_month,
-        COALESCE(SUM(cost_usd), 0) AS cost_total,
+        COUNT(*) FILTER (WHERE created_at::date = NOW()::date)::int AS calls_today,
+        COALESCE(SUM(audio_seconds) FILTER (
+          WHERE created_at::date = NOW()::date AND operation = 'transcription'
+        ), 0) AS audio_seconds_today,
         COUNT(*) FILTER (WHERE created_at >= date_trunc('month', NOW()))::int AS calls_month,
         COALESCE(SUM(audio_seconds) FILTER (
           WHERE created_at >= date_trunc('month', NOW()) AND operation = 'transcription'
-        ), 0) AS audio_seconds_month
+        ), 0) AS audio_seconds_month,
+        COALESCE(SUM(input_tokens) FILTER (WHERE created_at >= date_trunc('month', NOW())), 0)
+          AS input_tokens_month,
+        COALESCE(SUM(output_tokens) FILTER (WHERE created_at >= date_trunc('month', NOW())), 0)
+          AS output_tokens_month
       FROM ai_usage
     `),
     pool.query(`
       SELECT operation,
-             COALESCE(SUM(cost_usd), 0) AS cost,
-             COUNT(*)::int AS calls
+             COUNT(*)::int AS calls,
+             COALESCE(SUM(audio_seconds), 0) AS audio_seconds,
+             COALESCE(SUM(input_tokens), 0) AS input_tokens,
+             COALESCE(SUM(output_tokens), 0) AS output_tokens
         FROM ai_usage
        WHERE created_at >= date_trunc('month', NOW())
        GROUP BY operation
+       ORDER BY operation
     `),
-    // Cost per graded session is the number that actually forecasts the bill:
-    // it is what one more user finishing one more practice costs.
+    // Consumption per graded session is what forecasts the next invoice: it is
+    // what one more learner finishing one more practice adds.
     pool.query(`
       SELECT COUNT(DISTINCT session_id)::int AS sessions_month
         FROM ai_usage
        WHERE created_at >= date_trunc('month', NOW())
          AND session_id IS NOT NULL
     `),
-    // Money already spent on sessions that ended up failing anyway. A single
-    // number for "how much did the broken runs cost me this month" — the thing
-    // worth fixing first, because it buys the user nothing.
+    // Audio and tokens already spent on sessions that failed anyway — paid work
+    // that bought the user nothing, and the first thing worth fixing.
     pool.query(`
-      SELECT COALESCE(SUM(au.cost_usd), 0) AS wasted_cost,
-             COUNT(DISTINCT au.session_id)::int AS wasted_sessions
+      SELECT COUNT(DISTINCT au.session_id)::int AS sessions,
+             COALESCE(SUM(au.audio_seconds), 0) AS audio_seconds,
+             COALESCE(SUM(au.input_tokens + au.output_tokens), 0) AS tokens
         FROM ai_usage au
        WHERE au.created_at >= date_trunc('month', NOW())
          AND EXISTS (
@@ -105,7 +114,9 @@ export async function getAiCostSummary() {
          )
     `),
     pool.query(`
-      SELECT created_at::date AS day, COALESCE(SUM(cost_usd), 0) AS cost
+      SELECT created_at::date AS day,
+             COUNT(*)::int AS calls,
+             COALESCE(SUM(audio_seconds), 0) AS audio_seconds
         FROM ai_usage
        WHERE created_at >= NOW() - INTERVAL '14 days'
        GROUP BY day
@@ -114,37 +125,37 @@ export async function getAiCostSummary() {
   ]);
 
   const row = totals.rows[0];
-  const costMonth = toNumber(row.cost_month);
   const sessionsMonth = toInteger(sessionScope.rows[0].sessions_month);
-
-  // Straight-line projection: what this month ends at if the rest of it looks
-  // like the part already spent. Rough on purpose — it is an early warning, not
-  // a forecast to budget against.
-  const now = new Date();
-  const dayOfMonth = now.getDate();
-  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  const projectedMonth = dayOfMonth > 0 ? (costMonth / dayOfMonth) * daysInMonth : 0;
+  const audioMinutesMonth = toMinutes(row.audio_seconds_month);
+  const tokensMonth = toInteger(row.input_tokens_month) + toInteger(row.output_tokens_month);
 
   return {
-    pricing: getAiPricing(),
-    costTodayUsd: toNumber(row.cost_today),
-    costMonthUsd: costMonth,
-    costTotalUsd: toNumber(row.cost_total),
-    projectedMonthUsd: projectedMonth,
+    callsToday: toInteger(row.calls_today),
+    audioMinutesToday: toMinutes(row.audio_seconds_today),
     callsMonth: toInteger(row.calls_month),
-    wastedCostMonthUsd: toNumber(wasted.rows[0].wasted_cost),
-    wastedSessionsMonth: toInteger(wasted.rows[0].wasted_sessions),
-    audioMinutesMonth: Math.round(toNumber(row.audio_seconds_month) / 60),
+    audioMinutesMonth,
+    inputTokensMonth: toInteger(row.input_tokens_month),
+    outputTokensMonth: toInteger(row.output_tokens_month),
     sessionsMonth,
-    costPerSessionUsd: sessionsMonth > 0 ? costMonth / sessionsMonth : 0,
+    audioMinutesPerSession: sessionsMonth > 0
+      ? Math.round((audioMinutesMonth / sessionsMonth) * 10) / 10
+      : 0,
+    tokensPerSession: sessionsMonth > 0 ? Math.round(tokensMonth / sessionsMonth) : 0,
+    wasted: {
+      sessions: toInteger(wasted.rows[0].sessions),
+      audioMinutes: toMinutes(wasted.rows[0].audio_seconds),
+      tokens: toInteger(wasted.rows[0].tokens),
+    },
     byOperation: byOperation.rows.map((operationRow) => ({
       operation: operationRow.operation,
-      costUsd: toNumber(operationRow.cost),
       calls: toInteger(operationRow.calls),
+      audioMinutes: toMinutes(operationRow.audio_seconds),
+      tokens: toInteger(operationRow.input_tokens) + toInteger(operationRow.output_tokens),
     })),
     daily: daily.rows.map((dailyRow) => ({
       day: dailyRow.day instanceof Date ? dailyRow.day.toISOString() : dailyRow.day,
-      costUsd: toNumber(dailyRow.cost),
+      calls: toInteger(dailyRow.calls),
+      audioMinutes: toMinutes(dailyRow.audio_seconds),
     })),
   };
 }

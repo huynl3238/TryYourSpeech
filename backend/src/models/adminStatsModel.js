@@ -1,6 +1,6 @@
 import pool from '../config/db.js';
 import { getAiRuntimeConfig } from '../config/ai.js';
-import { getAiCostSummary } from './aiUsageModel.js';
+import { getAiUsageSummary } from './aiUsageModel.js';
 
 function toInteger(value) {
   const number = Number(value);
@@ -33,7 +33,7 @@ export async function getAdminStats() {
     failedAi,
     content,
     systemHealth,
-    cost,
+    usage,
   ] = await Promise.all([
     pool.query(`
       SELECT
@@ -98,7 +98,7 @@ export async function getAdminStats() {
           WHERE status = 'processing'
             AND created_at < NOW() - INTERVAL '10 minutes') AS stuck_processing
     `),
-    getAiCostSummary(),
+    getAiUsageSummary(),
   ]);
 
   const o = overview.rows[0];
@@ -124,7 +124,7 @@ export async function getAdminStats() {
       count: toInteger(row.count),
     })),
     ai: {
-      cost,
+      usage,
       quota: {
         used: toInteger(monthlyQuota.rows[0].count),
         // 0 or below disables the cap; the UI reads null as "không giới hạn".

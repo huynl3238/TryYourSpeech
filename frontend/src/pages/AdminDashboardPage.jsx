@@ -60,14 +60,10 @@ function formatDuration(seconds) {
   return `${mins}p ${secs}s`;
 }
 
-// Amounts here are often fractions of a cent, so a flat 2 decimals would round a
-// real cost down to "$0.00" and make the pipeline look free.
-function formatUsd(value) {
-  const amount = Number(value);
-  if (!Number.isFinite(amount)) return '$0.00';
-  if (amount === 0) return '$0.00';
-  if (amount < 1) return `$${amount.toFixed(4)}`;
-  return `$${amount.toFixed(2)}`;
+function formatNumber(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '0';
+  return new Intl.NumberFormat('vi-VN').format(number);
 }
 
 function StatCard({ icon, label, value, hint, accent }) {
@@ -125,22 +121,22 @@ function BarList({ items, accent = '#D97757', emptyText = 'Chưa có dữ liệu
   );
 }
 
-// Daily spend for the last two weeks. Kept when the session charts were dropped
-// because a cost spike is the one thing you want to notice the day it happens,
-// not at the end of the month.
-function CostChart({ items }) {
+// Audio minutes per day for the last two weeks. Kept when the session charts
+// were dropped because a spike in consumption is the one thing worth noticing
+// the day it happens rather than when the invoice arrives.
+function UsageChart({ items }) {
   if (!items.length) {
-    return <p className="text-[13px] text-[#A8A29E]">Chưa có chi phí nào được ghi nhận.</p>;
+    return <p className="text-[13px] text-[#A8A29E]">Chưa có lần gọi API nào được ghi nhận.</p>;
   }
-  const max = Math.max(...items.map((item) => item.costUsd), 0.000001);
+  const max = Math.max(...items.map((item) => item.audioMinutes), 0.1);
   return (
     <div className="flex h-32 items-end gap-1.5 overflow-x-auto">
       {items.map((item) => (
         <div key={item.day} className="flex min-w-[26px] flex-1 flex-col items-center gap-1">
           <div
             className="w-full rounded-t-md bg-[#16A34A]"
-            style={{ height: `${(item.costUsd / max) * 100}%`, minHeight: item.costUsd ? 4 : 0 }}
-            title={`${formatUsd(item.costUsd)}`}
+            style={{ height: `${(item.audioMinutes / max) * 100}%`, minHeight: item.audioMinutes ? 4 : 0 }}
+            title={`${item.audioMinutes} phút · ${item.calls} lần gọi`}
           />
           <span className="text-[9.5px] text-[#A8A29E]">{formatDay(item.day)}</span>
         </div>
@@ -377,55 +373,57 @@ function MentorAdminPanel() {
   );
 }
 
-function AiCostPanel({ ai }) {
-  const { cost, quota } = ai;
+function AiUsagePanel({ ai }) {
+  const { usage, quota } = ai;
 
   return (
     <Panel
-      title="Chi phí & chất lượng AI"
-      subtitle="Số liệu ghi từ chính các lần gọi API, không phải ước tính"
+      title="Lượng dùng & chất lượng AI"
+      subtitle="Đo bằng chính đơn vị nhà cung cấp tính tiền: phút audio và token — đối chiếu thẳng được với hoá đơn"
     >
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard
           icon="today"
           accent="#16A34A"
-          label="Chi phí hôm nay"
-          value={formatUsd(cost.costTodayUsd)}
+          label="Lần gọi API hôm nay"
+          value={formatNumber(usage.callsToday)}
+          hint={`${usage.audioMinutesToday} phút audio`}
         />
         <StatCard
           icon="calendar_month"
           accent="#16A34A"
-          label="Chi phí tháng này"
-          value={formatUsd(cost.costMonthUsd)}
-          hint={`${cost.callsMonth} lần gọi API`}
+          label="Lần gọi API tháng này"
+          value={formatNumber(usage.callsMonth)}
+          hint={`${usage.sessionsMonth} phiên đã chấm`}
         />
         <StatCard
-          icon="trending_up"
-          accent="#D97757"
-          label="Dự phóng cả tháng"
-          value={formatUsd(cost.projectedMonthUsd)}
-          hint="Nếu giữ nguyên tốc độ hiện tại"
+          icon="graphic_eq"
+          label="Phút audio tháng này"
+          value={formatNumber(usage.audioMinutesMonth)}
+          hint="Tính tiền ở cả OpenAI và Azure"
         />
         <StatCard
-          icon="receipt_long"
-          label="Trung bình mỗi phiên"
-          value={formatUsd(cost.costPerSessionUsd)}
-          hint={`${cost.sessionsMonth} phiên đã chấm tháng này`}
+          icon="toll"
+          label="Token tháng này"
+          value={formatNumber(usage.inputTokensMonth + usage.outputTokensMonth)}
+          hint={`Vào ${formatNumber(usage.inputTokensMonth)} · ra ${formatNumber(usage.outputTokensMonth)}`}
         />
       </div>
 
       <div className="mt-5 grid gap-5 lg:grid-cols-2">
         <div>
           <h3 className="mb-2.5 text-[12.5px] font-semibold text-[#78716C]">
-            Tiền đi đâu (tháng này)
+            Số lần gọi theo loại (tháng này)
           </h3>
           <BarList
             accent="#16A34A"
-            items={cost.byOperation.map((row) => ({
+            items={usage.byOperation.map((row) => ({
               key: row.operation,
               label: OPERATION_LABELS[row.operation] || row.operation,
-              count: row.costUsd,
-              display: formatUsd(row.costUsd),
+              count: row.calls,
+              display: row.operation === 'feedback'
+                ? `${formatNumber(row.tokens)} tk`
+                : `${row.audioMinutes} ph`,
             }))}
             emptyText="Chưa có lần gọi API nào trong tháng."
           />
@@ -436,36 +434,42 @@ function AiCostPanel({ ai }) {
 
         <div>
           <h3 className="mb-2.5 text-[12.5px] font-semibold text-[#78716C]">
-            Chi phí 14 ngày gần nhất
+            Phút audio 14 ngày gần nhất
           </h3>
-          <CostChart items={cost.daily} />
+          <UsageChart items={usage.daily} />
         </div>
       </div>
 
       <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {/* The per-session figures are what let you forecast: multiply by the
+            number of practices you expect and you have next month's volume. */}
         <div className="rounded-xl bg-[#F7F5F2] px-3 py-2.5">
-          <div className="text-[11.5px] text-[#78716C]">Phút audio đã xử lý</div>
-          <div className="text-[18px] font-bold tabular-nums">{cost.audioMinutesMonth}</div>
-          <div className="text-[11px] text-[#A8A29E]">Trong tháng này</div>
+          <div className="text-[11.5px] text-[#78716C]">Phút audio mỗi phiên</div>
+          <div className="text-[18px] font-bold tabular-nums">{usage.audioMinutesPerSession}</div>
+          <div className="text-[11px] text-[#A8A29E]">Trung bình tháng này</div>
         </div>
         <div className="rounded-xl bg-[#F7F5F2] px-3 py-2.5">
-          <div className="text-[11.5px] text-[#78716C]">Tiền vào phiên chấm hỏng</div>
-          <div className={`text-[18px] font-bold tabular-nums ${cost.wastedCostMonthUsd > 0 ? 'text-[#DC2626]' : ''}`}>
-            {formatUsd(cost.wastedCostMonthUsd)}
+          <div className="text-[11.5px] text-[#78716C]">Token mỗi phiên</div>
+          <div className="text-[18px] font-bold tabular-nums">
+            {formatNumber(usage.tokensPerSession)}
           </div>
-          <div className="text-[11px] text-[#A8A29E]">{cost.wastedSessionsMonth} phiên</div>
+          <div className="text-[11px] text-[#A8A29E]">Trung bình tháng này</div>
         </div>
         <div className="rounded-xl bg-[#F7F5F2] px-3 py-2.5">
-          <div className="text-[11.5px] text-[#78716C]">Tổng chi phí từ trước tới nay</div>
-          <div className="text-[18px] font-bold tabular-nums">{formatUsd(cost.costTotalUsd)}</div>
-          <div className="text-[11px] text-[#A8A29E]">Tính từ lúc bật ghi nhận</div>
+          <div className="text-[11.5px] text-[#78716C]">Đổ vào phiên chấm hỏng</div>
+          <div className={`text-[18px] font-bold tabular-nums ${usage.wasted.sessions ? 'text-[#DC2626]' : ''}`}>
+            {usage.wasted.audioMinutes} phút
+          </div>
+          <div className="text-[11px] text-[#A8A29E]">
+            {usage.wasted.sessions} phiên · {formatNumber(usage.wasted.tokens)} token
+          </div>
         </div>
         <div className="rounded-xl bg-[#F7F5F2] px-3 py-2.5">
-          <div className="text-[11.5px] text-[#78716C]">Lượt nói chấm lỗi</div>
+          <div className="text-[11.5px] text-[#78716C]">Bài chấm lỗi</div>
           <div className="text-[18px] font-bold tabular-nums">
             {ai.byStatus.find((row) => row.status === 'failed')?.count ?? 0}
           </div>
-          <div className="text-[11px] text-[#A8A29E]">Bài chấm thất bại</div>
+          <div className="text-[11px] text-[#A8A29E]">Tính cả từ trước</div>
         </div>
       </div>
 
@@ -522,15 +526,12 @@ function AiCostPanel({ ai }) {
         </div>
       )}
 
-      {/* Showing the rates makes every number above checkable against the real
-          invoice. Providers change prices without notice, so a figure you cannot
-          trace back to a rate is a figure you cannot trust. */}
+      {/* Says out loud where money is not reported, so nobody reads the absence
+          of a dollar figure as "this is free". */}
       <p className="mt-5 text-[11px] leading-relaxed text-[#A8A29E]">
-        Đơn giá đang áp dụng: phiên âm {formatUsd(cost.pricing.transcriptionPerMinuteUsd)}/phút · chấm
-        phát âm {formatUsd(cost.pricing.pronunciationPerAudioHourUsd)}/giờ audio · nhận xét{' '}
-        {formatUsd(cost.pricing.feedbackInputPerMillionTokensUsd)} và{' '}
-        {formatUsd(cost.pricing.feedbackOutputPerMillionTokensUsd)} mỗi triệu token vào/ra. Sửa bằng
-        biến môi trường AI_PRICE_* nếu nhà cung cấp đổi giá.
+        Trang này không quy ra tiền: nhà cung cấp không trả về số tiền cho từng lần gọi, nên mọi con
+        số đô-la ở đây sẽ chỉ là ước đoán. Số tiền chính xác xem ở trang hoá đơn của OpenAI và Azure —
+        họ cũng tính theo đúng hai đại lượng phía trên.
       </p>
     </Panel>
   );
@@ -661,7 +662,7 @@ export default function AdminDashboardPage() {
               />
             </div>
 
-            <AiCostPanel ai={stats.ai} />
+            <AiUsagePanel ai={stats.ai} />
 
             <div className="grid gap-4 lg:grid-cols-2">
               <Panel title="Phân bổ trình độ (band)">

@@ -541,16 +541,18 @@ ADD COLUMN IF NOT EXISTS approver_id UUID REFERENCES users(id);
 ALTER TABLE classroom_posts
 ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP;
 
--- Nhật ký từng lần gọi API tính tiền (OpenAI phiên âm, Azure chấm phát âm,
--- OpenAI nhận xét). Trước bảng này app hoàn toàn mù về chi phí: chỉ biết tiền đã
--- tiêu khi nhận hoá đơn cuối tháng, và không biết phần nào tốn nhiều.
+-- Nhật ký từng lần gọi API mất phí (OpenAI phiên âm, Azure chấm phát âm, OpenAI
+-- nhận xét). Trước bảng này app hoàn toàn mù về lượng dùng: chỉ biết mình tiêu
+-- bao nhiêu khi nhận hoá đơn cuối tháng, và không biết phần nào tốn nhiều.
 --
--- cost_usd được tính lúc ghi và lưu cứng lại, cố ý như vậy: nếu nhà cung cấp đổi
--- giá thì chi phí lịch sử vẫn phản ánh giá tại thời điểm gọi, chứ không bị tính
--- lại theo giá mới.
+-- Cố ý CHỈ lưu đại lượng đo được — số giây audio và số token — chứ không quy ra
+-- tiền. Nhà cung cấp không trả về số tiền cho từng lần gọi, nên mọi con số tiền
+-- ở đây sẽ chỉ là phép nhân với một bảng đơn giá tự nhập, tức là một ước đoán
+-- đội lốt số liệu. Hoá đơn thật cũng tính theo chính hai đại lượng này, nên đối
+-- chiếu được trực tiếp.
 CREATE TABLE IF NOT EXISTS ai_usage (
   id UUID PRIMARY KEY,
-  -- Xoá phiên/lượt nói không được xoá lịch sử chi phí: tiền đã tiêu rồi.
+  -- Xoá phiên/lượt nói không được xoá lịch sử đã dùng: API đã gọi rồi.
   session_id UUID REFERENCES sessions(id) ON DELETE SET NULL,
   turn_id UUID REFERENCES turns(id) ON DELETE SET NULL,
   provider VARCHAR(20) NOT NULL,
@@ -559,8 +561,6 @@ CREATE TABLE IF NOT EXISTS ai_usage (
   audio_seconds DECIMAL(10,2) NOT NULL DEFAULT 0,
   input_tokens INTEGER NOT NULL DEFAULT 0,
   output_tokens INTEGER NOT NULL DEFAULT 0,
-  cost_usd DECIMAL(12,6) NOT NULL DEFAULT 0,
-  succeeded BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMP DEFAULT NOW(),
   CHECK (provider IN ('openai', 'azure')),
   CHECK (operation IN ('transcription', 'pronunciation', 'feedback'))
