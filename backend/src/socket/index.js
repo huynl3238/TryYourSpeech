@@ -11,6 +11,7 @@ import { authenticateSocket } from './auth.js';
 const MAX_BAND_DIFFERENCE = 1.0;
 const MAX_DISPLAY_NAME_LENGTH = 100;
 const READY_WAIT_TIMEOUT_MS = 60000;
+const CONNECT_WAIT_TIMEOUT_MS = 45000;
 const SIGNAL_TYPES = new Set(['offer', 'answer', 'ice-candidate']);
 const SESSION_MODES = new Set(['peer', 'mentor']);
 const USER_ROLES = new Set(['student', 'mentor']);
@@ -207,46 +208,80 @@ function getPartnerSocketId(roomId, mySocketId) {
     : room.userA.socketId;
 }
 
+// A room walks through four phases:
+//   devices    both sides are still checking mic/camera
+//   signaling  both pressed ready; offer/answer/ICE are in flight
+//   active     WebRTC really connected, the practice timeline is running
+//   done       practice finished, the pair moved on to writing their reviews
+//
+// The phase exists because a lost socket means something different in each one.
+// During `signaling` it is a failed match; during `done` it means nothing at all
+// and must not touch the session.
 function createRoom(roomId, userA, userB, sessionId, sessionMode) {
   rooms.set(roomId, {
     userA,
     userB,
     sessionMode,
-    readyUsers: new Set(),
+    phase: 'devices',
+    deviceReadyUsers: new Set(),
+    connectedUsers: new Set(),
+    practiceCompleteUsers: new Set(),
     practiceReadyUsers: new Set(),
     practiceStarted: false,
     sessionId,
     readyTimeout: null,
+    connectTimeout: null,
   });
   userRoom.set(userA.socketId, roomId);
   userRoom.set(userB.socketId, roomId);
+}
+
+function clearRoomTimers(room) {
+  if (room.readyTimeout) {
+    clearTimeout(room.readyTimeout);
+    room.readyTimeout = null;
+  }
+
+  if (room.connectTimeout) {
+    clearTimeout(room.connectTimeout);
+    room.connectTimeout = null;
+  }
 }
 
 function deleteRoom(roomId) {
   const room = rooms.get(roomId);
   if (!room) return;
 
-  if (room.readyTimeout) {
-    clearTimeout(room.readyTimeout);
-  }
-
+  clearRoomTimers(room);
   userRoom.delete(room.userA.socketId);
   userRoom.delete(room.userB.socketId);
   rooms.delete(roomId);
 }
 
-async function abandonRoom(io, roomId) {
+// The single exit for every failure that ends a room before the practice is
+// over. `reason` is the event name the clients receive, and it has to name what
+// actually happened: sending `partner_disconnected` for a ready timeout or a
+// broken microphone had people hunting a network fault that was never there.
+//
+// The room is removed *before* the await on purpose. Emitting first and deleting
+// after left a window where a `peer_connected` arriving mid-await still found
+// the room and started the session, so both clients got `partner_disconnected`
+// and `session_start` for the same room.
+async function closeRoom(io, roomId, reason, { skipSocketId = null } = {}) {
   const room = rooms.get(roomId);
   if (!room) return;
 
-  io.to(room.userA.socketId).emit('partner_disconnected');
-  io.to(room.userB.socketId).emit('partner_disconnected');
+  for (const socketId of [room.userA.socketId, room.userB.socketId]) {
+    if (socketId !== skipSocketId) {
+      io.to(socketId).emit(reason);
+    }
+  }
+
+  deleteRoom(roomId);
 
   if (room.sessionId) {
     await markSessionAbandoned(room.sessionId);
   }
-
-  deleteRoom(roomId);
 }
 
 function emitMatched(io, userA, userB, roomId, session, sessionMode) {
@@ -423,34 +458,100 @@ function handleSignal(io, socket, data) {
   if (partnerSocketId) io.to(partnerSocketId).emit('signal', data);
 }
 
+// Someone pressed "I'm ready" on the device check. This only means their mic and
+// camera work — nothing has been negotiated yet, which is why it no longer starts
+// the session on its own.
+function handleDeviceReady(io, socket) {
+  const roomId = userRoom.get(socket.id);
+  if (!roomId) return;
+
+  const room = rooms.get(roomId);
+  if (!room || room.phase !== 'devices') return;
+
+  room.deviceReadyUsers.add(socket.id);
+
+  if (room.deviceReadyUsers.size < 2) {
+    if (!room.readyTimeout) {
+      room.readyTimeout = setTimeout(() => {
+        closeRoom(io, roomId, 'partner_not_ready').catch((err) => {
+          console.error('ready timeout handling failed:', err.message);
+        });
+      }, READY_WAIT_TIMEOUT_MS);
+      room.readyTimeout.unref?.();
+    }
+    return;
+  }
+
+  clearRoomTimers(room);
+  room.phase = 'signaling';
+  io.to(room.userA.socketId).emit('begin_signaling');
+  io.to(room.userB.socketId).emit('begin_signaling');
+
+  room.connectTimeout = setTimeout(() => {
+    closeRoom(io, roomId, 'webrtc_failed').catch((err) => {
+      console.error('connect timeout handling failed:', err.message);
+    });
+  }, CONNECT_WAIT_TIMEOUT_MS);
+  room.connectTimeout.unref?.();
+}
+
+// WebRTC has actually reached `connected` on this client. Only now is the media
+// link real, so only now may the session clock start. It used to fire on the
+// ready button, which meant the server called a session active while the two
+// browsers had not exchanged a single packet.
 async function handlePeerConnected(io, socket) {
   const roomId = userRoom.get(socket.id);
   if (!roomId) return;
 
   const room = rooms.get(roomId);
-  room.readyUsers.add(socket.id);
+  if (!room || room.phase !== 'signaling') return;
 
-  if (room.readyUsers.size === 2) {
-    if (room.readyTimeout) {
-      clearTimeout(room.readyTimeout);
-      room.readyTimeout = null;
-    }
+  room.connectedUsers.add(socket.id);
+  if (room.connectedUsers.size < 2) return;
 
-    const timestamp = Date.now();
-    await markSessionActive(room.sessionId);
-    io.to(room.userA.socketId).emit('session_start', { timestamp });
-    io.to(room.userB.socketId).emit('session_start', { timestamp });
-    console.log(`[Session] Room ${roomId} started at ${timestamp}`);
-    return;
-  }
+  clearRoomTimers(room);
+  room.phase = 'active';
 
-  if (!room.readyTimeout) {
-    room.readyTimeout = setTimeout(() => {
-      abandonRoom(io, roomId).catch((err) => {
-        console.error('ready timeout handling failed:', err.message);
-      });
-    }, READY_WAIT_TIMEOUT_MS);
-    room.readyTimeout.unref?.();
+  const timestamp = Date.now();
+  await markSessionActive(room.sessionId);
+  io.to(room.userA.socketId).emit('session_start', { timestamp });
+  io.to(room.userB.socketId).emit('session_start', { timestamp });
+  console.log(`[Session] Room ${roomId} started at ${timestamp}`);
+}
+
+// This client's microphone or camera could not be opened. The person it happened
+// to is already looking at a screen explaining it, so only the partner is told —
+// and told the real reason instead of being sent to debug their own connection.
+function handleDeviceFailed(io, socket) {
+  const roomId = userRoom.get(socket.id);
+  if (!roomId) return;
+
+  const room = rooms.get(roomId);
+  if (!room || room.phase === 'done') return;
+
+  closeRoom(io, roomId, 'partner_device_failed', { skipSocketId: socket.id }).catch((err) => {
+    console.error('device_failed handling failed:', err.message);
+  });
+}
+
+// The practice timeline finished and both sides are heading for the review
+// phase. Marking the room done is what stops a later disconnect — closing the
+// tab, hitting refresh, or starting a new search — from abandoning a session
+// whose practice actually succeeded and whose AI results are still owed.
+function handlePracticeComplete(socket) {
+  const roomId = userRoom.get(socket.id);
+  if (!roomId) return;
+
+  const room = rooms.get(roomId);
+  if (!room) return;
+
+  room.phase = 'done';
+  clearRoomTimers(room);
+  room.practiceCompleteUsers.add(socket.id);
+
+  if (room.practiceCompleteUsers.size === 2) {
+    console.log(`[Session] Room ${roomId} finished practice`);
+    deleteRoom(roomId);
   }
 }
 
@@ -459,7 +560,7 @@ function handlePracticeReady(io, socket) {
   if (!roomId) return;
 
   const room = rooms.get(roomId);
-  if (!room || room.readyUsers.size < 2) return;
+  if (!room || room.phase !== 'active') return;
 
   room.practiceReadyUsers.add(socket.id);
   emitPracticeReadyState(io, room);
@@ -577,15 +678,25 @@ async function handleDisconnect(io, socket) {
   const roomId = userRoom.get(socket.id);
   if (!roomId) return;
 
+  const room = rooms.get(roomId);
+
+  // Practice is already over and both sides are writing their reviews — they do
+  // not need this socket anymore. Tearing the room down quietly here is the
+  // difference between a finished session and one marked abandoned, which also
+  // blocks review completion and means the AI never runs on it.
+  if (room?.phase === 'done') {
+    deleteRoom(roomId);
+    return;
+  }
+
   const partnerSocketId = getPartnerSocketId(roomId, socket.id);
   if (partnerSocketId) io.to(partnerSocketId).emit('partner_disconnected');
 
-  const room = rooms.get(roomId);
+  deleteRoom(roomId);
+
   if (room?.sessionId) {
     await markSessionAbandoned(room.sessionId);
   }
-
-  deleteRoom(roomId);
 }
 
 // Realtime snapshot for the admin dashboard. Reads the in-memory matchmaking
@@ -619,11 +730,14 @@ export function setupSocket(io) {
     });
     socket.on('cancel_find_match', () => handleCancelFindMatch(socket));
     socket.on('signal', (data) => handleSignal(io, socket, data));
+    socket.on('device_ready', () => handleDeviceReady(io, socket));
+    socket.on('device_failed', () => handleDeviceFailed(io, socket));
     socket.on('peer_connected', () => {
       handlePeerConnected(io, socket).catch((err) => {
         console.error('peer_connected failed:', err.message);
       });
     });
+    socket.on('practice_complete', () => handlePracticeComplete(socket));
     socket.on('practice_ready', () => handlePracticeReady(io, socket));
     socket.on('join_mentor_room', (data) => {
       handleJoinMentorRoom(io, socket, data).catch((err) => {

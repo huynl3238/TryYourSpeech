@@ -231,7 +231,10 @@ Nếu tính năng đã nằm trong MVP và cách làm đã được quy định 
 | `find_match` | `{ displayName, band }` | Người dùng muốn tìm đối tác |
 | `cancel_find_match` | — | Huỷ tìm kiếm |
 | `signal` | `{ type, payload }` | Relay WebRTC signal sang đối tác |
-| `peer_connected` | — | WebRTC P2P đã kết nối thành công |
+| `device_ready` | — | Người dùng bấm "Tôi đã sẵn sàng"; mic/camera OK, **chưa** đàm phán gì |
+| `device_failed` | — | Không mở được mic/camera trên máy này |
+| `peer_connected` | — | `pc.connectionState === 'connected'`, kết nối media đã thật sự thông |
+| `practice_complete` | — | Hết timeline luyện nói, đang chuyển sang giai đoạn đánh giá |
 
 ### Server → Client
 
@@ -241,8 +244,22 @@ Nếu tính năng đã nằm trong MVP và cách làm đã được quy định 
 | `matched` | `{ roomId, sessionId, userId, partnerId, role, isInitiator, partnerName }` | Đã ghép cặp |
 | `match_error` | `{ error }` | Không thể ghép cặp/tạo session |
 | `signal` | `{ type, payload }` | Relay từ đối tác |
-| `session_start` | `{ timestamp }` | Cả hai ready, bắt đầu session |
-| `partner_disconnected` | — | Đối tác mất kết nối |
+| `begin_signaling` | — | Cả hai đã `device_ready`; bắt đầu offer/answer |
+| `session_start` | `{ timestamp }` | Cả hai đã `peer_connected`, bắt đầu session |
+| `partner_disconnected` | — | Đối tác rời đi khi phiên chưa luyện xong |
+| `partner_not_ready` | — | Đối tác không xác nhận sẵn sàng trong 60s |
+| `partner_device_failed` | — | Mic/camera của đối tác hỏng (chỉ gửi cho người còn lại) |
+| `webrtc_failed` | — | Hai máy không kết nối được với nhau trong 45s |
+
+### Vòng đời một room
+
+`devices → signaling → active → done`. Phase quyết định một socket mất kết nối
+có nghĩa gì: ở `signaling` là ghép hỏng, ở `done` thì **không có nghĩa gì cả** và
+tuyệt đối không được đụng vào session.
+
+Bốn event lỗi ở trên trước đây gộp chung thành `partner_disconnected`, nên micro
+hỏng, đối tác bấm chậm và tab bị đóng đều báo cùng một câu sai sự thật. Thêm lỗi
+mới thì thêm event mới, đừng gộp lại.
 
 ### `signal.type` values
 - `offer` — WebRTC offer SDP
@@ -669,11 +686,17 @@ Backend là nguồn sự thật cho `sessions.status`. Frontend không tự quy�
 | Transition | Trigger | Backend xử lý |
 |---|---|---|
 | `matched` | Hai user được ghép cặp | Tạo `users`, `sessions`, `turns`; emit `matched` |
-| `matched → active` | Cả hai client emit `peer_connected`; backend emit `session_start` | Set `started_at = NOW()`, `status = 'active'` |
+| `matched → active` | Cả hai client emit `peer_connected` — nghĩa là WebRTC đã thật sự `connected`, không phải vừa bấm nút sẵn sàng; backend emit `session_start` | Set `started_at = NOW()`, `status = 'active'` |
 | `active → reviewing` | Client bắt đầu gửi upload audio hoặc peer notes sau khi session luyện nói kết thúc | Set `status = 'reviewing'` nếu session đang `active` |
 | `reviewing → processing` | Cả hai user đã `review/complete` và tất cả turns cần chấm đã upload audio | Bắt đầu AI pipeline cho các turns có audio |
 | `processing → completed` | Mọi `ai_results` của session đã ở trạng thái terminal `completed` hoặc `failed` | Set `ended_at = NOW()`, `status = 'completed'` |
-| `matched/active/reviewing → abandoned` | Một user disconnect trước khi session hoàn tất | Emit `partner_disconnected`, set `ended_at = NOW()`, `status = 'abandoned'` |
+| `matched/active → abandoned` | Một user disconnect **khi phần luyện nói chưa xong** (room chưa ở phase `done`) | Emit `partner_disconnected`, set `ended_at = NOW()`, `status = 'abandoned'` |
+
+**`reviewing` không bao giờ bị chuyển thành `abandoned`.** Phiên đã luyện và đã
+ghi âm xong, hai người chỉ còn đánh dấu lỗi cho nhau. Huỷ ở đây là vứt bỏ công
+sức đã hoàn thành: `review/complete` từ chối phiên `abandoned` nên không ai kết
+thúc được, và AI — vốn chỉ chạy khi cả hai đã đánh giá xong — không bao giờ chạy.
+Chỉ cần một người bấm F5 là đủ kích hoạt.
 
 Upload audio có thể xảy ra trong review phase. Thứ tự frontend khuyến nghị:
 
@@ -909,11 +932,17 @@ PostgreSQL không tự cập nhật `updated_at`. MVP không cần trigger riên
 ### User không cấp quyền camera/microphone
 
 - Hiển thị lỗi tiếng Việt rõ ràng và cho phép thử lại.
-- Không emit `peer_connected` nếu chưa có local media stream cần thiết.
+- Không emit `device_ready` nếu chưa có local media stream cần thiết.
+- Emit `device_failed` chứ **không** ngắt socket. Ngắt socket khiến đối tác nhận
+  `partner_disconnected` và đi tìm lỗi mạng, trong khi nguyên nhân thật là micro
+  bên này chưa được cấp quyền.
 - Nếu MVP chỉ cần audio, video permission fail không được làm hỏng audio flow.
 
 ### WebRTC không kết nối được
 
+- Server có timeout riêng 45s kể từ `begin_signaling`; hết hạn thì emit
+  `webrtc_failed` cho cả hai. Đây là event riêng, không dùng chung với
+  `partner_disconnected`.
 - Nếu ICE state là `failed`, `disconnected` quá lâu, hoặc không nhận remote track sau một timeout hợp lý, hiển thị lỗi và cho phép user quay lại tìm đối tác.
 - Local development chấp nhận chỉ dùng STUN. Không tự thêm TURN production nếu user chưa xác nhận.
 

@@ -3,15 +3,10 @@ import { useSession } from '../context/SessionContext';
 import { getConfig } from '../services/api';
 import { cleanupMediaSession, rememberMediaStream } from '../utils/mediaCleanup';
 
-export function useWebRTC({ sendSignal, onSignal, onRemoteStream }) {
+export function useWebRTC({ sendSignal, onSignal, onRemoteStream, onConnectionStateChange }) {
   const { refs } = useSession();
 
-  const initPeerConnection = useCallback(async () => {
-    const existingPc = refs.current.peerConnection;
-    if (existingPc && existingPc.signalingState !== 'closed') {
-      return existingPc;
-    }
-
+  const buildPeerConnection = useCallback(async () => {
     // Fetch ICE config from backend
     let iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
     try {
@@ -45,10 +40,33 @@ export function useWebRTC({ sendSignal, onSignal, onRemoteStream }) {
 
     pc.onconnectionstatechange = () => {
       console.log('[WebRTC] Connection state:', pc.connectionState);
+      if (onConnectionStateChange) {
+        onConnectionStateChange(pc.connectionState);
+      }
     };
 
     return pc;
-  }, [sendSignal, onRemoteStream, refs]);
+  }, [sendSignal, onRemoteStream, onConnectionStateChange, refs]);
+
+  const initPeerConnection = useCallback(async () => {
+    const existingPc = refs.current.peerConnection;
+    if (existingPc && existingPc.signalingState !== 'closed') {
+      return existingPc;
+    }
+
+    // Same in-flight guard as getLocalStream, and for the same reason: the await
+    // on getConfig() sits between the check above and the assignment inside
+    // buildPeerConnection, so overlapping calls each built their own
+    // RTCPeerConnection and the first was silently orphaned along with any
+    // tracks already added to it.
+    if (!refs.current.peerConnectionPromise) {
+      refs.current.peerConnectionPromise = buildPeerConnection().finally(() => {
+        refs.current.peerConnectionPromise = null;
+      });
+    }
+
+    return refs.current.peerConnectionPromise;
+  }, [buildPeerConnection, refs]);
 
   const addLocalTracks = useCallback((localStream) => {
     const pc = refs.current.peerConnection;
@@ -123,9 +141,25 @@ export function useWebRTC({ sendSignal, onSignal, onRemoteStream }) {
       return existingStream;
     }
 
-    const stream = rememberMediaStream(await navigator.mediaDevices.getUserMedia(constraints));
-    refs.current.localStream = stream;
-    return stream;
+    // The check above runs before the await while the assignment runs after it,
+    // so two overlapping calls both saw "no stream yet" and both opened the
+    // camera — React StrictMode does exactly that in development. The second
+    // stream replaced the first, leaving its tracks live with the camera light
+    // still on and an extra track already added to the peer connection. Sharing
+    // the in-flight promise makes the second caller wait for the first.
+    if (!refs.current.localStreamPromise) {
+      refs.current.localStreamPromise = navigator.mediaDevices
+        .getUserMedia(constraints)
+        .then((stream) => {
+          refs.current.localStream = rememberMediaStream(stream);
+          return refs.current.localStream;
+        })
+        .finally(() => {
+          refs.current.localStreamPromise = null;
+        });
+    }
+
+    return refs.current.localStreamPromise;
   }, [refs]);
 
   const stopAll = useCallback(() => {

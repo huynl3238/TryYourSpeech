@@ -3,6 +3,18 @@ import { socket } from '../services/socket';
 import { useSession } from '../context/SessionContext';
 import { cleanupMediaSession } from '../utils/mediaCleanup';
 
+// The timeline is driven from performance.now(), which no clock change can move.
+// The server timestamp is used only to recover the delivery delay, and that is
+// where the machine's wall clock leaks in: Date.now() - serverTimestamp is the
+// delay plus whatever the two clocks disagree by.
+//
+// The tolerance is deliberately small. It used to be five minutes, so a laptop
+// running a minute behind the server started the session a minute into the
+// timeline — a wrong turn, or straight into the partner's speaking slot. A
+// websocket event does not take ten seconds to arrive; anything larger is a
+// clock difference, and ignoring it costs only the real delivery delay.
+const MAX_PLAUSIBLE_DELIVERY_DELAY_MS = 10 * 1000;
+
 function getSessionStartLocalTime(serverTimestamp) {
   if (!Number.isFinite(serverTimestamp)) {
     return performance.now();
@@ -10,7 +22,7 @@ function getSessionStartLocalTime(serverTimestamp) {
 
   const elapsedSinceServerStart = Date.now() - serverTimestamp;
 
-  if (elapsedSinceServerStart < 0 || elapsedSinceServerStart > 5 * 60 * 1000) {
+  if (elapsedSinceServerStart < 0 || elapsedSinceServerStart > MAX_PLAUSIBLE_DELIVERY_DELAY_MS) {
     return performance.now();
   }
 
@@ -74,14 +86,41 @@ export function useSocket() {
       });
     }
 
-    function handlePartnerDisconnected() {
-      cleanupMediaSession(refs);
-      dispatch({
-        type: 'SET_ERROR',
-        payload: { type: 'partner_disconnected', message: 'Đối tác đã ngắt kết nối' },
-      });
-      dispatch({ type: 'SET_PHASE', payload: 'error' });
+    // Every way a match can die before the practice starts used to arrive as
+    // `partner_disconnected`, so a flat microphone, a slow permission prompt and
+    // a closed tab all told the other person the same untrue thing. Each cause
+    // now has its own event and its own wording.
+    function failMatch(type, title, message) {
+      return function handleMatchFailure() {
+        cleanupMediaSession(refs);
+        dispatch({ type: 'SET_ERROR', payload: { type, title, message } });
+        dispatch({ type: 'SET_PHASE', payload: 'error' });
+      };
     }
+
+    const handlePartnerDisconnected = failMatch(
+      'partner_disconnected',
+      'Đối tác đã ngắt kết nối',
+      'Đối tác đã rời khỏi phiên luyện tập. Vui lòng tìm đối tác mới.'
+    );
+
+    const handlePartnerNotReady = failMatch(
+      'partner_not_ready',
+      'Đối tác chưa sẵn sàng kịp',
+      'Đối tác không xác nhận sẵn sàng trong 60 giây. Có thể họ đang gặp trục trặc với micro hoặc camera.'
+    );
+
+    const handlePartnerDeviceFailed = failMatch(
+      'partner_device_failed',
+      'Đối tác gặp sự cố thiết bị',
+      'Micro hoặc camera của đối tác không hoạt động nên phiên không thể bắt đầu. Thiết bị của bạn vẫn bình thường.'
+    );
+
+    const handleWebrtcFailed = failMatch(
+      'webrtc_failed',
+      'Không thiết lập được kết nối',
+      'Hai máy không kết nối được với nhau, thường do tường lửa hoặc mạng hạn chế. Thử lại bằng mạng khác nếu lỗi lặp lại.'
+    );
 
     socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
@@ -92,6 +131,9 @@ export function useSocket() {
     socket.on('practice_ready_state', handlePracticeReadyState);
     socket.on('practice_start', handlePracticeStart);
     socket.on('partner_disconnected', handlePartnerDisconnected);
+    socket.on('partner_not_ready', handlePartnerNotReady);
+    socket.on('partner_device_failed', handlePartnerDeviceFailed);
+    socket.on('webrtc_failed', handleWebrtcFailed);
 
     return () => {
       socket.off('connect', handleConnect);
@@ -103,6 +145,9 @@ export function useSocket() {
       socket.off('practice_ready_state', handlePracticeReadyState);
       socket.off('practice_start', handlePracticeStart);
       socket.off('partner_disconnected', handlePartnerDisconnected);
+      socket.off('partner_not_ready', handlePartnerNotReady);
+      socket.off('partner_device_failed', handlePartnerDeviceFailed);
+      socket.off('webrtc_failed', handleWebrtcFailed);
     };
   }, [dispatch, refs]);
 
@@ -135,8 +180,32 @@ export function useSocket() {
     socket.emit('signal', { type, payload });
   }, []);
 
+  // Mic and camera work and the user pressed ready. Negotiation has not started.
+  const notifyDeviceReady = useCallback(() => {
+    socket.emit('device_ready');
+  }, []);
+
+  // Mic or camera could not be opened, so the partner is told the real cause
+  // instead of being handed a disconnect they cannot act on.
+  const notifyDeviceFailed = useCallback(() => {
+    socket.emit('device_failed');
+  }, []);
+
+  // WebRTC reported `connected`: the media link is real and the session clock
+  // may start. Nothing before this point proves the two browsers can talk.
   const notifyPeerConnected = useCallback(() => {
     socket.emit('peer_connected');
+  }, []);
+
+  // The practice timeline ran out. This retires the room so that later leaving
+  // the page during review cannot be mistaken for abandoning the session.
+  const notifyPracticeComplete = useCallback(() => {
+    socket.emit('practice_complete');
+  }, []);
+
+  const onBeginSignaling = useCallback((handler) => {
+    socket.on('begin_signaling', handler);
+    return () => socket.off('begin_signaling', handler);
   }, []);
 
   const notifyPracticeReady = useCallback(() => {
@@ -159,9 +228,13 @@ export function useSocket() {
     cancelMatch,
     joinMentorRoom,
     sendSignal,
+    notifyDeviceReady,
+    notifyDeviceFailed,
     notifyPeerConnected,
+    notifyPracticeComplete,
     notifyPracticeReady,
     disconnectSocket,
     onSignal,
+    onBeginSignaling,
   };
 }

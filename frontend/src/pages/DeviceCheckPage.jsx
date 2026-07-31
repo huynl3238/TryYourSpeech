@@ -10,6 +10,16 @@ import { Badge } from '../components/ui/badge';
 import { Card, CardContent } from '../components/ui/card';
 import { cleanupMediaSession } from '../utils/mediaCleanup';
 
+// Every way a match can die before the practice starts. They share one screen
+// but each carries its own title and wording from the server event, so the user
+// is told which of the four actually happened.
+const MATCH_FAILURE_TYPES = new Set([
+  'partner_disconnected',
+  'partner_not_ready',
+  'partner_device_failed',
+  'webrtc_failed',
+]);
+
 function StatusRow({ status, label }) {
   return (
     <div className="flex items-center gap-2.5">
@@ -29,10 +39,19 @@ function StatusRow({ status, label }) {
 
 export default function DeviceCheckPage() {
   const { state, dispatch, refs } = useSession();
-  const { sendSignal, onSignal, notifyPeerConnected, disconnectSocket } = useSocket();
+  const {
+    sendSignal,
+    onSignal,
+    onBeginSignaling,
+    notifyDeviceReady,
+    notifyDeviceFailed,
+    notifyPeerConnected,
+    disconnectSocket,
+  } = useSocket();
   const navigate = useNavigate();
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
+  const hasReportedConnectedRef = useRef(false);
 
   const [micStatus, setMicStatus] = useState('checking');
   const [camStatus, setCamStatus] = useState('checking');
@@ -48,10 +67,22 @@ export default function DeviceCheckPage() {
     }
   }, []);
 
+  // `connected` is the only proof the two browsers can actually exchange media,
+  // so it is the only thing allowed to tell the server the pair is ready. A
+  // failure here is left to the server's connect timeout, which reports it as
+  // webrtc_failed to both sides rather than as one of them disconnecting.
+  const handleConnectionStateChange = useCallback((connectionState) => {
+    if (connectionState === 'connected' && !hasReportedConnectedRef.current) {
+      hasReportedConnectedRef.current = true;
+      notifyPeerConnected();
+    }
+  }, [notifyPeerConnected]);
+
   const { initPeerConnection, addLocalTracks, startCall, getLocalStream } = useWebRTC({
     sendSignal,
     onSignal,
     onRemoteStream: handleRemoteStream,
+    onConnectionStateChange: handleConnectionStateChange,
   });
 
   useEffect(() => {
@@ -68,7 +99,10 @@ export default function DeviceCheckPage() {
       } catch (err) {
         console.error('[DeviceCheck] Media error:', err.message);
         cleanupMediaSession(refs, [localVideoRef, remoteVideoRef]);
-        disconnectSocket();
+        // Was disconnectSocket(), which reached the partner as "your partner
+        // left" — a lie that sent them looking for a network problem while the
+        // real cause was a microphone permission on this side.
+        notifyDeviceFailed();
         if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
           setPermissionError('camera_mic');
         } else if (err.name === 'NotFoundError') {
@@ -81,7 +115,7 @@ export default function DeviceCheckPage() {
       }
     }
     if (state.sessionId) setup();
-  }, [state.sessionId, getLocalStream, initPeerConnection, addLocalTracks, disconnectSocket]);
+  }, [state.sessionId, getLocalStream, initPeerConnection, addLocalTracks, notifyDeviceFailed]);
 
   useEffect(() => {
     async function loadSession() {
@@ -101,17 +135,26 @@ export default function DeviceCheckPage() {
     loadSession();
   }, [state.sessionId, sessionLoadRetry, dispatch]);
 
+  // Negotiation starts as soon as both sides press ready, not after
+  // session_start. The session cannot start until this connection reports
+  // `connected`, so it has to be established first — the old order had the
+  // server declaring a session active before any offer had been sent.
   useEffect(() => {
-    if (state.phase === 'in_session') {
-      if (refs.current.localStream) {
-        startCall(refs.current.localStream, state.isInitiator);
-      }
-      navigate('/session');
-    }
-  }, [state.phase, navigate, state.isInitiator, startCall, refs]);
+    return onBeginSignaling(() => {
+      const localStream = refs.current.localStream;
+      if (!localStream) return;
+      startCall(localStream, state.isInitiator);
+    });
+  }, [onBeginSignaling, startCall, state.isInitiator, refs]);
 
   useEffect(() => {
-    if (state.error?.type === 'partner_disconnected') {
+    if (state.phase === 'in_session') {
+      navigate('/session');
+    }
+  }, [state.phase, navigate]);
+
+  useEffect(() => {
+    if (MATCH_FAILURE_TYPES.has(state.error?.type)) {
       cleanupMediaSession(refs, [localVideoRef, remoteVideoRef]);
     }
   }, [state.error, refs]);
@@ -119,15 +162,15 @@ export default function DeviceCheckPage() {
   function handleReady() {
     if (sessionLoadStatus !== 'loaded') return;
     setIsReady(true);
-    notifyPeerConnected();
+    notifyDeviceReady();
   }
 
-  if (state.error?.type === 'partner_disconnected') {
+  if (MATCH_FAILURE_TYPES.has(state.error?.type)) {
     return (
       <ErrorScreen
         icon="link_off"
-        title="Đối tác không còn sẵn sàng"
-        description="Đối tác đã ngắt kết nối. Vui lòng quay lại để tìm đối tác mới."
+        title={state.error.title || 'Không thể bắt đầu phiên'}
+        description={state.error.message}
         actions={
           <Button onClick={() => { cleanupMediaSession(refs, [localVideoRef, remoteVideoRef]); dispatch({ type: 'RESET' }); navigate('/'); }}>
             Tìm đối tác mới

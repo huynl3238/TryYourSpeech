@@ -398,12 +398,18 @@ export async function markSessionActive(sessionId) {
   );
 }
 
+// Deliberately stops at 'active'. A session in 'reviewing' has already been
+// practised and recorded — the two of them just have not finished marking each
+// other's errors yet. Abandoning it there threw away completed work: review
+// completion rejects an abandoned session, so neither side could finish and the
+// AI, which only runs once both reviews are in, never ran at all. One person
+// refreshing the page was enough to trigger it.
 export async function markSessionAbandoned(sessionId) {
   await pool.query(
     `
       UPDATE sessions
       SET status = 'abandoned', ended_at = NOW()
-      WHERE id = $1 AND status IN ('matched', 'active', 'reviewing')
+      WHERE id = $1 AND status IN ('matched', 'active')
     `,
     [sessionId]
   );

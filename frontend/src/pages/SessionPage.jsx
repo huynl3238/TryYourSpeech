@@ -76,7 +76,7 @@ function SessionLoadingScreen() {
 
 export default function SessionPage() {
   const { state, dispatch, refs } = useSession();
-  const { sendSignal, onSignal, notifyPracticeReady, disconnectSocket } = useSocket();
+  const { sendSignal, onSignal, notifyPracticeReady, notifyPracticeComplete, disconnectSocket } = useSocket();
   const navigate = useNavigate();
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
@@ -160,6 +160,11 @@ export default function SessionPage() {
     hasNavigatedToReviewRef.current = true;
     stopLocalRecording();
     stopRemoteRecording();
+    // Retire the room before leaving for the review phase. Without this the room
+    // outlived the call, and the next disconnect — a refresh, a closed tab, or
+    // simply searching for a new partner — was read as abandoning a session that
+    // had in fact finished, which blocked review completion and the AI with it.
+    notifyPracticeComplete();
     cleanupMediaSession(refs, [localVideoRef, remoteVideoRef]);
     // Mentor sessions branch to the mentor-review flow (mentor writes feedback,
     // student reads it) instead of the peer note-review flow.
@@ -168,7 +173,7 @@ export default function SessionPage() {
     } else {
       navigate('/review');
     }
-  }, [syncedTimeline?.isComplete, navigate, refs, stopLocalRecording, stopRemoteRecording, state.sessionMode]);
+  }, [syncedTimeline?.isComplete, navigate, refs, stopLocalRecording, stopRemoteRecording, notifyPracticeComplete, state.sessionMode]);
 
   useEffect(() => {
     if (!state.sessionId) {
