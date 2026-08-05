@@ -55,7 +55,7 @@ Backend reads `backend/.env` (`process.env.X`); frontend reads `import.meta.env.
 
 ### Backend (`backend/src`, ESM, no TypeScript)
 
-- `server.js` → `app.js`: Express app wiring, static serving of `/uploads/audio`, `/health`, and `/api` routes; `server.js` also creates the Socket.IO server and tests DB/Redis on boot.
+- `server.js` → `app.js`: Express app wiring, `/health`, and `/api` routes; `server.js` also creates the Socket.IO server and tests DB/Redis on boot. There is deliberately no static mount for `/uploads/audio` — recordings are served only by `GET /api/turns/:turnId/audio`, which checks who is asking (see `AGENTS.md` "Nghe lại audio").
 - `socket/index.js`: **the entire realtime layer.** In-memory `waitingQueue`, `rooms`, and `userRoom` maps drive band-difference matchmaking (`MAX_BAND_DIFFERENCE = 1.0`), WebRTC signal relaying, ready-state tracking, `session_start`/`practice_start` broadcasts, and disconnect/abandon handling. Read this file before touching anything socket-, matchmaking-, room-, or signaling-related. Do not use `socket.id` as a DB user id.
 - `routes/index.js`: all HTTP endpoints (config, health, sessions, results + retry, audio upload, peer-notes batch, review complete). Heavy input validation (UUID regex, payload shape) lives here; audio upload does a safe temp→final file swap with backup/restore on failure.
 - `models/`: DB access + orchestration layer over PostgreSQL. Session lifecycle, turns, audio-upload status, peer reviews, AI results, and the AI pipeline are each their own model module.

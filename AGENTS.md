@@ -479,6 +479,20 @@ Khi browser không support `audio/webm;codecs=opus`, fallback sang MIME type đ�
 6. Gửi WAV cho AI services.
 7. Xóa file tạm `.webm` và `.wav` sau khi xử lý xong.
 
+### Nghe lại audio — `GET /api/turns/:turnId/audio`
+
+Thư mục `uploads/audio` **không** được serve tĩnh. Bản ghi âm là giọng nói của người thật, nên mọi lần nghe đều phải đi qua endpoint này để kiểm tra quyền.
+
+Cần đăng nhập (`requireAuth`). Được nghe khi:
+
+- là một trong hai người của phiên đó, hoặc
+- phiên đó đã có bài đăng Lớp học ở trạng thái `published`, hoặc
+- là admin.
+
+Không đủ quyền và không tồn tại đều trả `404` giống hệt nhau, để người dò `turnId` không biết được id nào là thật. Endpoint dùng `res.sendFile` vì nó tự trả lời Range request — đây là thứ cho phép tua tới đúng chỗ được đánh dấu lỗi thay vì phát lại từ đầu.
+
+Cột `turns.audio_url` vẫn giữ đường dẫn trên đĩa (`/uploads/audio/<turnId>.webm`) cho AI đọc trực tiếp; chỉ có API trả về cho client là đổi sang `/api/turns/<turnId>/audio`. Không được lẫn hai thứ này.
+
 ---
 
 ## API Contracts MVP
@@ -653,7 +667,7 @@ Response tối thiểu:
     {
       "turnId": "uuid",
       "questionText": "Do you work or study?",
-      "audioUrl": "/uploads/audio/turn-id.webm",
+      "audioUrl": "/api/turns/turn-id/audio",
       "aiStatus": "completed",
       "transcript": "I am currently studying...",
       "scores": {

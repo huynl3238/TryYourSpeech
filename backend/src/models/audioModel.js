@@ -128,6 +128,55 @@ export async function validateAudioUpload({ sessionId, turnId, speakerId, questi
   }
 }
 
+// Who is allowed to listen to one recording. The answer is deliberately assembled
+// in a single query so that the rule lives in one readable place: the two people
+// who were in the session, plus everybody once the pair has agreed to publish it
+// to the classroom. Admins are let through for the same support reasons that
+// requireSelfParam already lets them through elsewhere.
+//
+// Everything here used to be moot: /uploads/audio was served by express.static
+// with no check at all, so any recording was downloadable by anyone who had the
+// URL, and hiding a classroom post left its audio just as reachable as before.
+export async function getTurnAudioAccess(turnId, user) {
+  if (!isNonEmptyString(turnId) || !user?.id) {
+    return { allowed: false, audioUrl: null };
+  }
+
+  const result = await pool.query(
+    `
+      SELECT
+        tr.audio_url,
+        s.user_a_id,
+        s.user_b_id,
+        EXISTS (
+          SELECT 1
+          FROM classroom_posts cp
+          WHERE cp.session_id = s.id AND cp.status = 'published'
+        ) AS is_published
+      FROM turns tr
+      JOIN sessions s ON s.id = tr.session_id
+      WHERE tr.id = $1
+    `,
+    [turnId]
+  );
+
+  const row = result.rows[0];
+  if (!row || !isNonEmptyString(row.audio_url)) {
+    return { allowed: false, audioUrl: null };
+  }
+
+  const allowed =
+    row.user_a_id === user.id ||
+    row.user_b_id === user.id ||
+    row.is_published === true ||
+    user.userRole === 'admin';
+
+  // A refusal gives back no path at all. The caller already checks `allowed`, but
+  // a location on disk is exactly the kind of thing that ends up in a log line or
+  // an error body by accident, and there is no reason for a refusal to carry one.
+  return { allowed, audioUrl: allowed ? row.audio_url : null };
+}
+
 export async function saveAudioUpload({
   sessionId,
   turnId,

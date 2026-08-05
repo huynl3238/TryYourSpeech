@@ -2,20 +2,21 @@ import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
 import cookieParser from 'cookie-parser';
-import { fileURLToPath } from 'url';
 import apiRoutes from './routes/index.js';
 import authRoutes from './routes/auth.js';
 import { corsOptions } from './config/cors.js';
 import { attachUser } from './middleware/auth.js';
 
 const app = express();
-const audioDirectory = fileURLToPath(new URL('../uploads/audio', import.meta.url));
 
+// There is deliberately no static mount for /uploads/audio. Recordings are
+// people talking, and express.static would hand any of them to anyone who had
+// the URL — no sign-in, and no way to take access back once a link escaped.
+// They are served by GET /api/turns/:turnId/audio, which checks who is asking.
 app.use(cors(corsOptions));
 app.use(morgan('dev'));
 app.use(express.json());
 app.use(cookieParser());
-app.use('/uploads/audio', express.static(audioDirectory));
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 

@@ -4,7 +4,8 @@ import { join } from 'path';
 import { fileURLToPath } from 'url';
 import multer from 'multer';
 import { randomUUID } from 'crypto';
-import { saveAudioUpload, validateAudioUpload } from '../models/audioModel.js';
+import { getTurnAudioAccess, saveAudioUpload, validateAudioUpload } from '../models/audioModel.js';
+import { resolveUploadAudioPath } from '../services/uploadPaths.js';
 import { checkDbConnection } from '../config/db.js';
 import { checkRedisConnection } from '../config/redis.js';
 import { completeReview, savePeerNotesBatch } from '../models/reviewModel.js';
@@ -1166,6 +1167,39 @@ router.post('/audio/upload', requireAuth, requireAudioUploadEnabled, uploadSingl
     res.status(400).json({ error: err.message });
   } finally {
     await deleteFileIfExists(wavPath);
+  }
+});
+
+// The only way to reach a recording. res.sendFile is used rather than streaming
+// the file by hand because it answers Range requests, which is what lets the
+// review and results players seek to a marked error instead of restarting.
+router.get('/turns/:turnId/audio', requireAuth, async (req, res) => {
+  try {
+    const { turnId } = req.params;
+    if (!isValidUuid(turnId)) {
+      res.status(400).json({ error: 'turnId không hợp lệ' });
+      return;
+    }
+
+    const { allowed, audioUrl } = await getTurnAudioAccess(turnId, req.user);
+
+    // A recording nobody may hear and a recording that does not exist are
+    // answered the same way on purpose: telling them apart would confirm which
+    // turn ids are real to someone probing for them.
+    if (!allowed || !audioUrl) {
+      res.status(404).json({ error: 'Không tìm thấy bản ghi âm' });
+      return;
+    }
+
+    res.sendFile(resolveUploadAudioPath(audioUrl), (err) => {
+      if (err && !res.headersSent) {
+        console.warn('Failed to serve audio:', err.message);
+        res.status(404).json({ error: 'Không tìm thấy bản ghi âm' });
+      }
+    });
+  } catch (err) {
+    console.warn('Failed to serve audio:', err.message);
+    res.status(404).json({ error: 'Không tìm thấy bản ghi âm' });
   }
 });
 

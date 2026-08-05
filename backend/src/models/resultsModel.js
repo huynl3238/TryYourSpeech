@@ -27,11 +27,18 @@ function mapPeerNote(row) {
   };
 }
 
+// The column holds where the file sits on disk; the client is given a route
+// instead, so that fetching a recording always passes through the permission
+// check. The two must not be conflated — Azure still reads the column directly.
+function toAudioApiUrl(turnId, audioUrl) {
+  return audioUrl ? `/api/turns/${turnId}/audio` : null;
+}
+
 function mapTurnResult(row, sessionMode = 'peer') {
   return {
     turnId: row.turn_id,
     questionText: row.question_text,
-    audioUrl: row.audio_url,
+    audioUrl: toAudioApiUrl(row.turn_id, row.audio_url),
     aiStatus: sessionMode === 'mentor' ? 'not_required' : row.ai_status || 'pending',
     transcript: row.whisper_transcript,
     scores: mapScores(row),
