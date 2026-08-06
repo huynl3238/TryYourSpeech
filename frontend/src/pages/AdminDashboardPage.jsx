@@ -145,6 +145,11 @@ function UsageChart({ items }) {
   );
 }
 
+// One IELTS Speaking test is Part 1 + Part 2 + Part 3, and the seed set gives a
+// speaker three answers across them; both people speak, so a finished session
+// leaves about six graded turns behind.
+const TURNS_PER_SESSION = 6;
+
 function QuotaBar({ used, limit }) {
   if (!limit) {
     return (
@@ -156,15 +161,22 @@ function QuotaBar({ used, limit }) {
 
   const ratio = Math.min(used / limit, 1);
   const nearLimit = ratio >= 0.8;
+  // The cap counts turns, and a full test is about six of them. Without this the
+  // bar reads as a session count and looks six times roomier than it is.
+  const remainingSessions = Math.floor(Math.max(limit - used, 0) / TURNS_PER_SESSION);
 
   return (
     <div>
       <div className="flex items-baseline justify-between gap-2">
         <span className="text-[12.5px] text-[#57534E]">Hạn mức chấm trong tháng</span>
         <span className={`text-[13px] font-bold tabular-nums ${nearLimit ? 'text-[#DC2626]' : 'text-[#1C1917]'}`}>
-          {used} / {limit}
+          {used} / {limit} lượt nói
         </span>
       </div>
+      <p className="mt-1 text-[11.5px] text-[#A8A29E]">
+        Còn khoảng <strong className="tabular-nums">{remainingSessions}</strong> phiên nữa, tính trung bình{' '}
+        {TURNS_PER_SESSION} lượt nói mỗi phiên.
+      </p>
       <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-[#F1EEEA]">
         <div
           className="h-full rounded-full"
@@ -647,7 +659,7 @@ export default function AdminDashboardPage() {
                 accent="#16A34A"
                 label="Phiên hoàn thành"
                 value={stats.overview.completedSessions}
-                hint={`Tỉ lệ ${stats.overview.completionRate}%`}
+                hint={`${stats.overview.completionRate}% số phiên đã kết thúc`}
               />
               <StatCard
                 icon="cancel"
@@ -657,7 +669,7 @@ export default function AdminDashboardPage() {
               />
               <StatCard
                 icon="timer"
-                label="Thời lượng TB/phiên"
+                label="Thời lượng TB/phiên xong"
                 value={formatDuration(stats.overview.avgSessionSeconds)}
               />
             </div>

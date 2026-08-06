@@ -10,6 +10,12 @@ const DEFAULT_AZURE_SPEECH_LANGUAGE = 'en-US';
 // Hard monthly cap on how many turns the AI pipeline may assess, so the paid
 // OpenAI + Azure usage can never silently exceed the budget. 0 or a negative
 // value disables the cap.
+//
+// The unit is TURNS, not sessions, and the two are an order of magnitude apart:
+// a full test is roughly six turns per speaker, so 250 turns is only about 40
+// sessions. Anyone reading this number as "40 tests a month" rather than "250"
+// is the mistake to guard against — raise it deliberately before a demo day
+// instead of discovering the cap mid-session.
 const DEFAULT_MONTHLY_ASSESSMENT_LIMIT = 250;
 
 function hasEnvValue(name) {
