@@ -4,3 +4,10 @@ uploads/audio/*
 uploads/tmp/*
 !uploads/audio/.gitkeep
 !uploads/tmp/.gitkeep
+
+# Bộ đo độ chính xác chấm AI. Chỉ dùng để thử trên máy cá nhân, không phải một
+# phần của ứng dụng — app chạy được đầy đủ mà không cần ba thư mục này.
+# eval-data riêng đã 1.7 GB audio, đưa vào git là hỏng repo.
+eval-data/
+how_to_get_audio/
+scripts/
