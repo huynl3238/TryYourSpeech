@@ -89,4 +89,8 @@ export function cleanupMediaSession(refs, videoRefs = []) {
   refs.current.localChunks = [];
   refs.current.remoteChunks = [];
   refs.current.pendingIceCandidates = [];
+  // Signals held back for a connection that no longer exists. Leaving them here
+  // would replay the previous call's offer into the next one.
+  refs.current.pendingSignals = [];
+  refs.current.readyForSignals = false;
 }
