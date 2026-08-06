@@ -21,6 +21,9 @@ const mentorQueue = [];
 const mentorStudentQueue = [];
 const rooms = new Map();
 const userRoom = new Map();
+// Every socket currently connected. See isSocketAlive for why this is tracked
+// here instead of being read out of Socket.IO.
+const connectedSockets = new Set();
 // sessionId -> { A: userInfo|null, B: userInfo|null } for REST-started mentor
 // sessions where both parties join the realtime room explicitly.
 const mentorRoomWaiters = new Map();
@@ -190,6 +193,17 @@ function findBestBandMatch(user) {
   return bestMatch?.user || null;
 }
 
+// Whether a socket is still connected right now. Matching straddles an await on
+// the database, and someone can close their tab inside that window — the queue
+// entry and the room both outlive the person if nobody checks.
+//
+// Kept as our own set rather than read off io.sockets.sockets: that is Socket.IO
+// internals, and reaching into them makes this module depend on the shape of
+// something we do not own and cannot exercise from a test.
+function isSocketAlive(socketId) {
+  return connectedSockets.has(socketId);
+}
+
 function takeOldestUser(queue) {
   if (queue.length === 0) {
     return null;
@@ -342,23 +356,113 @@ function createMatchUser(socket, matchRequest) {
   };
 }
 
-async function createPeerMatch(io, socket, user, matchedUser) {
-  removeFromQueue(matchedUser.socketId);
+// Puts someone back in the peer queue after a match fell through. Silently drops
+// anyone who has since disconnected: an entry for a dead socket is a trap for
+// the next arrival, who gets matched with nobody and waits out the ready timeout.
+function requeueUser(io, user) {
+  if (!isSocketAlive(user.socketId)) return false;
+  if (isSocketQueued(user.socketId) || isUserQueued(user.userId)) return false;
+
+  waitingQueue.push(user);
+  io.to(user.socketId).emit('waiting');
+  return true;
+}
+
+// Matching normally only runs when somebody new calls find_match. That is enough
+// in the happy path, but not after a failed match hands two people back to the
+// queue: they can be a perfect fit for each other and still wait forever,
+// because no new arrival is coming to trigger the search. This pairs off whoever
+// is already waiting.
+let sweepInProgress = false;
+
+async function sweepWaitingQueue(io) {
+  // createPeerMatch can call back in here through its own failure path; without
+  // this the two would bounce off each other until the stack ran out.
+  if (sweepInProgress) return;
+  sweepInProgress = true;
 
   try {
-    const roomId = randomUUID();
-    const session = await createMatchedSession(roomId, matchedUser, user, 'peer');
-    createRoom(roomId, matchedUser, user, session.sessionId, 'peer');
-    emitMatched(io, matchedUser, user, roomId, session, 'peer');
+    for (;;) {
+      // Drop the dead before pairing, so a stale entry cannot be handed out.
+      for (const entry of [...waitingQueue]) {
+        if (!isSocketAlive(entry.socketId)) {
+          removeFromQueue(entry.socketId);
+        }
+      }
 
-    console.log(
-      `[Match] ${matchedUser.displayName} (${matchedUser.band}) matched with ${user.displayName} (${user.band}) | room: ${roomId}`
-    );
-  } catch (err) {
-    waitingQueue.unshift(matchedUser);
-    console.error('Failed to create matched session:', err.message);
-    socket.emit('match_error', { error: err.message });
+      const candidate = waitingQueue[0];
+      if (!candidate) return;
+
+      // Taken out first: findBestBandMatch scans the queue and would otherwise
+      // happily return the candidate themselves.
+      removeFromQueue(candidate.socketId);
+      const partner = findBestBandMatch(candidate);
+      if (!partner) {
+        waitingQueue.unshift(candidate);
+        return;
+      }
+
+      // Stop on anything that did not produce a room. Both failure paths put
+      // people back in the queue, so carrying on would pick the very same pair
+      // and fail on it again — a database that stays down would spin here
+      // forever. The next find_match will retry naturally.
+      const matched = await createPeerMatch(io, candidate, partner);
+      if (!matched) return;
+    }
+  } finally {
+    sweepInProgress = false;
   }
+}
+
+// `user` is the person who just asked and is not in the queue; `matchedUser` is
+// the person taken out of it. Neither is queued while this runs.
+async function createPeerMatch(io, user, matchedUser) {
+  removeFromQueue(matchedUser.socketId);
+
+  const roomId = randomUUID();
+  let session = null;
+
+  try {
+    session = await createMatchedSession(roomId, matchedUser, user, 'peer');
+  } catch (err) {
+    console.error('Failed to create matched session:', err.message);
+    // Both go back, not just the one who was waiting. The person who asked used
+    // to be dropped with an error and had to press the button again, which is a
+    // strange thing to ask of someone whose only mistake was arriving while the
+    // database hiccuped.
+    for (const person of [matchedUser, user]) {
+      if (!requeueUser(io, person)) {
+        io.to(person.socketId).emit('match_error', { error: err.message });
+      }
+    }
+    return false;
+  }
+
+  // The insert above is a real round trip and either person can close their tab
+  // during it. Building a room around a socket that is already gone leaves the
+  // other one sitting on the device check until the 60s ready timeout, and only
+  // then is the session marked abandoned.
+  const gone = [matchedUser, user].filter((person) => !isSocketAlive(person.socketId));
+  if (gone.length > 0) {
+    await markSessionAbandoned(session.sessionId);
+    console.warn(`[Match] Dropped room ${roomId}: ${gone.length} người đã rời trước khi ghép xong`);
+
+    for (const person of [matchedUser, user]) {
+      requeueUser(io, person);
+    }
+
+    await sweepWaitingQueue(io);
+    return false;
+  }
+
+  createRoom(roomId, matchedUser, user, session.sessionId, 'peer');
+  emitMatched(io, matchedUser, user, roomId, session, 'peer');
+
+  console.log(
+    `[Match] ${matchedUser.displayName} (${matchedUser.band}) matched with ${user.displayName} (${user.band}) | room: ${roomId}`
+  );
+
+  return true;
 }
 
 async function createMentorMatch(io, student, mentor) {
@@ -431,7 +535,7 @@ async function handleFindMatch(io, socket, data) {
 
   const matchedUser = findBestBandMatch(user);
   if (matchedUser) {
-    await createPeerMatch(io, socket, user, matchedUser);
+    await createPeerMatch(io, user, matchedUser);
     return;
   }
 
@@ -671,6 +775,7 @@ async function handleJoinMentorRoom(io, socket, data) {
 
 async function handleDisconnect(io, socket) {
   console.log(`[Socket] Disconnected: ${socket.id}`);
+  connectedSockets.delete(socket.id);
   removeFromQueue(socket.id);
   cleanupMentorWaiter(socket.id);
   unregisterSocket(socket.id);
@@ -716,6 +821,7 @@ export function setupSocket(io) {
 
   io.on('connection', (socket) => {
     console.log(`[Socket] Connected: ${socket.id} (${socket.data.user.id})`);
+    connectedSockets.add(socket.id);
 
     // The handshake already told us who this is, so realtime notifications are
     // wired up immediately. The old 'identify' event let a client name itself
