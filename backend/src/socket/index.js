@@ -11,6 +11,18 @@ import { authenticateSocket } from './auth.js';
 const MAX_BAND_DIFFERENCE = 1.0;
 const MAX_DISPLAY_NAME_LENGTH = 100;
 const READY_WAIT_TIMEOUT_MS = 60000;
+// How long a room is held open for someone whose socket dropped. The media link
+// is peer-to-peer and does not run through this server, so a brief network blip
+// leaves the two browsers still talking to each other — tearing the room down on
+// the first lost heartbeat destroys a call that was working fine.
+const RECONNECT_GRACE_MS = 15000;
+
+// Overridable so tests can watch the timeout expire without waiting fifteen
+// real seconds for it.
+function getReconnectGraceMs() {
+  const raw = Number(process.env.SOCKET_RECONNECT_GRACE_MS);
+  return Number.isFinite(raw) && raw >= 0 ? raw : RECONNECT_GRACE_MS;
+}
 const CONNECT_WAIT_TIMEOUT_MS = 45000;
 const SIGNAL_TYPES = new Set(['offer', 'answer', 'ice-candidate']);
 const SESSION_MODES = new Set(['peer', 'mentor']);
@@ -24,6 +36,10 @@ const userRoom = new Map();
 // Every socket currently connected. See isSocketAlive for why this is tracked
 // here instead of being read out of Socket.IO.
 const connectedSockets = new Set();
+// userId -> roomId, for people whose socket dropped and whose room is being held
+// open for them. Keyed by user rather than socket because the whole point is
+// that they come back on a new socket id.
+const awayRoomByUser = new Map();
 // sessionId -> { A: userInfo|null, B: userInfo|null } for REST-started mentor
 // sessions where both parties join the realtime room explicitly.
 const mentorRoomWaiters = new Map();
@@ -245,6 +261,8 @@ function createRoom(roomId, userA, userB, sessionId, sessionMode) {
     sessionId,
     readyTimeout: null,
     connectTimeout: null,
+    // userId -> grace timer, for participants who are currently away.
+    awayUsers: new Map(),
   });
   userRoom.set(userA.socketId, roomId);
   userRoom.set(userB.socketId, roomId);
@@ -267,6 +285,16 @@ function deleteRoom(roomId) {
   if (!room) return;
 
   clearRoomTimers(room);
+
+  // Anyone still being waited for stops being waited for. Leaving a grace timer
+  // running would fire against a room that no longer exists, and leaving the
+  // lookup entry behind would send their next connection into a dead room.
+  for (const [userId, timer] of room.awayUsers) {
+    clearTimeout(timer);
+    awayRoomByUser.delete(userId);
+  }
+  room.awayUsers.clear();
+
   userRoom.delete(room.userA.socketId);
   userRoom.delete(room.userB.socketId);
   rooms.delete(roomId);
@@ -748,6 +776,9 @@ async function handleJoinMentorRoom(io, socket, data) {
   }
   waiter[role] = {
     socketId: socket.id,
+    // Carried so a room built from this waiter can recognise the person behind
+    // it when they come back on a different socket.
+    userId,
     displayName: role === 'A' ? participants.userA.displayName : participants.userB.displayName,
     band: role === 'A' ? participants.userA.band : participants.userB.band,
     userRole: role === 'A' ? participants.userA.userRole : participants.userB.userRole,
@@ -773,6 +804,98 @@ async function handleJoinMentorRoom(io, socket, data) {
   console.log(`[MentorRoom] Session ${sessionId} joined by both | room: ${participants.roomId}`);
 }
 
+function getRoomSide(room, userId) {
+  if (room.userA.userId === userId) return 'userA';
+  if (room.userB.userId === userId) return 'userB';
+  return null;
+}
+
+// Hold the room open instead of tearing it down. The partner is told someone is
+// reconnecting rather than that they left, and the session row is left alone —
+// marking it abandoned here is what used to make a three-second network blip
+// unrecoverable even though the two browsers were still connected to each other.
+function beginReconnectGrace(io, roomId, room, socket) {
+  const userId = socket.data.user.id;
+  const partnerSocketId = getPartnerSocketId(roomId, socket.id);
+
+  // The dead socket must stop resolving to this room, or a stale event on it
+  // would still be treated as coming from a participant.
+  userRoom.delete(socket.id);
+
+  const timer = setTimeout(() => {
+    room.awayUsers.delete(userId);
+    awayRoomByUser.delete(userId);
+
+    // The practice can finish while this timer is still running: they drop mid
+    // practice, the partner plays out the rest and presses complete. Abandoning
+    // the session then would destroy a finished recording and block the AI from
+    // ever running on it — the exact failure the room phases were added to stop.
+    if (room.phase === 'done') {
+      deleteRoom(roomId);
+      return;
+    }
+
+    closeRoom(io, roomId, 'partner_disconnected', { skipSocketId: socket.id }).catch((err) => {
+      console.error('reconnect grace expiry failed:', err.message);
+    });
+  }, getReconnectGraceMs());
+  timer.unref?.();
+
+  room.awayUsers.set(userId, timer);
+  awayRoomByUser.set(userId, roomId);
+
+  if (partnerSocketId) io.to(partnerSocketId).emit('partner_reconnecting');
+  console.log(`[Room] ${roomId}: chờ ${userId} kết nối lại`);
+}
+
+// Someone came back within the grace period. Everything about a room is keyed by
+// socket id, and they have a new one, so the old id has to be swapped out
+// everywhere at once — including the ready/connected sets, or the room forgets
+// they had already pressed ready and waits for a second press that never comes.
+function resumeRoomIfAway(io, socket) {
+  const userId = socket.data.user.id;
+  const roomId = awayRoomByUser.get(userId);
+  if (!roomId) return;
+
+  const room = rooms.get(roomId);
+  const side = room && getRoomSide(room, userId);
+  if (!room || !side) {
+    awayRoomByUser.delete(userId);
+    return;
+  }
+
+  clearTimeout(room.awayUsers.get(userId));
+  room.awayUsers.delete(userId);
+  awayRoomByUser.delete(userId);
+
+  const oldSocketId = room[side].socketId;
+  room[side].socketId = socket.id;
+  userRoom.delete(oldSocketId);
+  userRoom.set(socket.id, roomId);
+
+  for (const set of [
+    room.deviceReadyUsers,
+    room.connectedUsers,
+    room.practiceCompleteUsers,
+    room.practiceReadyUsers,
+  ]) {
+    if (set.delete(oldSocketId)) set.add(socket.id);
+  }
+
+  const partnerSocketId = getPartnerSocketId(roomId, socket.id);
+  if (partnerSocketId) io.to(partnerSocketId).emit('partner_reconnected');
+
+  // The client has to be told where things stand: it has a fresh socket and no
+  // idea which phase the room reached while it was away.
+  socket.emit('session_resumed', {
+    roomId,
+    sessionId: room.sessionId,
+    phase: room.phase,
+    sessionMode: room.sessionMode,
+  });
+  console.log(`[Room] ${roomId}: ${userId} đã kết nối lại`);
+}
+
 async function handleDisconnect(io, socket) {
   console.log(`[Socket] Disconnected: ${socket.id}`);
   connectedSockets.delete(socket.id);
@@ -791,6 +914,13 @@ async function handleDisconnect(io, socket) {
   // blocks review completion and means the AI never runs on it.
   if (room?.phase === 'done') {
     deleteRoom(roomId);
+    return;
+  }
+
+  // Not gone, just unreachable for the moment — give them 15 seconds to come
+  // back before treating this as someone leaving.
+  if (room && getRoomSide(room, socket.data.user.id)) {
+    beginReconnectGrace(io, roomId, room, socket);
     return;
   }
 
@@ -822,6 +952,10 @@ export function setupSocket(io) {
   io.on('connection', (socket) => {
     console.log(`[Socket] Connected: ${socket.id} (${socket.data.user.id})`);
     connectedSockets.add(socket.id);
+
+    // Before anything else: if this person's room is being held open for them,
+    // put them back in it rather than letting them start a fresh search.
+    resumeRoomIfAway(io, socket);
 
     // The handshake already told us who this is, so realtime notifications are
     // wired up immediately. The old 'identify' event let a client name itself

@@ -93,11 +93,14 @@ export function useSocket() {
     function failMatch(type, title, message) {
       return function handleMatchFailure() {
         cleanupMediaSession(refs);
+        // Whatever the cause, nobody is coming back now.
+        dispatch({ type: 'SET_PARTNER_RECONNECTING', payload: false });
         dispatch({ type: 'SET_ERROR', payload: { type, title, message } });
         dispatch({ type: 'SET_PHASE', payload: 'error' });
       };
     }
 
+    // Only reached after the grace period has already expired on the server.
     const handlePartnerDisconnected = failMatch(
       'partner_disconnected',
       'Đối tác đã ngắt kết nối',
@@ -122,6 +125,26 @@ export function useSocket() {
       'Hai máy không kết nối được với nhau, thường do tường lửa hoặc mạng hạn chế. Thử lại bằng mạng khác nếu lỗi lặp lại.'
     );
 
+    // A dropped socket is not the same thing as someone leaving. The server holds
+    // the room open for 15 seconds, and because WebRTC runs browser-to-browser
+    // the picture and sound usually never stop — so this must not tear anything
+    // down, only say what is happening.
+    function handlePartnerReconnecting() {
+      dispatch({ type: 'SET_PARTNER_RECONNECTING', payload: true });
+    }
+
+    function handlePartnerReconnected() {
+      dispatch({ type: 'SET_PARTNER_RECONNECTING', payload: false });
+    }
+
+    // This client is the one that came back, and the server has just put it into
+    // the room it was already in. Clearing the error matters: the socket-level
+    // 'disconnect' handler may have flagged one on the way down.
+    function handleSessionResumed() {
+      dispatch({ type: 'SET_PARTNER_RECONNECTING', payload: false });
+      dispatch({ type: 'CLEAR_ERROR' });
+    }
+
     socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
     socket.on('waiting', handleWaiting);
@@ -134,6 +157,9 @@ export function useSocket() {
     socket.on('partner_not_ready', handlePartnerNotReady);
     socket.on('partner_device_failed', handlePartnerDeviceFailed);
     socket.on('webrtc_failed', handleWebrtcFailed);
+    socket.on('partner_reconnecting', handlePartnerReconnecting);
+    socket.on('partner_reconnected', handlePartnerReconnected);
+    socket.on('session_resumed', handleSessionResumed);
 
     return () => {
       socket.off('connect', handleConnect);
@@ -148,6 +174,9 @@ export function useSocket() {
       socket.off('partner_not_ready', handlePartnerNotReady);
       socket.off('partner_device_failed', handlePartnerDeviceFailed);
       socket.off('webrtc_failed', handleWebrtcFailed);
+      socket.off('partner_reconnecting', handlePartnerReconnecting);
+      socket.off('partner_reconnected', handlePartnerReconnected);
+      socket.off('session_resumed', handleSessionResumed);
     };
   }, [dispatch, refs]);
 

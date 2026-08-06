@@ -37,6 +37,11 @@ const initialState = {
   // Current turn
   currentTurnIndex: 0,
 
+  // True while the partner's socket is gone but their room is still being held
+  // open for them. Not an error: the media link is peer-to-peer and usually
+  // survives the blip, so the UI says "reconnecting" rather than ending anything.
+  partnerReconnecting: false,
+
   // Error
   error: null,       // { type, message }
 
@@ -126,6 +131,9 @@ function sessionReducer(state, action) {
 
     case 'SET_CURRENT_TURN':
       return { ...state, currentTurnIndex: action.payload };
+
+    case 'SET_PARTNER_RECONNECTING':
+      return { ...state, partnerReconnecting: action.payload };
 
     case 'SET_ERROR':
       return { ...state, error: action.payload };

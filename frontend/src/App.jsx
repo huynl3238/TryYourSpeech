@@ -16,6 +16,7 @@ import VerifyEmailPage from './pages/VerifyEmailPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
 import { NotificationToaster } from './components/ui/NotificationToaster';
+import { PartnerReconnectingBanner } from './components/PartnerReconnectingBanner';
 import { RequireRole } from './components/RequireRole';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import './index.css';
@@ -26,6 +27,7 @@ function App() {
       <AuthProvider>
       <SessionProvider>
         <NotificationToaster />
+        <PartnerReconnectingBanner />
         <Routes>
         {/* Everything except the login screen needs an account: practising,
             reviewing and results all belong to a specific person now, and the

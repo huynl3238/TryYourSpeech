@@ -3,6 +3,10 @@ import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import pool from '../src/config/db.js';
 import { markSessionAbandoned } from '../src/models/sessionModel.js';
+// Short enough that a test can watch the grace period expire, long enough that
+// reconnecting inside it is not a race. Set before the socket module is loaded.
+process.env.SOCKET_RECONNECT_GRACE_MS = '1000';
+
 import { setupSocket } from '../src/socket/index.js';
 
 async function canUseDatabase() {
@@ -143,8 +147,11 @@ async function matchTwoClients() {
   assert.ok(matched, 'hai người cùng band phải được ghép');
 
   return {
+    server,
     clientA,
     clientB,
+    accountA,
+    accountB,
     sessionId: matched.payload.sessionId,
     userIds: [accountA.id, accountB.id],
   };
@@ -265,8 +272,81 @@ test('leaving while the call is still being set up does abandon the session', as
 
     clientA.handlers.disconnect();
 
+    // Leaving is now judged after the reconnect grace, not on the dropped socket
+    // itself — a lost socket and a person walking away look identical at first.
+    // The partner is told someone is coming back before being told they left.
+    assert.ok(await waitFor(clientB, 'partner_reconnecting'));
     assert.ok(await waitFor(clientB, 'partner_disconnected'));
     assert.equal(await waitForStatus(sessionId, 'abandoned'), 'abandoned');
+  } finally {
+    await deleteUsers(userIds);
+  }
+});
+
+test('mất kết nối thoáng qua rồi vào lại thì phiên vẫn tiếp tục', async (t) => {
+  if (!(await canUseDatabase())) {
+    t.skip('Bỏ qua: cần Postgres đã chạy npm run db:migrate');
+    return;
+  }
+
+  const { server, clientA, clientB, accountA, sessionId, userIds } = await matchTwoClients();
+
+  try {
+    clientA.handlers.device_ready();
+    clientB.handlers.device_ready();
+    clientA.handlers.disconnect();
+
+    assert.ok(await waitFor(clientB, 'partner_reconnecting'), 'B phải được báo là đang chờ nối lại');
+
+    // Same person, new socket — which is all a reconnect ever is.
+    const clientARejoined = server.connect(accountA);
+    const resumed = await waitFor(clientARejoined, 'session_resumed');
+
+    assert.ok(resumed, 'A phải được đưa lại vào phòng cũ');
+    assert.equal(resumed.payload.sessionId, sessionId);
+    assert.ok(await waitFor(clientB, 'partner_reconnected'), 'B phải được báo là đã nối lại');
+
+    // The session must survive untouched. Before the grace period this was an
+    // abandoned session and neither person could get back into it.
+    assert.equal(await getSessionStatus(sessionId), 'matched');
+
+    // A had already pressed ready before dropping. If that were forgotten, the
+    // room would sit waiting for a second press that is never coming.
+    clientARejoined.handlers.peer_connected();
+    clientB.handlers.peer_connected();
+    assert.ok(await waitFor(clientARejoined, 'session_start'), 'phiên phải bắt đầu được sau khi nối lại');
+  } finally {
+    await deleteUsers(userIds);
+  }
+});
+
+test('rớt mạng giữa bài rồi bạn kia luyện xong thì phiên không bị đánh hỏng', async (t) => {
+  if (!(await canUseDatabase())) {
+    t.skip('Bỏ qua: cần Postgres đã chạy npm run db:migrate');
+    return;
+  }
+
+  const { clientA, clientB, sessionId, userIds } = await matchTwoClients();
+
+  try {
+    clientA.handlers.device_ready();
+    clientB.handlers.device_ready();
+    clientA.handlers.peer_connected();
+    clientB.handlers.peer_connected();
+    assert.equal(await waitForStatus(sessionId, 'active'), 'active');
+
+    // A drops mid-practice and does not come back. The grace timer is now
+    // running against a room whose practice is still going.
+    clientA.handlers.disconnect();
+    assert.ok(await waitFor(clientB, 'partner_reconnecting'));
+
+    // B plays out the rest and finishes. This lands before the grace expires.
+    clientB.handlers.practice_complete();
+
+    // The recording exists and the peer notes are still owed, so the session has
+    // to survive the timer firing afterwards.
+    await delay(1400);
+    assert.notEqual(await getSessionStatus(sessionId), 'abandoned');
   } finally {
     await deleteUsers(userIds);
   }

@@ -246,7 +246,10 @@ Nếu tính năng đã nằm trong MVP và cách làm đã được quy định 
 | `signal` | `{ type, payload }` | Relay từ đối tác |
 | `begin_signaling` | — | Cả hai đã `device_ready`; bắt đầu offer/answer |
 | `session_start` | `{ timestamp }` | Cả hai đã `peer_connected`, bắt đầu session |
-| `partner_disconnected` | — | Đối tác rời đi khi phiên chưa luyện xong |
+| `partner_reconnecting` | — | Socket của đối tác vừa rớt; phòng đang được giữ 15s chờ họ quay lại |
+| `partner_reconnected` | — | Đối tác đã quay lại kịp; phiên chạy tiếp |
+| `session_resumed` | `{ roomId, sessionId, phase, sessionMode }` | Gửi cho chính người vừa quay lại, cho biết phòng đang ở phase nào |
+| `partner_disconnected` | — | Đối tác rời đi khi phiên chưa luyện xong (chỉ gửi SAU khi hết 15s ân hạn) |
 | `partner_not_ready` | — | Đối tác không xác nhận sẵn sàng trong 60s |
 | `partner_device_failed` | — | Mic/camera của đối tác hỏng (chỉ gửi cho người còn lại) |
 | `webrtc_failed` | — | Hai máy không kết nối được với nhau trong 45s |
@@ -260,6 +263,24 @@ tuyệt đối không được đụng vào session.
 Bốn event lỗi ở trên trước đây gộp chung thành `partner_disconnected`, nên micro
 hỏng, đối tác bấm chậm và tab bị đóng đều báo cùng một câu sai sự thật. Thêm lỗi
 mới thì thêm event mới, đừng gộp lại.
+
+### Mất kết nối tạm thời
+
+Socket rớt **không** phá phòng ngay. Phòng được giữ thêm `RECONNECT_GRACE_MS`
+(15s, đổi được bằng env `SOCKET_RECONNECT_GRACE_MS` — test dùng giá trị ngắn).
+
+Lý do: WebRTC chạy thẳng giữa hai trình duyệt, không qua server. Một cú rớt mạng
+vài giây hoàn toàn có thể xảy ra trong khi tiếng và hình vẫn đang chạy bình
+thường — phá phòng lúc đó là tự tay giết một cuộc gọi đang tốt.
+
+Người quay lại mang **socket.id mới**, nên `resumeRoomIfAway` phải thay id cũ ở
+mọi nơi cùng lúc: `room.userA/userB.socketId`, `userRoom`, và cả bốn Set
+`deviceReadyUsers` / `connectedUsers` / `practiceCompleteUsers` /
+`practiceReadyUsers`. Bỏ sót Set nào thì phòng quên mất người đó đã bấm sẵn sàng
+và ngồi chờ một cú bấm thứ hai không bao giờ tới.
+
+Khi hết ân hạn mà phase đã là `done` thì chỉ xoá phòng, **không** đánh session
+abandoned: bài đã luyện xong và peer notes vẫn còn nợ.
 
 ### `signal.type` values
 - `offer` — WebRTC offer SDP
