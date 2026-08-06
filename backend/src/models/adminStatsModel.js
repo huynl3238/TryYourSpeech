@@ -40,12 +40,23 @@ export async function getAdminStats() {
         (SELECT COUNT(*) FROM users) AS total_users,
         (SELECT COUNT(*) FROM users WHERE user_role = 'mentor') AS mentor_count,
         (SELECT COUNT(*) FROM sessions WHERE created_at::date = NOW()::date) AS sessions_today,
-        (SELECT COUNT(*) FROM sessions) AS total_sessions,
         (SELECT COUNT(*) FROM sessions WHERE status = 'completed') AS completed_sessions,
         (SELECT COUNT(*) FROM sessions WHERE status = 'abandoned') AS abandoned_sessions,
+        -- The denominator of the completion rate: only sessions that have already
+        -- landed one way or the other. Counting every row instead would put every
+        -- session still being practised or graded right now into the failure side
+        -- of the ratio, which drags the number down for no reason other than
+        -- someone being mid-test when the dashboard was opened.
+        (SELECT COUNT(*) FROM sessions
+          WHERE status IN ('completed', 'abandoned')) AS finished_sessions,
+        -- Abandoned sessions are excluded on purpose. Someone who quit after
+        -- thirty seconds did not have a thirty-second practice session; averaging
+        -- them in describes nothing anyone would want to know.
         (SELECT AVG(EXTRACT(EPOCH FROM (ended_at - started_at)))
            FROM sessions
-          WHERE ended_at IS NOT NULL AND started_at IS NOT NULL) AS avg_session_seconds
+          WHERE status = 'completed'
+            AND ended_at IS NOT NULL
+            AND started_at IS NOT NULL) AS avg_session_seconds
     `),
     pool.query(`
       SELECT band, COUNT(*)::int AS count
@@ -102,8 +113,8 @@ export async function getAdminStats() {
   ]);
 
   const o = overview.rows[0];
-  const totalSessions = toInteger(o.total_sessions);
   const completedSessions = toInteger(o.completed_sessions);
+  const finishedSessions = toInteger(o.finished_sessions);
   const monthlyLimit = getAiRuntimeConfig().monthlyAssessmentLimit;
 
   return {
@@ -114,8 +125,8 @@ export async function getAdminStats() {
       sessionsToday: toInteger(o.sessions_today),
       completedSessions,
       abandonedSessions: toInteger(o.abandoned_sessions),
-      completionRate: totalSessions > 0
-        ? Math.round((completedSessions / totalSessions) * 100)
+      completionRate: finishedSessions > 0
+        ? Math.round((completedSessions / finishedSessions) * 100)
         : 0,
       avgSessionSeconds: toNumberOrNull(o.avg_session_seconds),
     },
