@@ -39,6 +39,14 @@ jobs:
             git fetch --all --prune
             git reset --hard origin/staging
 
+            # Postgres và Redis chạy trong Docker và deploy nào cũng cần chúng:
+            # bước migrate ngay dưới sẽ chết nếu database không bật. Lệnh này
+            # không làm gì khi container đã chạy sẵn, nên để đây là an toàn và
+            # biến việc reboot máy thành chuyện deploy tự lo được.
+            echo "==> Bảo đảm database và Redis đang chạy"
+            cd "$APP_DIR"
+            docker compose up -d
+
             echo "==> Cài dependencies backend"
             cd "$APP_DIR/backend"
             npm ci

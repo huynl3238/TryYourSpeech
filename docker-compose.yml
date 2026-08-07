@@ -1,7 +1,17 @@
+# restart: unless-stopped là bắt buộc, không phải tuỳ chọn. Trên VPS, PM2 và
+# nginx đều có sẵn cơ chế tự bật lại sau khi máy khởi động; hai container này
+# thì không, nên một lần reboot là backend còn sống mà database thì chết. Nhìn
+# từ ngoài vào, trang web vẫn mở bình thường (nginx trả file tĩnh) nhưng không
+# ai đăng nhập được, và không có gì báo động cả — đúng như sự cố 06/08/2026,
+# hỏng 23 tiếng mới bị phát hiện.
+#
+# "unless-stopped" chứ không phải "always": nếu ai đó chủ động docker compose
+# stop để bảo trì thì Docker phải tôn trọng, đừng tự dựng dậy.
 services:
   postgres:
     image: postgres:16-alpine
     container_name: ielts_postgres
+    restart: unless-stopped
     ports:
       - "127.0.0.1:5432:5432"
     environment:
@@ -14,6 +24,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: ielts_redis
+    restart: unless-stopped
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
