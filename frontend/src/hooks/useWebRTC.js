@@ -4,7 +4,7 @@ import { getConfig } from '../services/api';
 import { cleanupMediaSession, rememberMediaStream } from '../utils/mediaCleanup';
 
 export function useWebRTC({ sendSignal, onSignal, onRemoteStream, onConnectionStateChange }) {
-  const { refs } = useSession();
+  const { dispatch, refs } = useSession();
 
   // Applying one signal to a peer connection that is genuinely ready for it.
   // Kept separate from the socket listener so the same code can run twice: once
@@ -52,6 +52,13 @@ export function useWebRTC({ sendSignal, onSignal, onRemoteStream, onConnectionSt
     refs.current.iceServers = iceServers;
     const pc = new RTCPeerConnection({ iceServers });
     refs.current.peerConnection = pc;
+
+    // Cho bộ kiểm thử đầu-cuối đọc getStats() — cách duy nhất chứng minh audio
+    // thật sự chảy qua ở CẢ HAI chiều, thay vì tin vào việc người dùng nói là
+    // nghe được. Chỉ ở bản dev; Vite loại khối này khỏi bản build.
+    if (import.meta.env.DEV) {
+      window.__tysPeerConnection = pc;
+    }
     refs.current.pendingIceCandidates = [];
     // Nothing may be applied to this connection until startCall has put the
     // microphone on it — see the note there.
@@ -77,13 +84,29 @@ export function useWebRTC({ sendSignal, onSignal, onRemoteStream, onConnectionSt
 
     pc.onconnectionstatechange = () => {
       console.log('[WebRTC] Connection state:', pc.connectionState);
+
+      // Đối tác mất mạng thì chính kết nối này biết trước server rất nhiều.
+      // Server chỉ phát hiện qua nhịp tim của Socket.IO, mà mặc định là 25s nhịp
+      // + 20s chờ — đo thật trên máy là 44 giây. Suốt 44 giây đó người còn lại
+      // ngồi nhìn màn hình đóng băng mà không được báo gì. Đường media thì chết
+      // trong vài giây, nên bắt ở đây là tín hiệu nhanh nhất và đáng tin nhất.
+      //
+      // Đặt trong buildPeerConnection chứ không trong trang nào, vì kết nối này
+      // sống qua cả DeviceCheckPage lẫn SessionPage, còn onConnectionStateChange
+      // thì thuộc về trang đã tạo ra nó và trang đó bị bỏ đi giữa đường.
+      if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+        dispatch({ type: 'SET_PARTNER_RECONNECTING', payload: true });
+      } else if (pc.connectionState === 'connected') {
+        dispatch({ type: 'SET_PARTNER_RECONNECTING', payload: false });
+      }
+
       if (onConnectionStateChange) {
         onConnectionStateChange(pc.connectionState);
       }
     };
 
     return pc;
-  }, [sendSignal, onRemoteStream, onConnectionStateChange, refs]);
+  }, [dispatch, sendSignal, onRemoteStream, onConnectionStateChange, refs]);
 
   const initPeerConnection = useCallback(async () => {
     const existingPc = refs.current.peerConnection;

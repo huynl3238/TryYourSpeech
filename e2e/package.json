@@ -1,0 +1,17 @@
+{
+  "name": "tys-e2e",
+  "private": true,
+  "type": "module",
+  "description": "Kiem thu dau-cuoi hai trinh duyet. Rieng khoi backend/frontend de deploy khong phai tai Chromium.",
+  "scripts": {
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.0"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "jsonwebtoken": "^9.0.3",
+    "pg": "^8.22.0"
+  }
+}
