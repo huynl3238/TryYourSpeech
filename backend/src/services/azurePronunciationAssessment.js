@@ -81,15 +81,21 @@ function createPronunciationConfig(referenceText) {
   );
   const runtimeConfig = getAiRuntimeConfig();
 
-  // Request prosody (intonation/stress/rhythm) for any English locale, not just
-  // en-US. If Azure cannot score prosody for a given locale it simply returns null,
-  // so broadening the guard is safe and avoids silently dropping the dimension when
-  // the configured language is e.g. en-GB.
-  if (
-    runtimeConfig.azureSpeechLanguage.toLowerCase().startsWith('en') &&
-    typeof config.enableProsodyAssessment === 'function'
-  ) {
-    config.enableProsodyAssessment();
+  // Request prosody (intonation/stress/rhythm) for any English locale.
+  //
+  // `enableProsodyAssessment` là một SETTER, không phải hàm — và nó không có
+  // getter, nên `typeof config.enableProsodyAssessment` luôn trả về 'undefined'.
+  // Bản trước đây canh bằng `typeof ... === 'function'` rồi gọi như một hàm, nên
+  // điều kiện KHÔNG BAO GIỜ đúng và prosody chưa từng được bật lần nào. Hậu quả
+  // im lặng: Azure luôn trả ProsodyScore = null, khiến azureToPronunciationBand
+  // luôn chặn điểm phát âm ở mức 7 — người phát âm tốt thật không bao giờ vượt
+  // được, mà người phát âm yếu lại được PronScore (tính thiếu prosody) đẩy lên
+  // cao. Đúng hai triệu chứng "band cao chấm thấp, band thấp chấm cao".
+  //
+  // Gán thẳng là an toàn kể cả với bản SDK không có thuộc tính này: JavaScript
+  // chỉ thêm một field vô hại thay vì ném lỗi.
+  if (runtimeConfig.azureSpeechLanguage.toLowerCase().startsWith('en')) {
+    config.enableProsodyAssessment = true;
   }
 
   return config;
