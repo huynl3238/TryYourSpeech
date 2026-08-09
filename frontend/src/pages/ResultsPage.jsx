@@ -5,13 +5,23 @@ import { getBackendFileUrl, retryResults } from '../services/api';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+import { PronunciationPanel } from '../components/PronunciationPanel';
 
+// Ba tiêu chí tạo nên band tổng. Phát âm CỐ Ý không có ở đây.
+//
+// Đo trên 5 bài mẫu có band tham chiếu (09/08/2026): điểm phát âm quy từ Azure ra
+// band cho cả 5 người đều là 7.0–7.5 trong khi band thật trải từ 4.5 đến 9.0 — nó
+// gần như một hằng số. Cộng vào band tổng chỉ làm sai lệch: tỉ lệ chấm nằm trong
+// 0.5 band là 40% khi có phát âm, 80% khi bỏ ra.
+//
+// Azure vẫn được dùng, nhưng hiển thị đúng thứ nó đo được: điểm thô 0–100 và danh
+// sách từ phát âm chưa đạt. Không quy sang band nữa.
 const CRITERIA = {
-  fluency:       { label: 'Fluency & Coherence',        color: '#2563eb' },
-  lexical:       { label: 'Lexical Resource',           color: '#059669' },
-  grammar:       { label: 'Grammar Range & Accuracy',   color: '#d97706' },
-  pronunciation: { label: 'Pronunciation',              color: '#7c3aed' },
+  fluency: { label: 'Fluency & Coherence',      color: '#2563eb' },
+  lexical: { label: 'Lexical Resource',         color: '#059669' },
+  grammar: { label: 'Grammar Range & Accuracy', color: '#d97706' },
 };
+
 
 const ERROR_TYPE_LABELS = {
   grammar_error:       { label: 'Grammar error',             color: '#f59e0b', bg: '#fffbeb' },
@@ -133,13 +143,6 @@ function CriterionFeedback({ label, color, band, feedback, evidence }) {
 function StructuredFeedback({ feedback }) {
   const overall = feedback.overall || {};
   const criteria = feedback.criteria || {};
-  const pronunciation = feedback.pronunciation || null;
-  const pronNotes = pronunciation
-    ? [
-        typeof pronunciation.accuracyScore === 'number' ? `độ chính xác ${pronunciation.accuracyScore}/100` : null,
-        typeof pronunciation.prosodyScore === 'number' ? `ngữ điệu ${pronunciation.prosodyScore}/100` : null,
-      ].filter(Boolean).join(' · ')
-    : '';
 
   return (
     <div className="space-y-4">
@@ -178,14 +181,6 @@ function StructuredFeedback({ feedback }) {
           );
         })}
 
-        {pronunciation && pronunciation.band != null && (
-          <CriterionFeedback
-            label="Pronunciation"
-            color="#7c3aed"
-            band={pronunciation.band}
-            feedback={`Đánh giá âm học khách quan từ Azure${pronNotes ? ` (${pronNotes})` : ''}.`}
-          />
-        )}
       </div>
     </div>
   );
@@ -362,7 +357,7 @@ export default function ResultsPage() {
                   {/* Scores */}
                   <Card>
                     <CardHeader className="pt-4 pb-3 px-4">
-                      <CardTitle className="text-sm font-medium text-zinc-600">Điểm 4 tiêu chí IELTS</CardTitle>
+                      <CardTitle className="text-sm font-medium text-zinc-600">Điểm 3 tiêu chí IELTS</CardTitle>
                     </CardHeader>
                     <CardContent className="px-4 pb-4">
                       <div className="grid grid-cols-2 gap-3">
@@ -398,6 +393,14 @@ export default function ResultsPage() {
                       </CardContent>
                     </Card>
                   )}
+
+                  {/* Phát âm để riêng, không nằm trong band tổng. Gộp chi tiết
+                      từng từ của MỌI lượt nói lại: người học cần biết mình hay sai
+                      từ nào trong cả bài, không phải từng câu một. */}
+                  <PronunciationPanel
+                    pronunciation={holistic.feedback?.pronunciation}
+                    words={turnResults.flatMap((turn) => turn.pronunciationDetail || [])}
+                  />
                 </>
               )}
 

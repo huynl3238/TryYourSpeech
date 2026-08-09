@@ -806,6 +806,33 @@ Nếu một số turn upload fail, session không được chuyển `processing`
 - Whisper có thể sửa lỗi theo ngữ cảnh (đoán từ đúng khi phát âm sai). Không dùng Whisper một mình để kết luận phát âm đúng/sai — đây là lý do phải dùng kết hợp với Azure.
 - Dùng Whisper transcript làm reference text cho Azure là lựa chọn thực dụng cho MVP, không phải ground truth tuyệt đối. Không hiển thị kết luận kiểu "AI chắc chắn đúng 100%" cho người dùng.
 
+### Band tổng chỉ gồm 3 tiêu chí — phát âm KHÔNG tính vào
+
+Đo ngày 09/08/2026 trên 5 bài mẫu có band tham chiếu (`backend/eval-data`):
+
+| band thật | 4.5 | 5.5 | 6.5 | 7.5 | 9.0 |
+|---|---|---|---|---|---|
+| phát âm (quy từ Azure) | 7.0 | 7.5 | 7.5 | 7.5 | 7.5 |
+
+Điểm phát âm gần như là **hằng số** trong khi band thật trải 4.5 → 9.0, tức không
+phân biệt được trình độ. Bỏ nó khỏi band tổng: **MAE 1.0 → 0.8, tỉ lệ nằm trong
+0.5 band 40% → 80%**.
+
+Nên bảng 9 ngưỡng quy 0–100 sang band (`services/pronunciationScoring.js`) **đã bị
+xoá**. Đó từng là chỗ DUY NHẤT trong hệ thống có con số tự đặt ra; giờ mọi số đưa
+cho người dùng đều là số nhà cung cấp đo được, hoặc do chính rubric IELTS quy định.
+
+Azure vẫn được dùng, cho đúng việc nó làm tốt: điểm thô 0–100 và **chi tiết phát âm
+từng từ** (`ai_results.pronunciation_detail`), hiển thị ở `PronunciationPanel`.
+Trước đây dữ liệu từng từ này được lưu nhưng không hề hiển thị ở đâu.
+
+Quyết định này được khoá bằng `test/holisticScores.test.js`. Đừng khoá ở
+`computeOverallBand` — hàm đó chỉ lấy trung bình những gì được đưa vào.
+
+Giới hạn còn lại, đã biết: cả ba tiêu chí ngôn ngữ cũng bị **nén về 5.0–7.0** trong
+khi tham chiếu trải 4.5–9.0. Bài band 9.0 bị chấm 7.0 và bỏ phát âm không cứu được.
+Ngoài ra mô hình **không tất định**: cùng một audio, hai lần chạy lệch 0.5–1.0 band.
+
 ### Azure Pronunciation Assessment
 
 - Package: `microsoft-cognitiveservices-speech-sdk`.

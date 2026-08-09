@@ -11,3 +11,6 @@ uploads/tmp/*
 eval-data/
 how_to_get_audio/
 scripts/
+
+# Tập con của eval-data, dựng tạm khi cần đo trên vài bài. Cũng là audio nặng.
+eval-subset/

@@ -1,6 +1,5 @@
 import { randomUUID } from 'crypto';
 import { assessAzurePronunciation } from '../services/azurePronunciationAssessment.js';
-import { azureToPronunciationBand } from '../services/pronunciationScoring.js';
 import { generateHolisticFeedback } from '../services/ieltsHolisticFeedback.js';
 import { transcribeAudioFile } from '../services/openaiClient.js';
 import { recordAiUsage } from './aiUsageModel.js';
@@ -39,6 +38,28 @@ function mean(values) {
   }
 
   return finite.reduce((total, value) => total + value, 0) / finite.length;
+}
+
+// Band tổng = trung bình các tiêu chí rồi làm tròn 0.5, đúng công thức IELTS thật.
+//
+// CỐ Ý chỉ gồm ba tiêu chí ngôn ngữ, KHÔNG có phát âm. Đo trên 5 bài mẫu có band
+// tham chiếu (09/08/2026): điểm phát âm quy từ Azure ra band cho cả 5 người đều
+// là 7.0–7.5, trong khi band thật của họ trải từ 4.5 đến 9.0 — nó gần như một
+// hằng số và không phân biệt được ai với ai. Cộng nó vào band tổng chỉ làm sai
+// lệch: tỉ lệ chấm nằm trong 0.5 band là 40% khi có phát âm, 80% khi bỏ ra.
+//
+// Azure vẫn được dùng, nhưng cho đúng việc nó làm tốt: chi tiết phát âm từng từ.
+// Những tiêu chí tạo nên band tổng. Tách ra thành hàm riêng để test khoá được
+// đúng quyết định này — computeOverallBand chỉ lấy trung bình những gì được đưa
+// vào, nên nếu thêm phát âm trở lại thì nó sẽ âm thầm bị cộng vào band tổng.
+export function buildHolisticScores(feedback) {
+  const source = feedback?.scores || {};
+
+  return {
+    fluency: source.fluency ?? null,
+    lexical: source.lexical ?? null,
+    grammar: source.grammar ?? null,
+  };
 }
 
 function computeOverallBand(scores) {
@@ -191,7 +212,10 @@ async function upsertSessionResultCompleted(client, sessionId, userId, holistic)
       holistic.scores.fluency,
       holistic.scores.lexical,
       holistic.scores.grammar,
-      holistic.scores.pronunciation,
+      // Cột này giữ lại nhưng luôn NULL: không còn band phát âm nào để lưu. Điểm
+      // thô của Azure nằm trong holistic_feedback.pronunciation. Không nhét số
+      // 0–100 vào một cột mang nghĩa "band" — hai đơn vị khác nhau.
+      null,
       holistic.overallBand,
       JSON.stringify(holistic.feedback),
     ]
@@ -291,7 +315,6 @@ async function runHolisticScoring(processedTurns, sessionId) {
   const aggregatedPronunciation = aggregatePronunciation(
     processedTurns.map(({ pronunciation }) => pronunciation)
   );
-  const pronunciationBand = azureToPronunciationBand(aggregatedPronunciation);
 
   const feedback = await generateHolisticFeedback({
     parts,
@@ -311,20 +334,19 @@ async function runHolisticScoring(processedTurns, sessionId) {
     },
   });
 
-  const scores = {
-    fluency: feedback.scores.fluency ?? null,
-    lexical: feedback.scores.lexical ?? null,
-    grammar: feedback.scores.grammar ?? null,
-    pronunciation: pronunciationBand,
-  };
+  const scores = buildHolisticScores(feedback);
 
   return {
     scores,
     overallBand: computeOverallBand(scores),
     feedback: {
       ...feedback,
+      // Điểm thô của Azure, KHÔNG quy ra band. Trước đây có một bảng 9 ngưỡng tự
+      // đặt để quy 0–100 sang band IELTS; đó là chỗ duy nhất trong toàn hệ thống
+      // có con số do mình nghĩ ra, và đo được là nó không phân biệt được trình độ.
+      // Bỏ bảng đó đi thì mọi con số đưa cho người dùng đều là số do nhà cung cấp
+      // đo hoặc do chính rubric IELTS quy định.
       pronunciation: {
-        band: pronunciationBand,
         accuracyScore: aggregatedPronunciation.accuracyScore,
         fluencyScore: aggregatedPronunciation.fluencyScore,
         prosodyScore: aggregatedPronunciation.prosodyScore,
