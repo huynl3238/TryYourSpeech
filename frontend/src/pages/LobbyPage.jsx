@@ -38,6 +38,7 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Card, CardContent } from '../components/ui/card';
 import { cleanupMediaSession } from '../utils/mediaCleanup';
+import { PartnerPicker } from '../components/PartnerPicker';
 import { getIdentity } from '../utils/identity';
 import { startNotificationsRealtime, onNotification } from '../services/notificationsRealtime';
 import MentorLearnerPage from './MentorLearnerPage';
@@ -500,6 +501,9 @@ function PracticePanel({
   onSubmit,
   onCancel,
   onEditProfile,
+  matchMode,
+  setMatchModeChoice,
+  picker,
 }) {
   const [checkOpen, setCheckOpen] = useState(false);
 
@@ -577,6 +581,35 @@ function PracticePanel({
               </div>
             </div>
 
+            {/* Chọn cách ghép. Mặc định là tự chọn — người dùng thấy ai đang chờ
+                rồi tự mời, thay vì bị máy ghép hộ ngay. */}
+            <div className="flex flex-col items-center gap-2">
+              <span className="text-[11px] uppercase tracking-[0.09em] text-[#A8A29E] font-bold">Cách ghép</span>
+              <div className="inline-flex rounded-full border border-[#EAE7E3] bg-white p-1">
+                {[
+                  { key: false, label: 'Lựa chọn ghép cặp', id: 'mode-choose-btn' },
+                  { key: true, label: 'Ghép ngẫu nhiên', id: 'mode-random-btn' },
+                ].map((option) => (
+                  <button
+                    key={String(option.key)}
+                    id={option.id}
+                    type="button"
+                    onClick={() => setMatchModeChoice(option.key)}
+                    className={`rounded-full px-4 py-2 text-[13px] font-semibold transition-colors ${
+                      matchMode === option.key ? 'bg-[#1C1917] text-white' : 'text-[#57534E]'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <p className="max-w-[320px] text-center text-[11.5px] text-[#A8A29E]">
+                {matchMode
+                  ? 'Hệ thống tự ghép bạn với người có band chênh tối đa 1.0.'
+                  : 'Bạn xem danh sách người đang chờ và tự mời người mình muốn.'}
+              </p>
+            </div>
+
             {/* Start */}
             <button
               id="find-partner-btn"
@@ -591,25 +624,7 @@ function PracticePanel({
           </form>
         </>
       ) : (
-        <div className="flex flex-col items-center text-center gap-4 min-h-[calc(100vh-130px)] justify-center">
-          <div className="relative inline-flex items-center justify-center w-16 h-16 rounded-full bg-[#F7ECE6]">
-            <span className="material-symbols-rounded icon-fill text-[#D97757]" style={{ fontSize: 30 }}>person_search</span>
-            <div className="absolute inset-[-6px] rounded-full border-2 border-[#E3A187] border-t-transparent animate-spin-slow" />
-          </div>
-          <div>
-            <h2 className="text-lg font-bold text-zinc-900">Đang tìm đối tác…</h2>
-            <p className="text-sm text-zinc-500 mt-1">
-              Xin chào <span className="font-medium text-zinc-700">{displayName}</span>! Đang tìm người có Band {band.toFixed(1)} ± 1.0
-            </p>
-          </div>
-          <div className="text-xs text-zinc-500 bg-[#F7ECE6] border border-[#EAC7B9] rounded-lg px-4 py-2.5">
-            Chuẩn bị sẵn mic và camera trong lúc chờ
-          </div>
-          <Button variant="outline" onClick={onCancel} size="sm">
-            <span className="material-symbols-rounded" style={{ fontSize: 15 }}>close</span>
-            Hủy tìm kiếm
-          </Button>
-        </div>
+        <PartnerPicker {...picker} myBand={band} onCancel={onCancel} />
       )}
 
       {checkOpen && <DeviceCheckModal onClose={() => setCheckOpen(false)} />}
@@ -3535,7 +3550,10 @@ export default function LobbyPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [band, setBand] = useState(user?.band ?? 5);
   const { state, dispatch, refs } = useSession();
-  const { findMatch, cancelMatch } = useSocket();
+  const { findMatch, cancelMatch, setMatchMode, invitePartner, cancelInvite, respondInvite } = useSocket();
+  // Lựa chọn ở màn hình trước khi bấm bắt đầu. Sau khi vào hàng chờ thì chế độ
+  // thật nằm ở state.matchAutoMatch, do server xác nhận.
+  const [matchModeChoice, setMatchModeChoice] = useState(false);
   const navigate = useNavigate();
 
   const isSearching = state.phase === 'searching';
@@ -3558,7 +3576,7 @@ export default function LobbyPage() {
 
   function handleSubmit(e) {
     e.preventDefault();
-    findMatch(displayName, band);
+    findMatch(displayName, band, matchModeChoice);
   }
 
   if (state.error?.type === 'match_error') {
@@ -3626,6 +3644,19 @@ export default function LobbyPage() {
             onSubmit={handleSubmit}
             onCancel={cancelMatch}
             onEditProfile={() => setActiveTab('profile')}
+            matchMode={matchModeChoice}
+            setMatchModeChoice={setMatchModeChoice}
+            picker={{
+              partners: state.partnerList,
+              autoMatch: state.matchAutoMatch,
+              outgoingInvite: state.outgoingInvite,
+              incomingInvites: state.incomingInvites,
+              inviteError: state.inviteError,
+              onInvite: invitePartner,
+              onCancelInvite: cancelInvite,
+              onRespondInvite: respondInvite,
+              onSwitchToRandom: () => setMatchMode(true),
+            }}
           />
         )}
         {activeTab === 'mentorLearner' && <MentorLearnerPage embedded />}

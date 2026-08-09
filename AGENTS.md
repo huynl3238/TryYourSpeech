@@ -228,6 +228,11 @@ Nếu tính năng đã nằm trong MVP và cách làm đã được quy định 
 
 | Event | Data | Mô tả |
 |---|---|---|
+| `set_match_mode` | `{ autoMatch }` | Đổi giữa tự chọn và ghép ngẫu nhiên khi đang chờ |
+| `request_partner_list` | — | Xin lại danh sách người đang chờ |
+| `invite_partner` | `{ toUserId }` | Mời một người trong danh sách |
+| `cancel_invite` | — | Rút lại lời mời đang gửi |
+| `respond_invite` | `{ inviteId, accept }` | Đồng ý hoặc từ chối lời mời |
 | `find_match` | `{ displayName, band }` | Người dùng muốn tìm đối tác |
 | `cancel_find_match` | — | Huỷ tìm kiếm |
 | `signal` | `{ type, payload }` | Relay WebRTC signal sang đối tác |
@@ -240,7 +245,15 @@ Nếu tính năng đã nằm trong MVP và cách làm đã được quy định 
 
 | Event | Data | Mô tả |
 |---|---|---|
-| `waiting` | — | Đang chờ đối tác |
+| `waiting` | `{ autoMatch }` | Đang chờ đối tác |
+| `partner_list` | `{ partners: [...] }` | Danh sách người đang chờ để tự chọn (10 chỗ, trộn band) |
+| `match_mode` | `{ autoMatch }` | Xác nhận đã đổi chế độ ghép |
+| `invite_received` | `{ inviteId, fromUserId, displayName, band, expiresInMs }` | Có người mời bạn |
+| `invite_sent` | `{ inviteId, toUserId, displayName, expiresInMs }` | Lời mời của bạn đã gửi đi |
+| `invite_cancelled` | `{ inviteId, reason }` | Lời mời không còn hiệu lực (`partner_matched` / `partner_left` / `cancelled` / `expired`) |
+| `invite_declined` | `{ inviteId }` | Người kia không nhận lời mời |
+| `invite_expired` | `{ inviteId }` | Lời mời của bạn hết hạn |
+| `invite_error` | `{ error }` | Không mời/không trả lời được |
 | `matched` | `{ roomId, sessionId, userId, partnerId, role, isInitiator, partnerName }` | Đã ghép cặp |
 | `match_error` | `{ error }` | Không thể ghép cặp/tạo session |
 | `signal` | `{ type, payload }` | Relay từ đối tác |
@@ -253,6 +266,42 @@ Nếu tính năng đã nằm trong MVP và cách làm đã được quy định 
 | `partner_not_ready` | — | Đối tác không xác nhận sẵn sàng trong 60s |
 | `partner_device_failed` | — | Mic/camera của đối tác hỏng (chỉ gửi cho người còn lại) |
 | `webrtc_failed` | — | Hai máy không kết nối được với nhau trong 45s |
+
+### Hai chế độ ghép cặp
+
+Một hàng đợi duy nhất (`waitingQueue`), mỗi người mang cờ `autoMatch`:
+
+- **`autoMatch: false`** — "Lựa chọn ghép cặp", MẶC ĐỊNH. Máy không tự ghép; người
+  dùng xem `partner_list` rồi `invite_partner`.
+- **`autoMatch: true`** — "Ghép ngẫu nhiên". `findBestBandMatch` chỉ xét những
+  người CŨNG đang ở chế độ này, để người đang đọc danh sách không bị bốc đi giữa
+  chừng. Vẫn giữ `MAX_BAND_DIFFERENCE = 1.0`.
+
+CỐ Ý không tách hai hàng đợi riêng: quy mô hiện tại quá nhỏ, tách ra là mỗi bên
+một người và không ai ghép được với ai.
+
+Lọc band khác nhau giữa hai chế độ là **có chủ đích**: máy đoán hộ thì phải thận
+trọng, người tự chọn thì được quyền quyết định (band 5.0 có thể cố ý muốn luyện
+với band 7.0). Nên `partner_list` KHÔNG lọc band.
+
+`partner_list` có 10 chỗ, chia 4 band tương đương (lệch < 0.5) / 3 cao hơn / 3
+thấp hơn, nhóm thiếu thì bù từ nhóm khác. Xếp phẳng theo độ gần thì với hàng đợi
+đông, cả 10 chỗ sẽ toàn người cùng trình độ.
+
+### Luật lời mời
+
+Mỗi lúc một người chỉ gửi được **một** lời mời; hết hạn sau `INVITE_TIMEOUT_MS`
+(30s, đổi được bằng env `SOCKET_INVITE_TIMEOUT_MS`); bị từ chối thì không mời lại
+người đó cho tới khi một trong hai rời hàng đợi; ngắt kết nối thì huỷ hết.
+
+**Lấy một người ra khỏi `waitingQueue` CHÍNH LÀ hành động chiếm chỗ**, và nó phải
+chạy đồng bộ trước mọi `await`. Node một luồng nên không cần lock. Đây là thứ xử
+lý cả ba tình huống tranh giành: hai người cùng mời một người, mời chéo nhau, và
+máy ghép ngẫu nhiên giành mất người đang cân nhắc.
+
+Chấp nhận lời mời kết thúc bằng `createPeerMatch()`, tức hội tụ về đúng sự kiện
+`matched` của luồng cũ — DeviceCheck, WebRTC, review, AI và results không phải
+sửa gì.
 
 ### Vòng đời một room
 

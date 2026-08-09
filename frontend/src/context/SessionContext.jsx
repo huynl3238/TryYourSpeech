@@ -37,6 +37,16 @@ const initialState = {
   // Current turn
   currentTurnIndex: 0,
 
+  // Chế độ ghép cặp. Mặc định là tự chọn: vào hàng chờ nhưng máy không tự ghép,
+  // người dùng tự xem danh sách và mời.
+  matchAutoMatch: false,
+  // Danh sách người đang chờ, do server dựng (10 chỗ, trộn band).
+  partnerList: [],
+  // Lời mời đang nhận và đang gửi. Mỗi lúc chỉ có tối đa một lời mời gửi ra.
+  incomingInvites: [],
+  outgoingInvite: null,
+  inviteError: null,
+
   // True while the partner's socket is gone but their room is still being held
   // open for them. Not an error: the media link is peer-to-peer and usually
   // survives the blip, so the UI says "reconnecting" rather than ending anything.
@@ -131,6 +141,46 @@ function sessionReducer(state, action) {
 
     case 'SET_CURRENT_TURN':
       return { ...state, currentTurnIndex: action.payload };
+
+    case 'SET_MATCH_MODE':
+      return { ...state, matchAutoMatch: action.payload };
+
+    case 'SET_PARTNER_LIST':
+      return { ...state, partnerList: action.payload };
+
+    case 'ADD_INCOMING_INVITE':
+      return {
+        ...state,
+        incomingInvites: [
+          ...state.incomingInvites.filter((invite) => invite.inviteId !== action.payload.inviteId),
+          action.payload,
+        ],
+      };
+
+    case 'REMOVE_INVITE':
+      return {
+        ...state,
+        incomingInvites: state.incomingInvites.filter((invite) => invite.inviteId !== action.payload),
+        outgoingInvite:
+          state.outgoingInvite?.inviteId === action.payload ? null : state.outgoingInvite,
+      };
+
+    case 'SET_OUTGOING_INVITE':
+      return { ...state, outgoingInvite: action.payload, inviteError: null };
+
+    case 'SET_INVITE_ERROR':
+      return { ...state, inviteError: action.payload };
+
+    // Rời hàng chờ thì mọi thứ thuộc về hàng chờ phải biến mất cùng, nếu không
+    // lần tìm sau sẽ mở ra với danh sách và lời mời cũ đã chết.
+    case 'CLEAR_MATCHMAKING':
+      return {
+        ...state,
+        partnerList: [],
+        incomingInvites: [],
+        outgoingInvite: null,
+        inviteError: null,
+      };
 
     case 'SET_PARTNER_RECONNECTING':
       return { ...state, partnerReconnecting: action.payload };

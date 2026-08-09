@@ -139,11 +139,11 @@ test('người rời đi giữa lúc đang tạo phiên thì không dựng phòn
     const clientA = server.connect(accountA);
     const clientB = server.connect(accountB);
 
-    clientA.handlers.find_match({ band: 6 });
+    clientA.handlers.find_match({ band: 6, autoMatch: true });
     await waitFor(clientA, 'waiting');
 
     // Deliberately not awaited: this leaves the session insert in flight.
-    const matching = clientB.handlers.find_match({ band: 6 });
+    const matching = clientB.handlers.find_match({ band: 6, autoMatch: true });
     // A closes the tab while that insert is still running.
     await clientA.handlers.disconnect();
     await matching;
@@ -185,10 +185,10 @@ test('người còn lại được ghép ngay với người mới tới sau đ�
     const clientB = server.connect(accountB);
     const clientC = server.connect(accountC);
 
-    clientA.handlers.find_match({ band: 6 });
+    clientA.handlers.find_match({ band: 6, autoMatch: true });
     await waitFor(clientA, 'waiting');
 
-    const matching = clientB.handlers.find_match({ band: 6 });
+    const matching = clientB.handlers.find_match({ band: 6, autoMatch: true });
     await clientA.handlers.disconnect();
     await matching;
     await settle();
@@ -198,7 +198,7 @@ test('người còn lại được ghép ngay với người mới tới sau đ�
     // B is back in the queue, so an ordinary new arrival should pair with them.
     // If the requeue had put a dead entry back instead, C would be matched with
     // a socket nobody is listening on.
-    clientC.handlers.find_match({ band: 6 });
+    clientC.handlers.find_match({ band: 6, autoMatch: true });
 
     const matchedC = await waitFor(clientC, 'matched');
     const matchedB = await waitFor(clientB, 'matched');

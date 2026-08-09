@@ -61,6 +61,9 @@ async function matchAndConnect(a, b) {
   for (const person of [a, b]) {
     await person.page.goto(APP_URL);
     await person.page.waitForSelector('#find-partner-btn', { timeout: 30000 });
+    // Mặc định là "Lựa chọn ghép cặp", tức KHÔNG tự ghép. Những bài này nói về
+    // vòng đời phiên chứ không về cách ghép, nên chọn ghép ngẫu nhiên cho gọn.
+    await person.page.click('#mode-random-btn');
   }
 
   await a.page.click('#find-partner-btn');

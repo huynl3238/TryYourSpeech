@@ -24,6 +24,24 @@ function getReconnectGraceMs() {
   return Number.isFinite(raw) && raw >= 0 ? raw : RECONNECT_GRACE_MS;
 }
 const CONNECT_WAIT_TIMEOUT_MS = 45000;
+
+// Danh sách người để tự chọn. Cố ý TRỘN band thay vì lấy 10 người gần nhất: mục
+// đích của việc cho chọn tay là trả lại quyền phán xét cho con người, mà người
+// band 5.0 hoàn toàn có thể cố ý muốn luyện với band 7.0 để nghe người giỏi hơn
+// nói. Máy không biết ý định đó nên không được tự lọc mất.
+const PARTNER_LIST_SIZE = 10;
+const PARTNER_LIST_SAME = 4;
+const PARTNER_LIST_HIGHER = 3;
+const PARTNER_LIST_LOWER = 3;
+// Dưới mức này coi như cùng trình độ.
+const SAME_BAND_THRESHOLD = 0.5;
+
+const INVITE_TIMEOUT_MS = 30000;
+
+function getInviteTimeoutMs() {
+  const raw = Number(process.env.SOCKET_INVITE_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : INVITE_TIMEOUT_MS;
+}
 const SIGNAL_TYPES = new Set(['offer', 'answer', 'ice-candidate']);
 const SESSION_MODES = new Set(['peer', 'mentor']);
 const USER_ROLES = new Set(['student', 'mentor']);
@@ -40,9 +58,20 @@ const connectedSockets = new Set();
 // open for them. Keyed by user rather than socket because the whole point is
 // that they come back on a new socket id.
 const awayRoomByUser = new Map();
+// inviteId -> { id, from, to, timer }. `from`/`to` giữ nguyên bản ghi hàng đợi,
+// nên đọc được cả socketId lẫn userId mà không phải tra ngược.
+const invitations = new Map();
+// "userIdA|userIdB" (đã sắp xếp) của những cặp đã từ chối nhau. Giữ để một người
+// bị từ chối không mời lại ngay lập tức — không có nó thì tính năng mời thành
+// công cụ quấy rầy. Xoá khi một trong hai rời hàng đợi.
+const declinedPairs = new Set();
 // sessionId -> { A: userInfo|null, B: userInfo|null } for REST-started mentor
 // sessions where both parties join the realtime room explicitly.
 const mentorRoomWaiters = new Map();
+
+function pairKey(userIdA, userIdB) {
+  return [userIdA, userIdB].sort().join('|');
+}
 
 function removeFromQueue(socketId) {
   for (const queue of [waitingQueue, mentorQueue, mentorStudentQueue]) {
@@ -161,7 +190,11 @@ function validateMatchRequest(data, account) {
     return { error: 'Band hien tai phai la so tu 0 den 9' };
   }
 
-  return { displayName, band, sessionMode, userRole };
+  // Mặc định là "Lựa chọn ghép cặp": vào hàng đợi nhưng máy không tự ghép. Chỉ
+  // khi client nói rõ autoMatch === true thì mới được ghép tự động.
+  const autoMatch = data.autoMatch === true;
+
+  return { displayName, band, sessionMode, userRole, autoMatch };
 }
 
 function isValidSignal(data) {
@@ -181,10 +214,17 @@ function getBandDifference(userA, userB) {
   return Math.abs(userA.band - userB.band);
 }
 
+// Chỉ ghép người đang ở chế độ "Ghép ngẫu nhiên" với nhau. Người đang tự chọn
+// mà bị máy bốc mất giữa lúc đọc danh sách thì tính năng chọn thành vô nghĩa —
+// chưa kịp mời ai đã vào phiên rồi.
 function findBestBandMatch(user) {
+  if (!user.autoMatch) return null;
+
   let bestMatch = null;
 
   for (const candidate of waitingQueue) {
+    if (!candidate.autoMatch) continue;
+
     const bandDifference = getBandDifference(user, candidate);
 
     if (bandDifference === null || bandDifference > MAX_BAND_DIFFERENCE) {
@@ -218,6 +258,128 @@ function findBestBandMatch(user) {
 // something we do not own and cannot exercise from a test.
 function isSocketAlive(socketId) {
   return connectedSockets.has(socketId);
+}
+
+// Danh sách người để chọn, cho MỘT người xem. Chia ba nhóm rồi lấy người gần
+// band nhất trong từng nhóm, thay vì xếp phẳng theo độ gần — xếp phẳng thì với
+// một hàng đợi đông, cả 10 chỗ sẽ toàn người cùng trình độ và người dùng không
+// bao giờ nhìn thấy ai khác mình.
+function buildPartnerList(viewer) {
+  const others = waitingQueue.filter(
+    (candidate) =>
+      candidate.socketId !== viewer.socketId &&
+      candidate.userId !== viewer.userId &&
+      isSocketAlive(candidate.socketId)
+  );
+
+  const byCloseness = (a, b) =>
+    Math.abs((a.band ?? 0) - (viewer.band ?? 0)) - Math.abs((b.band ?? 0) - (viewer.band ?? 0));
+
+  const gapOf = (candidate) => (candidate.band ?? 0) - (viewer.band ?? 0);
+
+  const same = others.filter((c) => Math.abs(gapOf(c)) < SAME_BAND_THRESHOLD).sort(byCloseness);
+  const higher = others.filter((c) => gapOf(c) >= SAME_BAND_THRESHOLD).sort(byCloseness);
+  const lower = others.filter((c) => gapOf(c) <= -SAME_BAND_THRESHOLD).sort(byCloseness);
+
+  const picked = [
+    ...same.slice(0, PARTNER_LIST_SAME),
+    ...higher.slice(0, PARTNER_LIST_HIGHER),
+    ...lower.slice(0, PARTNER_LIST_LOWER),
+  ];
+
+  // Nhóm nào thiếu thì bù từ những người còn lại, để danh sách luôn đủ 10 chỗ
+  // khi có đủ người. Thiếu chỗ mà vẫn còn người là lãng phí một cơ hội ghép.
+  if (picked.length < PARTNER_LIST_SIZE) {
+    const chosen = new Set(picked.map((c) => c.socketId));
+    for (const candidate of others.sort(byCloseness)) {
+      if (picked.length >= PARTNER_LIST_SIZE) break;
+      if (!chosen.has(candidate.socketId)) {
+        picked.push(candidate);
+        chosen.add(candidate.socketId);
+      }
+    }
+  }
+
+  const declined = new Set();
+  for (const candidate of picked) {
+    if (declinedPairs.has(pairKey(viewer.userId, candidate.userId))) {
+      declined.add(candidate.userId);
+    }
+  }
+
+  return picked.slice(0, PARTNER_LIST_SIZE).map((candidate) => ({
+    userId: candidate.userId,
+    displayName: candidate.displayName,
+    band: candidate.band,
+    // Cho người xem biết người này có thể biến mất bất cứ lúc nào vì đang được
+    // máy ghép hộ, thay vì để họ mời rồi ngơ ngác khi lời mời hỏng.
+    autoMatch: candidate.autoMatch === true,
+    waitingSeconds: Math.round((Date.now() - candidate.joinedAt) / 1000),
+    // Đã từ chối nhau thì hiện nhưng không mời lại được.
+    declined: declined.has(candidate.userId),
+  }));
+}
+
+function sendPartnerList(io, entry) {
+  io.to(entry.socketId).emit('partner_list', { partners: buildPartnerList(entry) });
+}
+
+// Hàng đợi đổi thì mọi người đang chờ đều phải thấy danh sách mới. Với quy mô
+// vài chục người thì gửi lại toàn bộ là đủ rẻ và không có trạng thái nào để lệch.
+function broadcastPartnerLists(io) {
+  for (const entry of waitingQueue) {
+    sendPartnerList(io, entry);
+  }
+}
+
+function findQueueEntryBySocket(socketId) {
+  return waitingQueue.find((entry) => entry.socketId === socketId) || null;
+}
+
+function findQueueEntryByUser(userId) {
+  return waitingQueue.find((entry) => entry.userId === userId) || null;
+}
+
+function clearInvite(inviteId) {
+  const invite = invitations.get(inviteId);
+  if (!invite) return null;
+
+  clearTimeout(invite.timer);
+  invitations.delete(inviteId);
+  return invite;
+}
+
+// Huỷ mọi lời mời mà người này dính vào, ở cả hai vai. Gọi khi họ rời hàng đợi,
+// được ghép, hoặc mất kết nối — nếu không, người còn lại ngồi chờ một lời mời
+// không bao giờ được trả lời.
+function cancelInvitesInvolving(io, userId, reason) {
+  for (const invite of [...invitations.values()]) {
+    if (invite.from.userId !== userId && invite.to.userId !== userId) continue;
+
+    clearInvite(invite.id);
+    const otherSocketId =
+      invite.from.userId === userId ? invite.to.socketId : invite.from.socketId;
+    io.to(otherSocketId).emit('invite_cancelled', { inviteId: invite.id, reason });
+  }
+}
+
+function forgetDeclinesFor(userId) {
+  for (const key of [...declinedPairs]) {
+    if (key.split('|').includes(userId)) {
+      declinedPairs.delete(key);
+    }
+  }
+}
+
+// Rời hàng đợi là một việc, và mọi đường ra đều phải đi qua đây: bỏ khỏi hàng
+// đợi, huỷ lời mời, quên các lần từ chối. Bỏ sót bước nào cũng để lại rác trỏ
+// tới một người không còn ở đó.
+function leaveQueue(io, socketId, userId, reason) {
+  removeFromQueue(socketId);
+  if (userId) {
+    cancelInvitesInvolving(io, userId, reason);
+    forgetDeclinesFor(userId);
+  }
 }
 
 function takeOldestUser(queue) {
@@ -380,6 +542,7 @@ function createMatchUser(socket, matchRequest) {
     displayName: matchRequest.displayName,
     band: matchRequest.band,
     userRole: matchRequest.userRole,
+    autoMatch: matchRequest.autoMatch === true,
     joinedAt: Date.now(),
   };
 }
@@ -484,6 +647,11 @@ async function createPeerMatch(io, user, matchedUser) {
   }
 
   createRoom(roomId, matchedUser, user, session.sessionId, 'peer');
+  // Đã vào phiên thì mọi lời mời còn treo của cả hai đều vô nghĩa.
+  cancelInvitesInvolving(io, matchedUser.userId, 'partner_matched');
+  cancelInvitesInvolving(io, user.userId, 'partner_matched');
+  forgetDeclinesFor(matchedUser.userId);
+  forgetDeclinesFor(user.userId);
   emitMatched(io, matchedUser, user, roomId, session, 'peer');
 
   console.log(
@@ -568,13 +736,169 @@ async function handleFindMatch(io, socket, data) {
   }
 
   waitingQueue.push(user);
-  console.log(`[Queue] +${user.displayName} (${user.band}) | size: ${waitingQueue.length}`);
-  socket.emit('waiting');
+  console.log(
+    `[Queue] +${user.displayName} (${user.band}) ${user.autoMatch ? 'ngau nhien' : 'tu chon'} | size: ${waitingQueue.length}`
+  );
+  socket.emit('waiting', { autoMatch: user.autoMatch });
+  // Người mới vào làm danh sách của mọi người khác đổi, nên phát lại cho tất cả
+  // chứ không riêng người này.
+  broadcastPartnerLists(io);
 }
 
-function handleCancelFindMatch(socket) {
-  removeFromQueue(socket.id);
+function handleCancelFindMatch(io, socket) {
+  leaveQueue(io, socket.id, socket.data.user?.id, 'partner_left');
   console.log(`[Queue] -${socket.id} cancelled`);
+  broadcastPartnerLists(io);
+}
+
+// Đổi giữa "Lựa chọn ghép cặp" và "Ghép ngẫu nhiên" khi đang chờ. Chuyển sang
+// ngẫu nhiên là thử ghép ngay, vì đó chính là điều người dùng vừa yêu cầu.
+async function handleSetMatchMode(io, socket, data) {
+  const entry = findQueueEntryBySocket(socket.id);
+  if (!entry) return;
+
+  const autoMatch = data?.autoMatch === true;
+  if (entry.autoMatch === autoMatch) return;
+
+  entry.autoMatch = autoMatch;
+  socket.emit('match_mode', { autoMatch });
+
+  if (autoMatch) {
+    // Chuyển sang ngẫu nhiên thì mọi lời mời đang treo của họ mất ý nghĩa.
+    cancelInvitesInvolving(io, entry.userId, 'partner_left');
+
+    removeFromQueue(entry.socketId);
+    const matchedUser = findBestBandMatch(entry);
+    if (matchedUser) {
+      await createPeerMatch(io, entry, matchedUser);
+      broadcastPartnerLists(io);
+      return;
+    }
+    waitingQueue.push(entry);
+  }
+
+  broadcastPartnerLists(io);
+}
+
+function handleRequestPartnerList(io, socket) {
+  const entry = findQueueEntryBySocket(socket.id);
+  if (!entry) return;
+
+  sendPartnerList(io, entry);
+}
+
+function handleInvitePartner(io, socket, data) {
+  const from = findQueueEntryBySocket(socket.id);
+  if (!from) return;
+
+  const targetUserId = typeof data?.toUserId === 'string' ? data.toUserId : null;
+  if (!targetUserId || targetUserId === from.userId) {
+    socket.emit('invite_error', { error: 'Không mời được người này' });
+    return;
+  }
+
+  // Một lời mời gửi ra tại một thời điểm. Không có chốt này thì một người rải
+  // lời mời cho cả 10 người rồi ba người cùng đồng ý.
+  const existing = [...invitations.values()].find((invite) => invite.from.userId === from.userId);
+  if (existing) {
+    socket.emit('invite_error', { error: 'Bạn đang có một lời mời chờ trả lời' });
+    return;
+  }
+
+  const to = findQueueEntryByUser(targetUserId);
+  if (!to || !isSocketAlive(to.socketId)) {
+    socket.emit('invite_error', { error: 'Người này không còn trong hàng chờ' });
+    broadcastPartnerLists(io);
+    return;
+  }
+
+  if (declinedPairs.has(pairKey(from.userId, to.userId))) {
+    socket.emit('invite_error', { error: 'Người này đã từ chối lời mời trước đó' });
+    return;
+  }
+
+  const inviteId = randomUUID();
+  const timer = setTimeout(() => {
+    clearInvite(inviteId);
+    io.to(from.socketId).emit('invite_expired', { inviteId });
+    io.to(to.socketId).emit('invite_cancelled', { inviteId, reason: 'expired' });
+  }, getInviteTimeoutMs());
+  timer.unref?.();
+
+  invitations.set(inviteId, { id: inviteId, from, to, timer });
+
+  io.to(to.socketId).emit('invite_received', {
+    inviteId,
+    fromUserId: from.userId,
+    displayName: from.displayName,
+    band: from.band,
+    expiresInMs: getInviteTimeoutMs(),
+  });
+  io.to(from.socketId).emit('invite_sent', {
+    inviteId,
+    toUserId: to.userId,
+    displayName: to.displayName,
+    expiresInMs: getInviteTimeoutMs(),
+  });
+}
+
+function handleCancelInvite(io, socket) {
+  const invite = [...invitations.values()].find(
+    (item) => item.from.socketId === socket.id
+  );
+  if (!invite) return;
+
+  clearInvite(invite.id);
+  io.to(invite.to.socketId).emit('invite_cancelled', { inviteId: invite.id, reason: 'cancelled' });
+  socket.emit('invite_cancelled', { inviteId: invite.id, reason: 'cancelled' });
+}
+
+async function handleRespondInvite(io, socket, data) {
+  const inviteId = typeof data?.inviteId === 'string' ? data.inviteId : null;
+  if (!inviteId) return;
+
+  const invite = invitations.get(inviteId);
+  if (!invite || invite.to.socketId !== socket.id) {
+    socket.emit('invite_error', { error: 'Lời mời không còn hiệu lực' });
+    return;
+  }
+
+  clearInvite(inviteId);
+
+  if (data.accept !== true) {
+    // Nhớ lại việc từ chối để không bị mời lại ngay. Người gửi chỉ nhận một câu
+    // trung lập — không ai cần biết mình bị chê.
+    declinedPairs.add(pairKey(invite.from.userId, invite.to.userId));
+    io.to(invite.from.socketId).emit('invite_declined', { inviteId });
+    broadcastPartnerLists(io);
+    return;
+  }
+
+  // Từ đây tới createPeerMatch không được có await nào: lấy hai người ra khỏi
+  // hàng đợi CHÍNH LÀ hành động chiếm chỗ. Node chạy một luồng nên kiểm tra
+  // đồng bộ là an toàn tuyệt đối, và nó xử lý cả ba tình huống rối: hai người
+  // cùng mời một người, mời chéo nhau, và máy ghép ngẫu nhiên giành mất người
+  // đang cân nhắc.
+  const fromStillQueued = findQueueEntryByUser(invite.from.userId);
+  const toStillQueued = findQueueEntryByUser(invite.to.userId);
+
+  if (!fromStillQueued || !toStillQueued || !isSocketAlive(invite.from.socketId)) {
+    socket.emit('invite_error', { error: 'Người mời không còn trong hàng chờ' });
+    broadcastPartnerLists(io);
+    return;
+  }
+
+  removeFromQueue(invite.from.socketId);
+  removeFromQueue(invite.to.socketId);
+  cancelInvitesInvolving(io, invite.from.userId, 'partner_matched');
+  cancelInvitesInvolving(io, invite.to.userId, 'partner_matched');
+  forgetDeclinesFor(invite.from.userId);
+  forgetDeclinesFor(invite.to.userId);
+
+  // Hội tụ về đúng đường ghép cũ, nên DeviceCheck, WebRTC, review, AI và kết quả
+  // không phải sửa một dòng nào.
+  await createPeerMatch(io, invite.to, invite.from);
+  broadcastPartnerLists(io);
 }
 
 function handleSignal(io, socket, data) {
@@ -899,7 +1223,10 @@ function resumeRoomIfAway(io, socket) {
 async function handleDisconnect(io, socket) {
   console.log(`[Socket] Disconnected: ${socket.id}`);
   connectedSockets.delete(socket.id);
-  removeFromQueue(socket.id);
+  // Rời hàng đợi phải kéo theo việc huỷ lời mời, nếu không người còn lại ngồi
+  // chờ một lời mời không bao giờ được trả lời.
+  leaveQueue(io, socket.id, socket.data.user?.id, 'partner_left');
+  broadcastPartnerLists(io);
   cleanupMentorWaiter(socket.id);
   unregisterSocket(socket.id);
 
@@ -968,7 +1295,21 @@ export function setupSocket(io) {
         socket.emit('match_error', { error: 'Khong the tim doi tac luc nay' });
       });
     });
-    socket.on('cancel_find_match', () => handleCancelFindMatch(socket));
+    socket.on('cancel_find_match', () => handleCancelFindMatch(io, socket));
+    socket.on('request_partner_list', () => handleRequestPartnerList(io, socket));
+    socket.on('set_match_mode', (data) => {
+      handleSetMatchMode(io, socket, data).catch((err) => {
+        console.error('set_match_mode failed:', err.message);
+      });
+    });
+    socket.on('invite_partner', (data) => handleInvitePartner(io, socket, data));
+    socket.on('cancel_invite', () => handleCancelInvite(io, socket));
+    socket.on('respond_invite', (data) => {
+      handleRespondInvite(io, socket, data).catch((err) => {
+        console.error('respond_invite failed:', err.message);
+        socket.emit('invite_error', { error: 'Không xử lý được lời mời' });
+      });
+    });
     socket.on('signal', (data) => handleSignal(io, socket, data));
     socket.on('device_ready', () => handleDeviceReady(io, socket));
     socket.on('device_failed', () => handleDeviceFailed(io, socket));

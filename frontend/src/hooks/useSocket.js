@@ -145,6 +145,40 @@ export function useSocket() {
       dispatch({ type: 'CLEAR_ERROR' });
     }
 
+    function handlePartnerList({ partners }) {
+      dispatch({ type: 'SET_PARTNER_LIST', payload: partners || [] });
+    }
+
+    function handleMatchMode({ autoMatch }) {
+      dispatch({ type: 'SET_MATCH_MODE', payload: autoMatch === true });
+    }
+
+    function handleInviteReceived(invite) {
+      dispatch({ type: 'ADD_INCOMING_INVITE', payload: invite });
+    }
+
+    function handleInviteSent(invite) {
+      dispatch({ type: 'SET_OUTGOING_INVITE', payload: invite });
+    }
+
+    function handleInviteCancelled({ inviteId }) {
+      dispatch({ type: 'REMOVE_INVITE', payload: inviteId });
+    }
+
+    function handleInviteDeclined({ inviteId }) {
+      dispatch({ type: 'REMOVE_INVITE', payload: inviteId });
+      dispatch({ type: 'SET_INVITE_ERROR', payload: 'Người này chưa nhận lời mời của bạn.' });
+    }
+
+    function handleInviteExpired({ inviteId }) {
+      dispatch({ type: 'REMOVE_INVITE', payload: inviteId });
+      dispatch({ type: 'SET_INVITE_ERROR', payload: 'Lời mời đã hết hạn.' });
+    }
+
+    function handleInviteError({ error }) {
+      dispatch({ type: 'SET_INVITE_ERROR', payload: error });
+    }
+
     socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
     socket.on('waiting', handleWaiting);
@@ -160,6 +194,14 @@ export function useSocket() {
     socket.on('partner_reconnecting', handlePartnerReconnecting);
     socket.on('partner_reconnected', handlePartnerReconnected);
     socket.on('session_resumed', handleSessionResumed);
+    socket.on('partner_list', handlePartnerList);
+    socket.on('match_mode', handleMatchMode);
+    socket.on('invite_received', handleInviteReceived);
+    socket.on('invite_sent', handleInviteSent);
+    socket.on('invite_cancelled', handleInviteCancelled);
+    socket.on('invite_declined', handleInviteDeclined);
+    socket.on('invite_expired', handleInviteExpired);
+    socket.on('invite_error', handleInviteError);
 
     return () => {
       socket.off('connect', handleConnect);
@@ -177,24 +219,53 @@ export function useSocket() {
       socket.off('partner_reconnecting', handlePartnerReconnecting);
       socket.off('partner_reconnected', handlePartnerReconnected);
       socket.off('session_resumed', handleSessionResumed);
+      socket.off('partner_list', handlePartnerList);
+      socket.off('match_mode', handleMatchMode);
+      socket.off('invite_received', handleInviteReceived);
+      socket.off('invite_sent', handleInviteSent);
+      socket.off('invite_cancelled', handleInviteCancelled);
+      socket.off('invite_declined', handleInviteDeclined);
+      socket.off('invite_expired', handleInviteExpired);
+      socket.off('invite_error', handleInviteError);
     };
   }, [dispatch, refs]);
 
   // The server takes the name and role from the signed-in account behind the
   // handshake; band is the only thing this side still gets to choose.
-  const findMatch = useCallback((displayName, band) => {
+  // autoMatch mặc định false: vào hàng chờ nhưng máy không tự ghép, người dùng
+  // tự chọn. Muốn máy ghép hộ thì phải nói rõ.
+  const findMatch = useCallback((displayName, band, autoMatch = false) => {
     dispatch({ type: 'SET_USER', payload: { displayName, band } });
+    dispatch({ type: 'SET_MATCH_MODE', payload: autoMatch });
+    dispatch({ type: 'CLEAR_MATCHMAKING' });
     if (socket.connected) {
       socket.disconnect();
     }
     socket.connect();
-    socket.emit('find_match', { band });
+    socket.emit('find_match', { band, autoMatch });
   }, [dispatch]);
 
   const cancelMatch = useCallback(() => {
     socket.emit('cancel_find_match');
+    dispatch({ type: 'CLEAR_MATCHMAKING' });
     dispatch({ type: 'SET_PHASE', payload: 'lobby' });
   }, [dispatch]);
+
+  const setMatchMode = useCallback((autoMatch) => {
+    socket.emit('set_match_mode', { autoMatch });
+  }, []);
+
+  const invitePartner = useCallback((toUserId) => {
+    socket.emit('invite_partner', { toUserId });
+  }, []);
+
+  const cancelInvite = useCallback(() => {
+    socket.emit('cancel_invite');
+  }, []);
+
+  const respondInvite = useCallback((inviteId, accept) => {
+    socket.emit('respond_invite', { inviteId, accept });
+  }, []);
 
   // Join the realtime room for a mentor session already created via REST.
   // Both the mentor and the chosen student call this; the server pairs them.
@@ -255,6 +326,10 @@ export function useSocket() {
   return {
     findMatch,
     cancelMatch,
+    setMatchMode,
+    invitePartner,
+    cancelInvite,
+    respondInvite,
     joinMentorRoom,
     sendSignal,
     notifyDeviceReady,

@@ -139,9 +139,9 @@ async function matchTwoClients() {
   const clientA = server.connect(accountA);
   const clientB = server.connect(accountB);
 
-  clientA.handlers.find_match({ band: 6 });
+  clientA.handlers.find_match({ band: 6, autoMatch: true });
   await waitFor(clientA, 'waiting');
-  clientB.handlers.find_match({ band: 6 });
+  clientB.handlers.find_match({ band: 6, autoMatch: true });
 
   const matched = await waitFor(clientA, 'matched');
   assert.ok(matched, 'hai người cùng band phải được ghép');
