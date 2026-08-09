@@ -326,7 +326,8 @@ export default function ResultsPage() {
                 <Badge variant="secondary" className="mb-2">Cả bài</Badge>
                 <h2 className="text-base font-semibold text-zinc-900 leading-snug">Đánh giá tổng thể</h2>
                 <p className="text-xs text-zinc-400 mt-1">
-                  Fluency, Lexical và Grammar được chấm một lần cho toàn bộ bài nói; điểm phát âm gộp từ tất cả các lượt.
+                  Fluency, Lexical và Grammar được chấm một lần cho toàn bộ bài nói. Phát âm hiển thị riêng bên dưới,
+                  không tính vào band tổng.
                 </p>
               </div>
 
