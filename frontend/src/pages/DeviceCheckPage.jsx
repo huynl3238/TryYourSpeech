@@ -32,7 +32,9 @@ function StatusRow({ status, label }) {
       {status === 'error' && (
         <span className="material-symbols-rounded icon-fill text-red-500" style={{ fontSize: 18 }}>error</span>
       )}
-      <span className="text-sm text-zinc-700">{label}</span>
+      {/* "Microphone" là một từ dài không có chỗ ngắt tự nhiên; thiếu dòng này thì
+          khi khung hẹp trình duyệt ngắt nó xuống từng ký tự. */}
+      <span className="whitespace-nowrap text-sm text-zinc-700">{label}</span>
     </div>
   );
 }
@@ -257,18 +259,23 @@ export default function DeviceCheckPage() {
   const partnerBand = state.sessionData?.participants?.find((p) => p.id === state.partnerId)?.band;
 
   return (
-    <div className="min-h-screen bg-zinc-50 flex items-start justify-center px-4 py-10">
+    <div className="min-h-screen bg-zinc-50 flex items-start justify-center px-4 py-6 md:py-10">
       <div className="animate-slide-up w-full max-w-[880px]">
 
         {/* Header */}
-        <div className="mb-8">
+        <div className="mb-5 md:mb-8">
           <h1 className="text-xl font-semibold text-zinc-900">Kiểm tra thiết bị</h1>
           <p className="text-sm text-zinc-500 mt-0.5">
             Phiên luyện tập cùng <span className="font-medium text-zinc-700">{state.partnerName}</span>
           </p>
         </div>
 
-        <div className="grid grid-cols-[1fr_300px] gap-5">
+        {/* Một cột trên điện thoại, hai cột từ màn hình vừa trở lên.
+            Bản trước là `grid-cols-[1fr_300px]` không có điểm ngắt nào: trên iPhone
+            rộng 390px thì cột phải chiếm cứng 300px, cột trái còn vài chục pixel —
+            video bị bóp dẹt và chữ "Microphone" bị ngắt xuống từng ký tự một, tạo
+            thành một dải trắng cao ngoằng. */}
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-[1fr_300px]">
 
           {/* Camera preview */}
           <Card className="overflow-hidden">
@@ -288,7 +295,9 @@ export default function DeviceCheckPage() {
                 </div>
               )}
             </div>
-            <CardContent className="py-3 px-4 flex gap-5 bg-zinc-50 border-t border-zinc-100">
+            {/* `flex-wrap` để hai dòng trạng thái xuống hàng khi hẹp, thay vì bị
+                nén lại rồi ngắt chữ. */}
+            <CardContent className="py-3 px-4 flex flex-wrap gap-x-5 gap-y-2 bg-zinc-50 border-t border-zinc-100">
               <StatusRow status={micStatus} label="Microphone" />
               <StatusRow status={camStatus} label="Camera" />
             </CardContent>
