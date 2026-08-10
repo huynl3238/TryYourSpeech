@@ -112,6 +112,63 @@
   animation: scaleIn 200ms ease both;
 }
 
+/* --- Màn hình chờ ghép cặp ---
+   Người dùng ngồi nhìn màn này lâu nhất trong cả ứng dụng, nên nó cần có thứ
+   chuyển động để thấy hệ thống còn sống. Tất cả đều tắt khi máy người dùng bật
+   chế độ giảm hiệu ứng (khai báo ở cuối khối này). */
+@keyframes waitRadar {
+  0%   { transform: scale(0.5); opacity: 0.5; }
+  70%  { opacity: 0; }
+  100% { transform: scale(1.55); opacity: 0; }
+}
+
+@keyframes waitBreathe {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.04); }
+}
+
+@keyframes waitShimmer {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(100%); }
+}
+
+.wait-radar-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  border: 2px solid #E3A187;
+  animation: waitRadar 2.8s ease-out infinite;
+}
+
+.wait-medallion {
+  animation: waitBreathe 3.4s ease-in-out infinite;
+}
+
+/* Vệt sáng chạy qua các dòng giả khi danh sách còn rỗng: nói "đang chờ dữ liệu"
+   rõ hơn một ô viền nét đứt đứng im. */
+.wait-skeleton {
+  position: relative;
+  overflow: hidden;
+}
+
+.wait-skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(217, 119, 87, 0.1), transparent);
+  animation: waitShimmer 1.7s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wait-radar-ring,
+  .wait-medallion,
+  .wait-skeleton::after {
+    animation: none;
+  }
+
+  .wait-radar-ring { opacity: 0.28; }
+}
+
 /* --- Recording dot --- */
 .recording-dot {
   display: inline-block;
