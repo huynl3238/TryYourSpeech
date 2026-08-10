@@ -870,6 +870,10 @@ async function handleRespondInvite(io, socket, data) {
     // trung lập — không ai cần biết mình bị chê.
     declinedPairs.add(pairKey(invite.from.userId, invite.to.userId));
     io.to(invite.from.socketId).emit('invite_declined', { inviteId });
+    // Người từ chối cũng phải được xác nhận. `clearInvite` ở trên đã tắt luôn đồng
+    // hồ 30 giây, nên nếu không gửi gì thì không còn sự kiện nào tới sau và thẻ lời
+    // mời nằm lại trên màn hình họ mãi mãi — bấm "Đồng ý" lúc đó chỉ nhận về lỗi.
+    socket.emit('invite_cancelled', { inviteId, reason: 'declined' });
     broadcastPartnerLists(io);
     return;
   }

@@ -358,6 +358,15 @@ test('từ chối thì người mời được báo và không mời lại đư�
 
     assert.ok(await waitFor(a, 'invite_declined'), 'A phải biết là bị từ chối');
 
+    // Và chính B — người bấm từ chối — cũng phải được xác nhận. Không có dòng này
+    // thì thẻ lời mời nằm lại trên màn hình B vĩnh viễn: respond_invite đã gỡ lời
+    // mời khỏi bộ nhớ kèm đồng hồ 30 giây, nên không còn sự kiện nào tới sau, và
+    // nút "Đồng ý" còn đó chỉ trả về "Lời mời không còn hiệu lực".
+    const closedForB = await waitFor(b, 'invite_cancelled');
+    assert.ok(closedForB, 'B phải được xác nhận là lời mời đã đóng');
+    assert.equal(closedForB.payload.inviteId, received.payload.inviteId);
+    assert.equal(closedForB.payload.reason, 'declined');
+
     // Mời lại ngay lập tức là quấy rầy, nên bị chặn.
     a.handlers.invite_partner({ toUserId: two.id });
     const error = await waitFor(a, 'invite_error');
