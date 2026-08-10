@@ -7,6 +7,7 @@ import {
 } from '../models/sessionModel.js';
 import { setIo, registerUserSocket, unregisterSocket } from './notifier.js';
 import { authenticateSocket } from './auth.js';
+import { parseBand as parseBandInput } from '../utils/band.js';
 
 const MAX_BAND_DIFFERENCE = 1.0;
 const MAX_DISPLAY_NAME_LENGTH = 100;
@@ -95,22 +96,11 @@ function isUserQueued(userId) {
   );
 }
 
+// Dùng chung bộ kiểm với hồ sơ người dùng, nhưng ở đây band sai thì coi như chưa
+// khai chứ không ném lỗi: một payload rác không được làm rơi kết nối của người
+// đang chờ ghép cặp.
 function parseBand(band) {
-  if (band === null || band === undefined || band === '') {
-    return null;
-  }
-
-  if (typeof band === 'string' && band.trim().length === 0) {
-    return null;
-  }
-
-  const parsedBand = Number(band);
-
-  if (!Number.isFinite(parsedBand) || parsedBand < 0 || parsedBand > 9) {
-    return null;
-  }
-
-  return parsedBand;
+  return parseBandInput(band).band ?? null;
 }
 
 function normalizeDisplayName(displayName) {

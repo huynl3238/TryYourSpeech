@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import pool from '../config/db.js';
+import { parseBandOrThrow } from '../utils/band.js';
 
 function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
@@ -172,14 +173,8 @@ export async function createIdentity({ displayName, band, userRole }) {
 
   const role = ['student', 'mentor', 'admin'].includes(userRole) ? userRole : 'student';
 
-  let parsedBand = null;
-  if (band !== undefined && band !== null && band !== '') {
-    const numberBand = Number(band);
-    if (!Number.isFinite(numberBand) || numberBand < 0 || numberBand > 9) {
-      throw new Error('band must be a number from 0 to 9');
-    }
-    parsedBand = numberBand;
-  }
+  // Lúc tạo danh tính thì chưa khai band là được — cột `band` cho phép NULL.
+  const parsedBand = parseBandOrThrow(band);
 
   const result = await pool.query(
     `
@@ -202,10 +197,10 @@ export async function updateUserProfile({ userId, displayName, band }) {
     throw new Error('displayName is invalid');
   }
 
-  const parsedBand = Number(band);
-  if (!Number.isFinite(parsedBand) || parsedBand < 0 || parsedBand > 9) {
-    throw new Error('band must be a number from 0 to 9');
-  }
+  // `required: true` vì đây là màn hình người dùng tự khai trình độ, và band là
+  // đầu vào của ghép cặp. Bản trước dùng `Number(band)` nên band null thành 0 —
+  // người dùng bị gán band 0 mà không ai báo gì.
+  const parsedBand = parseBandOrThrow(band, { required: true });
 
   const client = await pool.connect();
 
