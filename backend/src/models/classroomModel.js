@@ -152,6 +152,19 @@ function mapPostRow(row) {
     aiCompletedCount: Number(row.ai_completed_count || 0),
     overallBand: toNumberOrNull(row.overall_band),
     aiComment: buildSummary(row),
+    // Kết quả chấm cả bài của người đăng, lấy nguyên từ session_ai_results. Giao
+    // diện phải dựa vào `status`: chưa 'completed' thì không được hiện con số nào.
+    // Phiên mentor không chạy AI nên ở đó cả khối này là null — đúng như vậy.
+    ai: {
+      status: row.holistic_status || null,
+      overallBand: toNumberOrNull(row.overall_band),
+      scores: {
+        fluency: toNumberOrNull(row.holistic_fluency_score),
+        lexical: toNumberOrNull(row.holistic_lexical_score),
+        grammar: toNumberOrNull(row.holistic_grammar_score),
+      },
+      feedback: row.holistic_feedback || null,
+    },
     sessionMode: row.session_mode || 'peer',
   };
 }
@@ -187,11 +200,13 @@ function mapTranscript(row) {
       lexical: toNumberOrNull(row.lexical_score),
       grammar: toNumberOrNull(row.grammar_score),
       pronunciation: toNumberOrNull(row.pronunciation_score),
+      // Phát âm KHÔNG được cộng vào band: điểm Azure là số âm học, không phải band
+      // IELTS, và việc quy đổi nó sang band đã bị bỏ ngày 09/08. Bản trước lấy
+      // trung bình cả 4 nên vẫn kéo phát âm vào điểm tổng ở đúng chỗ này.
       overall: averageScores([
         row.fluency_score,
         row.lexical_score,
         row.grammar_score,
-        row.pronunciation_score,
       ]),
     },
     aiFeedback: row.ai_feedback || {},
@@ -285,6 +300,13 @@ async function getPostRows(client, whereClause, params, viewerId = null) {
         COALESCE(ai.completed_count, 0) AS ai_completed_count,
         holistic.overall_band,
         holistic.feedback_summary AS ai_feedback_summary,
+        -- Điểm chấm cả bài. Trước đây trang chi tiết Lớp học không có đường nào
+        -- lấy được mấy con số này, nên frontend đã viết cứng điểm giả vào code.
+        holistic.ai_status AS holistic_status,
+        holistic.fluency_score AS holistic_fluency_score,
+        holistic.lexical_score AS holistic_lexical_score,
+        holistic.grammar_score AS holistic_grammar_score,
+        holistic.holistic_feedback,
         mr.overall_comment AS mentor_overall_comment
       FROM classroom_posts cp
       JOIN sessions s ON s.id = cp.session_id
@@ -306,7 +328,12 @@ async function getPostRows(client, whereClause, params, viewerId = null) {
       ) ai ON true
       LEFT JOIN LATERAL (
         SELECT
+          status AS ai_status,
           overall_band,
+          fluency_score,
+          lexical_score,
+          grammar_score,
+          holistic_feedback,
           holistic_feedback -> 'overall' ->> 'summary' AS feedback_summary
         FROM session_ai_results
         WHERE session_id = s.id

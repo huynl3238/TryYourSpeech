@@ -39,6 +39,7 @@ import { Label } from '../components/ui/label';
 import { Card, CardContent } from '../components/ui/card';
 import { cleanupMediaSession } from '../utils/mediaCleanup';
 import { PartnerPicker } from '../components/PartnerPicker';
+import { ClassroomAiFeedback } from '../components/ClassroomAiFeedback';
 import { getIdentity } from '../utils/identity';
 import { startNotificationsRealtime, onNotification } from '../services/notificationsRealtime';
 import MentorLearnerPage from './MentorLearnerPage';
@@ -671,35 +672,6 @@ function ClassroomPostDetail({
   onToggleLike = () => {},
   onToggleSave = () => {},
 }) {
-  const aiCriteria = [
-    {
-      label: 'Fluency & Coherence',
-      score: post.id === 1 ? '6.5' : '7.0',
-      text: post.id === 1
-        ? 'Bài nói khá trôi chảy, biết nối ý bằng ví dụ cá nhân và các cụm chuyển ý tự nhiên.'
-        : 'Câu trả lời có hướng phát triển rõ: nêu quan điểm, giải thích nguyên nhân và thêm ví dụ cụ thể.',
-    },
-    {
-      label: 'Lexical Resource',
-      score: '6.5',
-      text: post.id === 1
-        ? 'Từ vựng không quá phức tạp nhưng dùng đúng ngữ cảnh, có một số cụm tốt như “stood out to me”.'
-        : 'Có dùng một số cụm diễn đạt quan điểm tốt, nhưng vẫn có thể mở rộng thêm collocation theo chủ đề.',
-    },
-    {
-      label: 'Grammar Range & Accuracy',
-      score: post.id === 1 ? '6.0' : '7.0',
-      text: post.id === 1
-        ? 'Cấu trúc câu đủ rõ để truyền đạt ý, nên thêm câu phức để tăng độ linh hoạt.'
-        : 'Cấu trúc câu đa dạng hơn, có câu phức; cần chú ý thêm mạo từ và độ chính xác khi nói nhanh.',
-    },
-    {
-      label: 'Pronunciation',
-      score: '6.5',
-      text: 'Phát âm nhìn chung rõ và dễ nghe. Nên tiếp tục luyện trọng âm câu và âm cuối để câu nói tự nhiên hơn.',
-    },
-  ];
-
   const focusRing = (name) => focusSection === name ? 'ring-2 ring-[#EAC7B9] border-[#EAC7B9]' : 'border-[#EAE7E3]';
 
   return (
@@ -754,28 +726,7 @@ function ClassroomPostDetail({
 
       {/* AI section */}
       <div className={`bg-white border rounded-2xl shadow-sm p-5 ${focusRing('ai')}`}>
-        <div className="flex items-center gap-2 text-[15px] font-bold text-[#1C1917]">
-          <span className="material-symbols-rounded icon-fill text-[#D97757]" style={{ fontSize: 19 }}>robot_2</span>
-          Nhận xét từ AI
-        </div>
-        <p className="text-xs text-[#78716C] mt-0.5">Đánh giá chi tiết theo các tiêu chí IELTS Speaking.</p>
-
-        <div className="mt-4 p-3.5 rounded-xl border border-[#EAC7B9]" style={{ background: '#FBF4EF' }}>
-          <div className="text-[11px] uppercase tracking-wide text-[#8A4A33] font-bold mb-1">Đánh giá tổng quan</div>
-          <p className="text-[13.5px] text-[#1C1917] leading-relaxed">{post.aiComment}</p>
-        </div>
-
-        <div className="grid sm:grid-cols-2 gap-3 mt-3">
-          {aiCriteria.map((item) => (
-            <div key={item.label} className="border border-[#EAE7E3] rounded-xl p-3.5">
-              <div className="flex items-center justify-between">
-                <strong className="text-[12.5px] text-[#1C1917]">{item.label}</strong>
-                <span className="text-[14px] font-extrabold text-[#D97757] tabular-nums">{item.score}</span>
-              </div>
-              <p className="text-[12px] text-[#57534E] leading-relaxed mt-1.5">{item.text}</p>
-            </div>
-          ))}
-        </div>
+        <ClassroomAiFeedback post={post} />
 
         {post.aiTranscripts.length > 0 && (
           <div className="mt-4">
@@ -927,7 +878,11 @@ function ClassroomPostCard({ post, onOpenDetail, onToggleLike = () => {}, onTogg
   const peerReviews = post.peerReviews || [];
   const peerNoteCount = post.peerNoteCount ?? peerReviews.reduce((total, review) => total + review.notes.length, 0);
   const isMentorPost = post.sessionMode === 'mentor';
-  const bandValue = post.overallBand != null ? Number(post.overallBand).toFixed(1) : null;
+  // Chỉ hiện band khi AI đã chấm XONG. Phiên đang chấm hoặc chấm lỗi thì con số
+  // trên thẻ là số nửa vời, và đây là chỗ người dùng nhìn trước cả khi mở bài.
+  const bandValue = post.ai?.status === 'completed' && post.overallBand != null
+    ? Number(post.overallBand).toFixed(1)
+    : null;
 
   return (
     <article className="bg-white border border-[#EAE7E3] rounded-2xl shadow-sm overflow-hidden transition-shadow hover:shadow-[0_2px_6px_rgba(28,25,23,.05),0_12px_32px_-8px_rgba(28,25,23,.1)] hover:border-[#E0DBD5]">
