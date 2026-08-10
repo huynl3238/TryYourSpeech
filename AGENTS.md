@@ -115,6 +115,12 @@ Các package này chưa chắc đã được cài sẵn trong repo. Khi implemen
 
 ```
 PORT=3001
+# Card mạng để lắng nghe. Bỏ trống = 127.0.0.1, tức chỉ nginx trên cùng máy gọi
+# được tới backend. ĐỪNG đặt 0.0.0.0 trên máy chủ thật: làm vậy là mở cổng 3001
+# ra Internet, bỏ qua nginx và HTTPS, và làm rỗng nghĩa của giới hạn tần suất
+# (rateLimit tin header X-Forwarded-For, chỉ đáng tin khi duy nhất nginx tới được).
+# Chỉ đặt 0.0.0.0 khi cần thử trên điện thoại thật qua mạng LAN lúc phát triển.
+HOST=
 CLIENT_URL=http://localhost:5173
 
 DB_HOST=localhost
