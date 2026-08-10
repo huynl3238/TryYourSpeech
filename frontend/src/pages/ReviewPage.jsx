@@ -6,6 +6,7 @@ import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Input } from '../components/ui/input';
+import { ErrorScreen } from '../components/ui/ErrorScreen';
 
 const ERROR_TYPE_CONFIG = {
   grammar_error:        { label: 'Grammar error',              badgeClass: 'bg-amber-100 text-amber-700',  borderColor: '#f59e0b' },
@@ -30,6 +31,10 @@ const AI_AUDIO_UPLOAD_ENABLED = import.meta.env.VITE_AI_AUDIO_UPLOAD_ENABLED !==
 export default function ReviewPage() {
   const { state, dispatch } = useSession();
   const navigate = useNavigate();
+  // Bấm "Hoàn tất review" là rời trang có chủ đích, nên lúc đó phải tắt lời cảnh
+  // báo `beforeunload` — nếu không thì chính hành động đúng lại bị trình duyệt hỏi
+  // "bạn có chắc muốn rời trang".
+  const isCompletingRef = useRef(false);
 
   const [selectedTurnId, setSelectedTurnId] = useState(null);
   const [noteEdits, setNoteEdits] = useState({});
@@ -48,6 +53,25 @@ export default function ReviewPage() {
       setSelectedTurnId(partnerTurns[0].id);
     }
   }, [partnerTurns.length]);
+
+  // Toàn bộ dữ liệu của bước này nằm trong bộ nhớ của tab: ghi chú vừa đánh dấu,
+  // và ghi âm các lượt mình nói đang được tải lên nền. Tải lại trang là mất hết và
+  // KHÔNG lấy lại được — nên phải hỏi trước, thay vì để người dùng mất 15 phút
+  // luyện tập vì một lần bấm F5.
+  useEffect(() => {
+    if (!state.sessionId) return undefined;
+
+    function handleBeforeUnload(event) {
+      if (isCompletingRef.current) return;
+      event.preventDefault();
+      // Trình duyệt hiện câu chữ của riêng nó, không dùng chuỗi này; nhưng vẫn
+      // phải gán để Chrome và Safari chịu hiện hộp thoại.
+      event.returnValue = '';
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [state.sessionId]);
 
   useEffect(() => {
     if (!AI_AUDIO_UPLOAD_ENABLED) {
@@ -129,6 +153,7 @@ export default function ReviewPage() {
   }
 
   async function handleCompleteReview() {
+    isCompletingRef.current = true;
     // We no longer hard-block completion when a turn's audio failed to upload:
     // the backend marks any un-uploaded turns as failed so the AI pipeline still
     // runs on the audio that made it, and the partner isn't blocked from getting
@@ -154,6 +179,9 @@ export default function ReviewPage() {
       }
     } catch (err) {
       console.error('[Review] Complete review failed:', err.message);
+      // Gửi không được thì người dùng còn ở lại trang với ghi chú chưa lưu, nên
+      // lời cảnh báo trước khi tải lại trang phải bật lại.
+      isCompletingRef.current = false;
       setIsSubmitting(false);
     }
   }
@@ -166,6 +194,41 @@ export default function ReviewPage() {
     if (turn.partNumber === 2) return `Part 2 · Cue Card`;
     return `Part 3 · Câu ${turn.turnIndex + 1}`;
   };
+
+  // Tải lại trang hoặc vào thẳng /review là mất sạch state trong bộ nhớ tab. Bản
+  // trước vẫn dựng nguyên giao diện: danh sách lượt rỗng, tên đối tác là
+  // "undefined", badge xanh "Đã tải audio" (vì không còn lượt nào để chờ), và nút
+  // "Hoàn tất review" BẤM ĐƯỢC — bấm vào thì gọi completeReview với sessionId
+  // null, thất bại im lặng, rồi vẫn nhảy sang màn chờ AI và ngồi đó mãi.
+  //
+  // Ba trang cùng luồng (Session, WaitingAI, Results) đều đã chặn trường hợp này.
+  // Ở đây cố ý KHÔNG lặng lẽ đẩy về trang chủ như chúng: người dùng vừa mất công
+  // đánh dấu lỗi cả phiên, họ cần biết vì sao mất chứ không phải bị bật về đầu.
+  if (!state.sessionId) {
+    return (
+      <ErrorScreen
+        icon="history_toggle_off"
+        title="Không còn dữ liệu của phiên luyện này"
+        description="Bước nhận xét chỉ giữ dữ liệu trong tab đang mở. Trang vừa được tải lại
+          hoặc mở trực tiếp, nên các ghi chú bạn đã đánh dấu không còn nữa và không lấy lại được."
+        detail={(
+          <ul className="space-y-1.5 list-disc pl-4">
+            <li>Ghi chú của bạn cho phiên này đã mất, nên bạn cùng luyện sẽ không nhận được chúng.</li>
+            <li>
+              Ghi âm phần bạn nói được tải lên trong lúc nhận xét. Nếu nó đã tải xong trước đó
+              thì vẫn còn trên máy chủ; nếu chưa thì AI sẽ không chấm được phần đó.
+            </li>
+            <li>Các phiên đã hoàn tất trước đây vẫn xem lại được ở mục Lịch sử luyện tập.</li>
+          </ul>
+        )}
+        actions={(
+          <Button onClick={() => { dispatch({ type: 'RESET' }); navigate('/', { replace: true }); }}>
+            Về trang chủ
+          </Button>
+        )}
+      />
+    );
+  }
 
   return (
     <div className="flex flex-col h-screen bg-zinc-50">
@@ -196,7 +259,10 @@ export default function ReviewPage() {
           {AI_AUDIO_UPLOAD_ENABLED && failedUploads.length > 0 && (
             <Badge variant="destructive">{failedUploads.length} lượt thất bại</Badge>
           )}
-          {AI_AUDIO_UPLOAD_ENABLED && pendingUploads.length === 0 && failedUploads.length === 0 && (
+          {/* `myTurns.length > 0` là bắt buộc: không có lượt nào thì cũng không có
+              gì đang chờ, và badge xanh "Đã tải audio" sẽ hiện ra trong đúng lúc
+              chẳng có audio nào được tải lên cả. */}
+          {AI_AUDIO_UPLOAD_ENABLED && myTurns.length > 0 && pendingUploads.length === 0 && failedUploads.length === 0 && (
             <Badge variant="success">
               <span className="material-symbols-rounded icon-fill" style={{ fontSize: 11 }}>cloud_done</span>
               Đã tải audio
