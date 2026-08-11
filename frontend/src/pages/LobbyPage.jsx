@@ -1028,6 +1028,9 @@ function ClassroomPanelReal() {
   const [interactionError, setInteractionError] = useState('');
   const [commentDraft, setCommentDraft] = useState('');
   const [submittingCommentPostId, setSubmittingCommentPostId] = useState(null);
+  // Saving a post used to be a one-way action: the bookmark filled in but there
+  // was nowhere to find it again. This filter is that missing half.
+  const [feedFilter, setFeedFilter] = useState('all'); // all | saved
 
   useEffect(() => {
     let cancelled = false;
@@ -1176,6 +1179,9 @@ function ClassroomPanelReal() {
     }
   }
 
+  const savedCount = posts.filter((post) => post.isSaved).length;
+  const visiblePosts = feedFilter === 'saved' ? posts.filter((post) => post.isSaved) : posts;
+
   if (detailView) {
     return (
       <div className="classroom-layout classroom-layout-single">
@@ -1217,11 +1223,53 @@ function ClassroomPanelReal() {
           </div>
         )}
 
+        {loadStatus === 'loaded' && posts.length > 0 && (
+          <div className="flex items-center gap-2 mb-4">
+            {[
+              ['all', 'Tất cả', posts.length],
+              ['saved', 'Đã lưu', savedCount],
+            ].map(([value, label, count]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setFeedFilter(value)}
+                className={`inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg border text-[13px] font-semibold transition-colors ${
+                  feedFilter === value
+                    ? 'border-[#EAC7B9] bg-[#F7ECE6] text-[#8A4A33]'
+                    : 'border-[#EAE7E3] bg-white text-[#57534E] hover:border-[#EAC7B9] hover:text-[#8A4A33]'
+                }`}
+              >
+                {value === 'saved' && (
+                  <span
+                    className="material-symbols-rounded"
+                    style={{ fontSize: 16, fontVariationSettings: feedFilter === 'saved' ? "'FILL' 1" : undefined }}
+                  >
+                    bookmark
+                  </span>
+                )}
+                {label}
+                <span className="tabular-nums text-[#A8A29E]">{count}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
         {loadStatus === 'loaded' && posts.length === 0 && (
           <div className="empty-state">
             <span className="material-symbols-rounded">forum</span>
             <h3>Chưa có bài public</h3>
             <p>Các phiên đã hoàn thành và được public sẽ xuất hiện tại đây.</p>
+          </div>
+        )}
+
+        {loadStatus === 'loaded' && posts.length > 0 && visiblePosts.length === 0 && (
+          <div className="empty-state">
+            <span className="material-symbols-rounded">bookmark</span>
+            <h3>Bạn chưa lưu bài nào</h3>
+            <p>Bấm dấu lưu ở một bài trong Lớp học để tìm lại nó ở đây.</p>
+            <Button variant="outline" size="sm" onClick={() => setFeedFilter('all')}>
+              Xem tất cả bài
+            </Button>
           </div>
         )}
 
@@ -1233,7 +1281,7 @@ function ClassroomPanelReal() {
           <div className="topic-feedback error">{interactionError}</div>
         )}
 
-        {posts.map((post) => (
+        {visiblePosts.map((post) => (
           <ClassroomPostCard
             key={post.id}
             post={post}
