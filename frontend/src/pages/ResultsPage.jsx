@@ -69,6 +69,81 @@ function ScoreCircle({ score, color }) {
   );
 }
 
+const MENTOR_ASPECTS = [
+  ['pronunciationComment', 'Phát âm'],
+  ['grammarComment', 'Ngữ pháp'],
+  ['vocabularyComment', 'Từ vựng'],
+  ['fluencyComment', 'Trôi chảy'],
+];
+
+// A mentor session has no AI band — the mentor's written feedback IS the result.
+// The backend has always returned it with the results; this panel is what makes
+// it readable again after the tab that ran the session is gone.
+function MentorReviewPanel({ review }) {
+  if (!review || !review.overallComment) {
+    return (
+      <div className="rounded-lg bg-zinc-50 border border-zinc-100 p-8 text-center">
+        <p className="text-sm text-zinc-500">
+          Phiên luyện với mentor được nhận xét trực tiếp, không dùng AI chấm điểm.
+        </p>
+        <p className="text-xs text-zinc-400 mt-1.5">
+          Mentor chưa gửi nhận xét. Bạn vẫn nghe lại được từng lượt nói cùng các dấu mentor đã đánh.
+        </p>
+      </div>
+    );
+  }
+
+  const aspects = MENTOR_ASPECTS
+    .map(([key, label]) => [label, review[key]])
+    .filter(([, text]) => text);
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg bg-zinc-50 border border-zinc-100 px-4 py-3">
+        <p className="text-xs text-zinc-500">
+          Phiên luyện với mentor được nhận xét trực tiếp, không dùng AI chấm điểm.
+        </p>
+      </div>
+
+      <Card>
+        <CardHeader className="pt-4 pb-3 px-4">
+          <CardTitle className="text-sm font-medium text-zinc-600">Nhận xét tổng quan của mentor</CardTitle>
+        </CardHeader>
+        <CardContent className="px-4 pb-4">
+          <p className="text-sm text-zinc-700 leading-relaxed whitespace-pre-wrap">{review.overallComment}</p>
+        </CardContent>
+      </Card>
+
+      {aspects.length > 0 && (
+        <Card>
+          <CardHeader className="pt-4 pb-3 px-4">
+            <CardTitle className="text-sm font-medium text-zinc-600">Nhận xét theo từng mặt</CardTitle>
+          </CardHeader>
+          <CardContent className="px-4 pb-4 space-y-3">
+            {aspects.map(([label, text]) => (
+              <div key={label}>
+                <p className="text-xs font-semibold text-zinc-500 mb-1">{label}</p>
+                <p className="text-sm text-zinc-700 leading-relaxed whitespace-pre-wrap">{text}</p>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {review.suggestedNextSteps && (
+        <Card>
+          <CardHeader className="pt-4 pb-3 px-4">
+            <CardTitle className="text-sm font-medium text-zinc-600">Bước tiếp theo nên làm</CardTitle>
+          </CardHeader>
+          <CardContent className="px-4 pb-4">
+            <p className="text-sm text-zinc-700 leading-relaxed whitespace-pre-wrap">{review.suggestedNextSteps}</p>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
 function normalizeTurnResults(results, sessionTurns) {
   const turnResults = results?.turnResults || results?.turns || [];
   return turnResults.map((result) => {
@@ -222,6 +297,15 @@ export default function ResultsPage() {
   const holistic = results.holistic || null;
   const holisticStatus = holistic?.status || 'processing';
   const overallBand = holistic?.overallBand ?? null;
+  const isMentorSession = results.sessionMode === 'mentor';
+
+  // Opening the results from the practice history only restores sessionData, not
+  // the live match state, so state.partnerName can be empty there. The session
+  // detail always carries both participants, so read the other person from it.
+  const partnerLabel = state.sessionData?.participants?.find((person) => person.id !== state.userId)
+    ?.displayName
+    || state.partnerName
+    || (isMentorSession ? 'mentor' : 'bạn luyện');
 
   // Holistic scoring grades the whole test at once, so retry is session-level, not per-turn.
   async function handleRetry() {
@@ -253,7 +337,11 @@ export default function ResultsPage() {
             <span className="material-symbols-rounded text-zinc-500" style={{ fontSize: 20 }}>analytics</span>
             <div>
               <h1 className="text-sm font-semibold text-zinc-900">Kết quả phiên luyện</h1>
-              <p className="text-xs text-zinc-400">Điểm ước lượng · Không phải điểm IELTS chính thức</p>
+              <p className="text-xs text-zinc-400">
+                {isMentorSession
+                  ? 'Nhận xét của mentor · Phiên này không dùng AI chấm điểm'
+                  : 'Điểm ước lượng · Không phải điểm IELTS chính thức'}
+              </p>
             </div>
           </div>
         </div>
@@ -268,16 +356,25 @@ export default function ResultsPage() {
         {/* Sidebar */}
         <div className="w-60 flex-shrink-0 border-r border-zinc-200 bg-white overflow-y-auto p-3 flex flex-col gap-1">
 
-          {/* Overall band */}
-          <div className="rounded-lg border border-zinc-100 bg-zinc-50 p-4 text-center mb-2">
-            <p className="text-xs text-zinc-400 mb-1 font-medium uppercase tracking-wide">Band ước lượng</p>
-            <p className="text-4xl font-bold text-zinc-900 tabular-nums">
-              {holisticStatus === 'completed' ? (overallBand ?? '—') : '—'}
-            </p>
-            <p className="text-[10px] text-zinc-400 mt-1">
-              {holisticStatus === 'completed' ? 'Chấm cả bài' : holisticStatus === 'failed' ? 'AI gặp lỗi' : 'Đang chấm...'}
-            </p>
-          </div>
+          {/* Overall band. A mentor session has no AI band at all, so showing a
+              dash next to "Đang chấm..." would promise a score that never comes. */}
+          {isMentorSession ? (
+            <div className="rounded-lg border border-zinc-100 bg-zinc-50 p-4 text-center mb-2">
+              <p className="text-xs text-zinc-400 mb-1 font-medium uppercase tracking-wide">Phiên mentor</p>
+              <span className="material-symbols-rounded text-[#D97757]" style={{ fontSize: 34 }}>rate_review</span>
+              <p className="text-[10px] text-zinc-400 mt-1">Nhận xét trực tiếp, không có band AI</p>
+            </div>
+          ) : (
+            <div className="rounded-lg border border-zinc-100 bg-zinc-50 p-4 text-center mb-2">
+              <p className="text-xs text-zinc-400 mb-1 font-medium uppercase tracking-wide">Band ước lượng</p>
+              <p className="text-4xl font-bold text-zinc-900 tabular-nums">
+                {holisticStatus === 'completed' ? (overallBand ?? '—') : '—'}
+              </p>
+              <p className="text-[10px] text-zinc-400 mt-1">
+                {holisticStatus === 'completed' ? 'Chấm cả bài' : holisticStatus === 'failed' ? 'AI gặp lỗi' : 'Đang chấm...'}
+              </p>
+            </div>
+          )}
 
           {/* Whole-test summary entry */}
           <button
@@ -287,11 +384,17 @@ export default function ResultsPage() {
             }`}
           >
             <p className={`text-xs font-semibold mb-0.5 ${selectedTurnId === 'summary' ? 'text-[#D97757]' : 'text-zinc-600'}`}>
-              Tổng quan cả bài
+              {isMentorSession ? 'Nhận xét của mentor' : 'Tổng quan cả bài'}
             </p>
-            <span className={`text-xs ${holisticStatus === 'completed' ? 'text-emerald-600' : holisticStatus === 'failed' ? 'text-red-500' : 'text-zinc-400'}`}>
-              {holisticStatus === 'completed' ? 'Đã chấm' : holisticStatus === 'failed' ? 'AI lỗi' : 'Đang xử lý...'}
-            </span>
+            {isMentorSession ? (
+              <span className={`text-xs ${results.mentorReview?.overallComment ? 'text-emerald-600' : 'text-zinc-400'}`}>
+                {results.mentorReview?.overallComment ? 'Đã có nhận xét' : 'Chờ mentor nhận xét'}
+              </span>
+            ) : (
+              <span className={`text-xs ${holisticStatus === 'completed' ? 'text-emerald-600' : holisticStatus === 'failed' ? 'text-red-500' : 'text-zinc-400'}`}>
+                {holisticStatus === 'completed' ? 'Đã chấm' : holisticStatus === 'failed' ? 'AI lỗi' : 'Đang xử lý...'}
+              </span>
+            )}
           </button>
 
           <p className="text-xs font-medium text-zinc-400 uppercase tracking-wide px-1 mb-1">Các lượt nói</p>
@@ -310,7 +413,9 @@ export default function ResultsPage() {
                   {getPartLabel(turn, state.turns)}
                 </p>
                 <span className={`text-xs ${turn.aiStatus === 'completed' ? 'text-emerald-600' : hasFailed ? 'text-red-500' : 'text-zinc-400'}`}>
-                  {turn.aiStatus === 'completed' ? 'Đã xử lý' : hasFailed ? 'AI lỗi' : 'Đang xử lý...'}
+                  {isMentorSession
+                    ? `${turn.peerNotes.length} dấu`
+                    : turn.aiStatus === 'completed' ? 'Đã xử lý' : hasFailed ? 'AI lỗi' : 'Đang xử lý...'}
                 </span>
               </button>
             );
@@ -324,17 +429,18 @@ export default function ResultsPage() {
 
               <div>
                 <Badge variant="secondary" className="mb-2">Cả bài</Badge>
-                <h2 className="text-base font-semibold text-zinc-900 leading-snug">Đánh giá tổng thể</h2>
+                <h2 className="text-base font-semibold text-zinc-900 leading-snug">
+                  {isMentorSession ? 'Nhận xét của mentor' : 'Đánh giá tổng thể'}
+                </h2>
                 <p className="text-xs text-zinc-400 mt-1">
-                  Fluency, Lexical và Grammar được chấm một lần cho toàn bộ bài nói. Phát âm hiển thị riêng bên dưới,
-                  không tính vào band tổng.
+                  {isMentorSession
+                    ? 'Kết quả của phiên mentor là nhận xét do mentor viết. Chọn từng lượt nói bên trái để nghe lại cùng các dấu mentor đã đánh.'
+                    : 'Fluency, Lexical và Grammar được chấm một lần cho toàn bộ bài nói. Phát âm hiển thị riêng bên dưới, không tính vào band tổng.'}
                 </p>
               </div>
 
-              {results.sessionMode === 'mentor' ? (
-                <div className="rounded-lg bg-zinc-50 border border-zinc-100 p-8 text-center">
-                  <p className="text-sm text-zinc-500">Phiên luyện với mentor được nhận xét trực tiếp, không dùng AI chấm điểm.</p>
-                </div>
+              {isMentorSession ? (
+                <MentorReviewPanel review={results.mentorReview} />
               ) : holisticStatus === 'failed' ? (
                 <div className="rounded-lg bg-red-50 border border-red-100 p-4">
                   <p className="text-sm font-medium text-red-800 mb-1">AI chưa chấm được bài này</p>
@@ -453,7 +559,7 @@ export default function ResultsPage() {
                 <Card>
                   <CardHeader className="pt-4 pb-3 px-4">
                     <CardTitle className="text-sm font-medium text-zinc-600">
-                      Ghi chú từ {state.partnerName} ({selectedTurnResult.peerNotes.length})
+                      Ghi chú từ {partnerLabel} ({selectedTurnResult.peerNotes.length})
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="px-4 pb-4 space-y-2.5">
