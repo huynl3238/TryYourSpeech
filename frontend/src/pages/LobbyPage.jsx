@@ -1933,6 +1933,7 @@ function getStudentWorkTitle(item) {
 
 function TeacherReviewsPanelReal() {
   const { state, dispatch } = useSession();
+  const { isAdmin } = useAuth();
   const navigate = useNavigate();
   const [studentWork, setStudentWork] = useState([]);
   const [loadStatus, setLoadStatus] = useState('idle');
@@ -2026,9 +2027,13 @@ function TeacherReviewsPanelReal() {
     <div className="max-w-5xl mx-auto">
       <div className="mb-6 flex items-end justify-between">
         <div>
-          <div className="text-[11px] uppercase tracking-[0.1em] text-[#D97757] font-bold">Mentor</div>
+          <div className="text-[11px] uppercase tracking-[0.1em] text-[#D97757] font-bold">{isAdmin ? 'Quản trị viên' : 'Mentor'}</div>
           <h1 className="text-2xl font-extrabold tracking-tight text-[#1C1917] mt-1">Bài học viên</h1>
-          <p className="text-sm text-[#78716C] mt-1">Xem các phiên học viên đã luyện, kiểm tra ghi chú/kết quả và xin đăng bài tốt lên Lớp học.</p>
+          <p className="text-sm text-[#78716C] mt-1">
+            {isAdmin
+              ? 'Xem toàn bộ phiên luyện trong hệ thống, kiểm tra ghi chú/kết quả và xin đăng bài tốt lên Lớp học.'
+              : 'Xem lại các phiên mentor bạn đã dẫn, kiểm tra ghi chú/kết quả và xin đăng bài tốt lên Lớp học.'}
+          </p>
         </div>
         <span className="text-[12.5px] text-[#78716C] whitespace-nowrap">{loadStatus === 'loading' ? 'Đang tải…' : `${studentWork.length} phiên`}</span>
       </div>
@@ -2048,7 +2053,11 @@ function TeacherReviewsPanelReal() {
       {loadStatus === 'loaded' && studentWork.length === 0 && (
         <div className="text-center py-16 text-[#78716C]">
           <p className="font-semibold text-[#1C1917]">Chưa có bài học viên</p>
-          <p className="text-sm mt-1">Các phiên peer hoặc mentor sẽ xuất hiện tại đây sau khi được tạo.</p>
+          <p className="text-sm mt-1">
+            {isAdmin
+              ? 'Các phiên peer hoặc mentor sẽ xuất hiện tại đây sau khi được tạo.'
+              : 'Các phiên bạn dẫn với học viên sẽ xuất hiện tại đây sau khi được tạo.'}
+          </p>
         </div>
       )}
 

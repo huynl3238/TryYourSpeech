@@ -80,10 +80,24 @@ function mapStudentWorkRow(row) {
   };
 }
 
-export async function listStudentWork({ limit = 50 } = {}) {
+// mentorId scopes the list to the mentor sessions that mentor personally ran.
+// Without it the caller sees every session in the system, which is only correct
+// for an admin — a mentor must not see peer sessions between two learners they
+// have nothing to do with. They can still meet those in the Classroom, where
+// the learners chose to publish them.
+export async function listStudentWork({ limit = 50, mentorId = null } = {}) {
   const safeLimit = Number.isInteger(limit) && limit > 0 && limit <= 100
     ? limit
     : 50;
+
+  if (mentorId !== null && (typeof mentorId !== 'string' || mentorId.trim() === '')) {
+    throw new Error('mentorId is invalid');
+  }
+
+  const scopeSql = mentorId
+    ? `WHERE s.session_mode = 'mentor'
+             AND (s.user_a_id = $2 OR s.user_b_id = $2)`
+    : '';
   const client = await pool.connect();
 
   try {
@@ -154,10 +168,11 @@ export async function listStudentWork({ limit = 50 } = {}) {
         LEFT JOIN mentor_reviews mr ON mr.session_id = s.id
         LEFT JOIN classroom_posts cp ON cp.session_id = s.id
           AND cp.status = 'published'
+        ${scopeSql}
         ORDER BY COALESCE(s.ended_at, s.started_at, s.created_at) DESC
         LIMIT $1
       `,
-      [safeLimit]
+      mentorId ? [safeLimit, mentorId] : [safeLimit]
     );
 
     return {

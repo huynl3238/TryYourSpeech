@@ -803,7 +803,12 @@ router.get('/teacher/student-work', requireRole('mentor', 'admin'), async (req, 
     }
 
     res.set('Cache-Control', 'no-store');
-    const result = await listStudentWork({ limit });
+    // A mentor only gets the sessions they ran. An admin oversees the whole
+    // system, so they keep the unscoped list.
+    const result = await listStudentWork({
+      limit,
+      mentorId: req.user.userRole === 'admin' ? null : req.user.id,
+    });
     res.json(result);
   } catch (err) {
     console.warn('Failed to list student work:', err.message);
