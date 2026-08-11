@@ -199,6 +199,10 @@ function MentorAdminPanel() {
   const [mentors, setMentors] = useState([]);
   const [statusFilter, setStatusFilter] = useState('pending');
   const [notes, setNotes] = useState({});
+  // Removing the role is one click away from an irreversible-feeling action, so
+  // it takes two: opening the confirmation for one mentor, then confirming.
+  const [revokingId, setRevokingId] = useState('');
+  const [revokeReason, setRevokeReason] = useState('');
   const [busyId, setBusyId] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -242,11 +246,25 @@ function MentorAdminPanel() {
     }
   }
 
+  function startRevoke(mentor) {
+    setError('');
+    setRevokingId(mentor.id);
+    setRevokeReason('');
+  }
+
+  function cancelRevoke() {
+    setRevokingId('');
+    setRevokeReason('');
+  }
+
   async function handleRevoke(mentor) {
     setBusyId(mentor.id);
     setError('');
     try {
-      await revokeMentor({ userId: mentor.id, reason: '' });
+      // The reason reaches the mentor as the body of their notification, so an
+      // empty one is allowed but leaves them with only the default sentence.
+      await revokeMentor({ userId: mentor.id, reason: revokeReason.trim() });
+      cancelRevoke();
       await load();
     } catch (err) {
       setError(err.message || 'Không gỡ được quyền mentor');
@@ -368,15 +386,55 @@ function MentorAdminPanel() {
                 Band {mentor.band ?? '—'} · {mentor.hostedSessions} buổi đã mở ·{' '}
                 {mentor.reviewsWritten} nhận xét
               </p>
-              <button
-                type="button"
-                disabled={busyId === mentor.id}
-                onClick={() => handleRevoke(mentor)}
-                className="mt-2 inline-flex h-8 items-center gap-1.5 rounded-lg border border-[#EAE7E3] px-2.5 text-[12px] font-semibold text-[#B91C1C] hover:bg-[#FBF0EB] disabled:opacity-60"
-              >
-                <span className="material-symbols-rounded" style={{ fontSize: 16 }}>person_remove</span>
-                Gỡ quyền
-              </button>
+              {revokingId === mentor.id ? (
+                <div className="mt-2.5 rounded-xl border border-[#FCD9A5] bg-[#FEF6E7] p-2.5">
+                  <p className="text-[12.5px] font-semibold text-[#1C1917]">
+                    Gỡ quyền mentor của {mentor.displayName}?
+                  </p>
+                  <p className="mt-0.5 text-[11.5px] leading-relaxed text-[#78716C]">
+                    Người này quay lại vai trò học viên và không mở được buổi hướng dẫn nữa.
+                    Các buổi và nhận xét cũ vẫn được giữ. Bạn có thể duyệt lại đơn để cấp quyền
+                    trở lại.
+                  </p>
+                  <input
+                    value={revokeReason}
+                    maxLength={500}
+                    autoFocus
+                    onChange={(event) => setRevokeReason(event.target.value)}
+                    placeholder="Lý do gửi cho mentor (không bắt buộc)"
+                    className="mt-2 h-9 w-full rounded-lg border border-[#EAE7E3] bg-white px-2.5 text-[12.5px] focus:border-[#D97757] focus:outline-none"
+                  />
+                  <div className="mt-2 flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={busyId === mentor.id}
+                      onClick={() => handleRevoke(mentor)}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-[#B91C1C] px-3 text-[12px] font-semibold text-white hover:brightness-110 disabled:opacity-60"
+                    >
+                      <span className="material-symbols-rounded" style={{ fontSize: 16 }}>person_remove</span>
+                      {busyId === mentor.id ? 'Đang gỡ…' : 'Xác nhận gỡ quyền'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busyId === mentor.id}
+                      onClick={cancelRevoke}
+                      className="inline-flex h-8 items-center rounded-lg border border-[#EAE7E3] bg-white px-3 text-[12px] font-semibold text-[#57534E] hover:bg-[#F1EEEA] disabled:opacity-60"
+                    >
+                      Huỷ
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  disabled={busyId === mentor.id}
+                  onClick={() => startRevoke(mentor)}
+                  className="mt-2 inline-flex h-8 items-center gap-1.5 rounded-lg border border-[#EAE7E3] px-2.5 text-[12px] font-semibold text-[#B91C1C] hover:bg-[#FBF0EB] disabled:opacity-60"
+                >
+                  <span className="material-symbols-rounded" style={{ fontSize: 16 }}>person_remove</span>
+                  Gỡ quyền
+                </button>
+              )}
             </div>
           ))}
         </div>

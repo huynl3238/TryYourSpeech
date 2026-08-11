@@ -294,6 +294,21 @@ test('revoking demotes a mentor but never touches an admin', async (t) => {
     assert.equal(result.userRole, 'student');
     assert.equal(await getRole(mentor), 'student');
 
+    // The admin types the reason into the confirmation box, and this is where it
+    // has to end up — otherwise the demoted mentor is only told the default line.
+    const notified = await pool.query(
+      `
+        SELECT type, body
+        FROM notifications
+        WHERE recipient_id = $1
+        ORDER BY created_at DESC
+        LIMIT 1
+      `,
+      [mentor]
+    );
+    assert.equal(notified.rows[0].type, 'mentor_role_revoked');
+    assert.equal(notified.rows[0].body, 'Ngừng hợp tác');
+
     // Revoking again is not a silent no-op — the caller is told nothing happened.
     await assert.rejects(
       () => revokeMentorRole({ userId: mentor, adminId: admin }),
