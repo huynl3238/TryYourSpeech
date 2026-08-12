@@ -71,7 +71,7 @@ const FOCUS_CHOICES = [
   { value: 'part1', label: 'Part 1', estimate: '~6 phút', desc: 'Hỏi đáp ngắn về đời sống, sở thích.' },
   { value: 'part2', label: 'Part 2', estimate: '~6 phút', desc: 'Một cue card, mỗi người nói dài 2 phút.' },
   { value: 'part3', label: 'Part 3', estimate: '~6 phút', desc: 'Thảo luận sâu, câu hỏi trừu tượng hơn.' },
-  { value: 'full', label: 'Cả 3 part', estimate: '~18 phút', desc: 'Đủ ba phần như một bài thi thật.' },
+  { value: 'full', label: 'Cả 3 part', estimate: '~19 phút', desc: 'Đủ ba phần như một bài thi thật.' },
 ];
 
 const ERROR_TYPE_CONFIG = {

@@ -8,55 +8,11 @@ import { getSession } from '../services/api';
 import { ListenerView } from '../components/session/ListenerView';
 import { SpeakerView } from '../components/session/SpeakerView';
 import { Part2PrepView } from '../components/session/Part2PrepView';
+import { TurnTransition } from '../components/session/TurnTransition';
 import { SessionBriefing } from '../components/session/SessionBriefing';
 import { ErrorScreen } from '../components/ui/ErrorScreen';
 import { cleanupMediaSession } from '../utils/mediaCleanup';
-
-function getSyncedTimeline(turns, practiceStartLocalTime, now) {
-  if (!Array.isArray(turns) || turns.length === 0 || !Number.isFinite(practiceStartLocalTime)) {
-    return null;
-  }
-
-  const elapsedMs = Math.max(0, now - practiceStartLocalTime);
-  let stepStartOffsetMs = 0;
-
-  for (let turnIndex = 0; turnIndex < turns.length; turnIndex += 1) {
-    const turn = turns[turnIndex];
-    const prepDurationMs = Number(turn.prepDurationMs) || 0;
-    const speakDurationMs = Number(turn.durationMs) || 0;
-
-    if (prepDurationMs > 0) {
-      const prepEndOffsetMs = stepStartOffsetMs + prepDurationMs;
-      if (elapsedMs < prepEndOffsetMs) {
-        return {
-          phase: 'prep',
-          turnIndex,
-          stepStartedAtMs: practiceStartLocalTime + stepStartOffsetMs,
-          isComplete: false,
-        };
-      }
-      stepStartOffsetMs = prepEndOffsetMs;
-    }
-
-    const speakEndOffsetMs = stepStartOffsetMs + speakDurationMs;
-    if (elapsedMs < speakEndOffsetMs) {
-      return {
-        phase: 'speaking',
-        turnIndex,
-        stepStartedAtMs: practiceStartLocalTime + stepStartOffsetMs,
-        isComplete: false,
-      };
-    }
-    stepStartOffsetMs = speakEndOffsetMs;
-  }
-
-  return {
-    phase: 'complete',
-    turnIndex: turns.length,
-    stepStartedAtMs: practiceStartLocalTime + stepStartOffsetMs,
-    isComplete: true,
-  };
-}
+import { getSyncedTimeline, TURN_GAP_MS } from '../utils/sessionTimeline';
 
 function SessionLoadingScreen() {
   return (
@@ -117,6 +73,7 @@ export default function SessionPage() {
   const myRole = state.role;
   const iAmSpeaker = currentTurn?.speakerRole === myRole;
   const shouldShowPrep = state.practiceStarted && syncedTimeline?.phase === 'prep';
+  const shouldShowTransition = state.practiceStarted && syncedTimeline?.phase === 'transition';
   const turnStartTime = syncedTimeline?.phase === 'speaking'
     ? syncedTimeline.stepStartedAtMs
     : null;
@@ -246,10 +203,10 @@ export default function SessionPage() {
       window.removeEventListener('remote_stream_ready', handleRemoteStreamReady);
       window.removeEventListener('local_stream_ready', attachStreams);
     };
-  }, [state.phase, state.currentTurnIndex, state.practiceStarted, shouldShowPrep, refs]);
+  }, [state.phase, state.currentTurnIndex, state.practiceStarted, shouldShowPrep, shouldShowTransition, refs]);
 
   useEffect(() => {
-    if (!currentTurn || shouldShowPrep || !state.practiceStarted) {
+    if (!currentTurn || shouldShowPrep || shouldShowTransition || !state.practiceStarted) {
       return undefined;
     }
 
@@ -266,6 +223,7 @@ export default function SessionPage() {
   }, [
     currentTurn,
     shouldShowPrep,
+    shouldShowTransition,
     state.practiceStarted,
     iAmSpeaker,
     refs,
@@ -276,7 +234,7 @@ export default function SessionPage() {
   ]);
 
   useEffect(() => {
-    if (!currentTurn || shouldShowPrep || !state.practiceStarted || iAmSpeaker || !refs.current.remoteStream) {
+    if (!currentTurn || shouldShowPrep || shouldShowTransition || !state.practiceStarted || iAmSpeaker || !refs.current.remoteStream) {
       return;
     }
 
@@ -284,6 +242,7 @@ export default function SessionPage() {
   }, [
     currentTurn,
     shouldShowPrep,
+    shouldShowTransition,
     state.practiceStarted,
     iAmSpeaker,
     remoteStreamVersion,
@@ -327,6 +286,10 @@ export default function SessionPage() {
   }
 
   function handlePrepEnd() {
+    setTimelineNow(performance.now());
+  }
+
+  function handleTransitionEnd() {
     setTimelineNow(performance.now());
   }
 
@@ -439,6 +402,30 @@ export default function SessionPage() {
         partnerReady={state.partnerPracticeReady}
         onReady={handlePracticeReady}
         onEndCall={handleEndCall}
+      />
+    );
+  }
+
+  if (shouldShowTransition) {
+    // Đồng hồ đếm ngược lấy phần còn lại của khoảng nghỉ chứ không phải trọn
+    // TURN_GAP_MS, để màn này không kéo dài quá timeline nếu component mount
+    // muộn (đổi tab, máy chậm). Timeline vẫn là nguồn quyết định: tick 250ms sẽ
+    // tự chuyển sang lượt nói dù `onDone` có kịp chạy hay không.
+    const remainingGapMs = Math.max(
+      0,
+      syncedTimeline.stepStartedAtMs + TURN_GAP_MS - timelineNow
+    );
+
+    return (
+      <TurnTransition
+        message={iAmSpeaker ? 'Đến lượt bạn nói' : `Đến lượt ${state.partnerName || 'đối tác'} nói`}
+        subMessage={
+          iAmSpeaker
+            ? `Part ${currentTurn.partNumber} · Lượt ${currentTurn.turnIndex}/${turns.length} · Mic của bạn đã được bật`
+            : `Part ${currentTurn.partNumber} · Lượt ${currentTurn.turnIndex}/${turns.length} · Bấm TAB để đánh dấu khi nghe`
+        }
+        delayMs={remainingGapMs}
+        onDone={handleTransitionEnd}
       />
     );
   }
