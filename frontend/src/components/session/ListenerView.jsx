@@ -18,7 +18,7 @@ const MARKER_GROUPS = [
   },
   {
     title: 'Điểm tốt',
-    helper: 'Gắn cờ bằng chứng tốt để AI không chỉ đếm lỗi.',
+    helper: 'Gắn cờ điểm tốt để nhận xét không chỉ toàn lỗi.',
     items: [
       { key: 'advanced_vocab', label: 'Advanced vocab', description: 'Từ vựng chủ đề hoặc cụm hay', icon: 'auto_awesome', shortcut: '6', tone: 'positive' },
       { key: 'good_connector', label: 'Good connector', description: 'Nối ý tốt, mạch nói rõ hơn', icon: 'link', shortcut: '7', tone: 'positive' },
@@ -211,7 +211,7 @@ export function ListenerView({
           <div className="listener-footer-row">
             <div className="listener-tab-hint">
               <kbd>TAB</kbd>
-              <span>Đánh dấu nhanh cho AI · {markers.length} marker đã ghi</span>
+              <span>Đánh dấu nhanh · {markers.length} marker đã ghi · Mic của bạn tắt trong lượt nghe</span>
             </div>
             <div className="listener-recent-markers">
               {markers.slice(-3).map((marker) => (
@@ -227,7 +227,7 @@ export function ListenerView({
           <div className="marker-popup animate-slide-up">
             <p>
               <span className="material-symbols-rounded">flag</span>
-              Marker lúc {Math.round(pendingTimestamp / 1000)}s · Chọn nhanh để AI tổng hợp:
+              Marker lúc {Math.round(pendingTimestamp / 1000)}s · Chọn loại để gửi cho bạn học:
             </p>
             <div className="marker-choice-groups">
               {MARKER_GROUPS.map((group) => (
@@ -277,7 +277,7 @@ export function ListenerView({
                 ref={noteInputRef}
                 className="form-input marker-note-input"
                 rows={3}
-                placeholder="Ghi chú ngắn nếu cần. Có thể bấm Enter để lưu nhanh, AI sẽ tổng hợp sau phiên..."
+                placeholder="Ghi chú ngắn nếu cần. Có thể bấm Enter để lưu nhanh, bổ sung sau ở phần Review..."
                 value={noteText}
                 onChange={(e) => setNoteText(e.target.value)}
                 onKeyDown={(e) => {

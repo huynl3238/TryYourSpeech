@@ -2914,21 +2914,52 @@ input[type="range"]::-webkit-slider-thumb:hover {
     grid-template-columns: 1fr;
   }
 
+  /* Hàng thứ ba dành cho thanh SẴN SÀNG. Khi hai khung video xếp dọc thì khung
+     dưới là đối tác, nên một thanh `position: absolute; bottom` sẽ đè đúng vào
+     mặt họ. Đưa thanh đó vào dòng chảy bình thường thì nó không che khung nào.
+     Hàng `auto` này vô hại với `.prep-video-stage` vì màn chuẩn bị không có
+     thanh dock — hàng rỗng cao 0. */
   .warmup-stage {
-    grid-template-rows: 1fr 1fr;
+    grid-template-rows: 1fr 1fr auto;
   }
 
   .warmup-bottom-dock {
-    left: 14px;
-    right: 14px;
-    bottom: 14px;
+    position: static;
+    left: auto;
+    right: auto;
+    bottom: auto;
     flex-direction: column-reverse;
-    align-items: center;
+    align-items: stretch;
     gap: 10px;
+    padding: 12px 14px;
+    background: #ffffff;
+    border-top: 1px solid #e5e7eb;
   }
 
   .warmup-bottom-dock .session-call-controls {
     margin-bottom: 0;
+    align-self: center;
+  }
+
+  /* Nút "Mở câu hỏi" vốn ở `top: 20px; right: 20px`, tức cùng góc trên phải với
+     nhóm mic/camera/loa/kết thúc trong header. Đẩy xuống góc dưới trái để hai
+     thứ không tranh nhau một chỗ. */
+  .prep-guide-reopen {
+    top: auto;
+    right: auto;
+    bottom: 16px;
+    left: 16px;
+  }
+
+  /* Header bị đặt cứng chiều cao và không cho xuống dòng, nên trên màn hình hẹp
+     nhãn vai + đồng hồ + bốn nút 42px không vừa một hàng và bị bóp dồn về góc
+     phải. Cho phép xuống dòng thay vì tràn. */
+  .session-header,
+  .session-header-tall {
+    height: auto;
+    min-height: 56px;
+    flex-wrap: wrap;
+    row-gap: 8px;
   }
 
   .warmup-confirm-bar {

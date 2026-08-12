@@ -164,7 +164,9 @@ export default function ReviewPage() {
       if (notes.length > 0) await submitPeerNotes({ sessionId: state.sessionId, listenerId: state.userId, notes });
 
       if (AI_AUDIO_UPLOAD_ENABLED) {
-        // Peer notes are saved above (the AI feedback uses them as input), so now
+        // Peer notes are saved above. They are NOT an input to the AI — the
+        // holistic grader never sees them; they are shown next to the results as
+        // the partner's own feedback. What they do gate is *when* the AI runs, so
         // flag this user's review as done. The backend starts the AI pipeline
         // once BOTH peers have completed. That request runs the pipeline
         // synchronously and can take 1-3 min, so fire it without awaiting and go

@@ -1,52 +1,105 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { SessionCallControls } from './SessionCallControls';
 
-const GUIDE_PAGES = [
-  {
-    eyebrow: 'Hướng dẫn',
-    title: 'HÃY ĐỌC KỸ HƯỚNG DẪN',
-    intro: [
-      'Các bạn hãy làm quen nhau với nhau cũng như đọc kỹ hướng dẫn để có trải nghiệm tốt nhất nhé. Hệ thống sẽ cho kết quả của bài nói tốt hơn khi các bạn đảm bảo được chất lượng âm thanh đầu vào của micro rõ và kết nối mạng ổn định.',
-      'Khi đã sẵn sàng, hãy bấm vào nút SẴN SÀNG, khi cả hai đều sẵn sàng chúng ta sẽ bước vào phiên luyện nói.',
-      'Đối với lượt bạn đóng vai là người nghe, để có thể đánh dấu và ghi chú nhanh hãy thực hiện các thao tác sau:',
-    ],
-    steps: [
-      'Khi phát hiện lỗi từ bạn học, hãy bấm TAB, khi đó sẽ xuất hiện một khu vực để các bạn đánh dấu loại lỗi đã nghe ra: Phát âm, Ngữ pháp, Từ vựng, Lưu loát,...',
-      'Mỗi loại lỗi tương ứng với các phím 1, 2, 3, 4,... Hãy bấm phím tương ứng để lựa chọn loại lỗi.',
-      'Sau khi chọn loại lỗi, sẽ có một khu vực để bạn có thể ghi chú cụ thể thông tin về lỗi đó. Bạn có thể bấm Enter để bỏ qua và bổ sung sau ở phần Review.',
-    ],
-  },
-  {
-    eyebrow: 'Cơ chế phiên luyện',
-    title: 'IELTS SPEAKING TRONG PHIÊN LUYỆN',
-    intro: [
-      'Phiên luyện mô phỏng cấu trúc IELTS Speaking với 3 phần. Hai bạn sẽ thay phiên trả lời cùng một câu hỏi, người còn lại lắng nghe và đánh dấu lỗi theo thời gian thực.',
-    ],
-    cards: [
-      {
-        title: 'Part 1 - Câu hỏi ngắn',
-        body: 'Bản test nhanh dùng 1 câu Part 1. Mỗi lượt có 30 giây chuẩn bị và 30 giây trả lời.',
-      },
-      {
-        title: 'Part 2 - Cue card',
-        body: 'Bản test nhanh dùng 1 cue card Part 2. Mỗi lượt có 60 giây chuẩn bị và 30 giây trả lời.',
-      },
-      {
-        title: 'Part 3 - Thảo luận sâu',
-        body: 'Bản test nhanh dùng 1 câu Part 3. Mỗi lượt có 30 giây chuẩn bị và 30 giây trả lời.',
-      },
-      {
-        title: 'Sau phần nói',
-        body: 'Hai bạn chuyển sang Review, nghe lại audio của đối phương và bổ sung ghi chú. AI/audio upload đang tạm tắt để tập trung test video call.',
-      },
-    ],
-  },
-];
+const PART_TITLES = {
+  1: 'Part 1 - Câu hỏi ngắn',
+  2: 'Part 2 - Cue card',
+  3: 'Part 3 - Thảo luận sâu',
+};
+
+const GUIDE_PAGE_INTRO = {
+  eyebrow: 'Hướng dẫn',
+  title: 'HÃY ĐỌC KỸ HƯỚNG DẪN',
+  intro: [
+    'Các bạn hãy làm quen nhau với nhau cũng như đọc kỹ hướng dẫn để có trải nghiệm tốt nhất nhé. Hệ thống sẽ cho kết quả của bài nói tốt hơn khi các bạn đảm bảo được chất lượng âm thanh đầu vào của micro rõ và kết nối mạng ổn định.',
+    'Khi đã sẵn sàng, hãy bấm vào nút SẴN SÀNG, khi cả hai đều sẵn sàng chúng ta sẽ bước vào phiên luyện nói.',
+    'Trong lượt bạn đóng vai người nghe, mic của bạn được tắt tự động để không lẫn vào bài nói của bạn học, và sẽ tự bật lại khi đến lượt bạn. Để đánh dấu và ghi chú nhanh, hãy thực hiện các thao tác sau:',
+  ],
+  steps: [
+    'Khi phát hiện điều đáng ghi lại từ bạn học, hãy bấm TAB. Một khu vực chọn loại đánh dấu sẽ xuất hiện, gồm 5 loại cần chú ý (ngữ pháp, cách dùng từ, ngập ngừng, nói lại từ đầu, phát âm) và 3 loại điểm tốt (từ vựng hay, nối ý tốt, ý phát triển sâu).',
+    'Mỗi loại tương ứng với một phím từ 1 đến 8. Hãy bấm phím tương ứng để chọn.',
+    'Sau khi chọn loại, sẽ có một khu vực để bạn ghi chú cụ thể. Bạn có thể bấm Enter để bỏ qua và bổ sung sau ở phần Review.',
+  ],
+};
+
+function formatSeconds(ms) {
+  return `${Math.round((Number(ms) || 0) / 1000)} giây`;
+}
+
+// Mô tả đúng phiên đang chạy thay vì in cứng thời lượng. Phần chữ này trước đây
+// vẫn ghi "30 giây chuẩn bị và 30 giây trả lời" của chế độ test, nên sau khi
+// thời lượng được trả về đúng chuẩn IELTS thì màn hình nói một đằng, hệ thống
+// chạy một nẻo. Đọc từ `turns` cũng tự đúng luôn với việc chọn luyện riêng một
+// part: chỉ hiện những part mà phiên này thực sự có.
+function buildPartCards(turns) {
+  const parts = new Map();
+
+  for (const turn of turns) {
+    if (!parts.has(turn.partNumber)) {
+      parts.set(turn.partNumber, {
+        partNumber: turn.partNumber,
+        questionIds: new Set(),
+        durationMs: turn.durationMs,
+        prepDurationMs: turn.prepDurationMs,
+      });
+    }
+
+    parts.get(turn.partNumber).questionIds.add(turn.questionId);
+  }
+
+  return [...parts.values()]
+    .sort((a, b) => a.partNumber - b.partNumber)
+    .map((part) => ({
+      title: PART_TITLES[part.partNumber] || `Part ${part.partNumber}`,
+      body: `${part.questionIds.size} ${part.partNumber === 2 ? 'cue card' : 'câu hỏi'}. Mỗi lượt ${
+        part.prepDurationMs > 0
+          ? `có ${formatSeconds(part.prepDurationMs)} chuẩn bị, sau đó ${formatSeconds(part.durationMs)} trả lời`
+          : `trả lời ngay trong ${formatSeconds(part.durationMs)}, không có thời gian chuẩn bị`
+      }.`,
+    }));
+}
+
+function buildGuidePages(turns) {
+  if (!Array.isArray(turns) || turns.length === 0) {
+    return [GUIDE_PAGE_INTRO];
+  }
+
+  const partCards = buildPartCards(turns);
+  const totalMs = turns.reduce(
+    (sum, turn) => sum + (Number(turn.prepDurationMs) || 0) + (Number(turn.durationMs) || 0),
+    0
+  );
+  const partList = partCards.length === 1
+    ? `riêng ${partCards[0].title.split(' - ')[0]}`
+    : `${partCards.length} phần`;
+
+  return [
+    GUIDE_PAGE_INTRO,
+    {
+      eyebrow: 'Cơ chế phiên luyện',
+      title: 'IELTS SPEAKING TRONG PHIÊN LUYỆN',
+      intro: [
+        `Phiên này luyện ${partList} theo đúng thời lượng IELTS Speaking, tổng ${turns.length} lượt nói và khoảng ${Math.max(
+          1,
+          Math.round(totalMs / 60000)
+        )} phút. Hai bạn thay phiên trả lời cùng một câu hỏi, người còn lại lắng nghe và đánh dấu theo thời gian thực.`,
+      ],
+      cards: [
+        ...partCards,
+        {
+          title: 'Sau phần nói',
+          body: 'Hai bạn chuyển sang Review, nghe lại audio và bổ sung ghi chú cho nhau. Ghi chú của bạn được gửi cho bạn học, và là điều kiện để hệ thống bắt đầu chấm bài nói của mỗi người.',
+        },
+      ],
+    },
+  ];
+}
 
 export function SessionBriefing({
   localVideoRef,
   remoteVideoRef,
   partnerName,
+  turns,
   myReady,
   partnerReady,
   onReady,
@@ -54,14 +107,15 @@ export function SessionBriefing({
 }) {
   const [showGuide, setShowGuide] = useState(true);
   const [guidePage, setGuidePage] = useState(0);
-  const currentPage = GUIDE_PAGES[guidePage];
+  const guidePages = useMemo(() => buildGuidePages(turns), [turns]);
+  const currentPage = guidePages[Math.min(guidePage, guidePages.length - 1)];
 
   function goToPreviousPage() {
     setGuidePage((page) => Math.max(0, page - 1));
   }
 
   function goToNextPage() {
-    setGuidePage((page) => Math.min(GUIDE_PAGES.length - 1, page + 1));
+    setGuidePage((page) => Math.min(guidePages.length - 1, page + 1));
   }
 
   return (
@@ -145,14 +199,14 @@ export function SessionBriefing({
                 <span className="material-symbols-rounded">chevron_left</span>
               </button>
               <span className="warmup-guide-page-indicator">
-                {guidePage + 1} / {GUIDE_PAGES.length}
+                {guidePage + 1} / {guidePages.length}
               </span>
               <button
                 type="button"
                 className="warmup-guide-nav"
                 aria-label="Trang sau"
                 onClick={goToNextPage}
-                disabled={guidePage === GUIDE_PAGES.length - 1}
+                disabled={guidePage === guidePages.length - 1}
               >
                 <span className="material-symbols-rounded">chevron_right</span>
               </button>

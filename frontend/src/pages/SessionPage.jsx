@@ -291,6 +291,27 @@ export default function SessionPage() {
     startRemoteRecording,
   ]);
 
+  // Chỉ mic của người đang nói được mở. Trước đây cả hai mic mở suốt phiên nên
+  // người nói nghe cả tiếng phòng của người nghe. Việc này không ảnh hưởng điểm
+  // AI — mỗi người upload localStream của chính mình, tiếng người nghe không bao
+  // giờ lẫn vào bản ghi của người nói — nên đây là sửa trải nghiệm.
+  //
+  // Chỉ áp dụng sau khi phiên đã bắt đầu, vì ở bước làm quen hai người cần nói
+  // chuyện với nhau. Nếu người nghe tự bấm bật mic giữa lượt thì tôn trọng lựa
+  // chọn đó đến hết lượt; chỉ đặt lại khi sang lượt mới.
+  useEffect(() => {
+    if (!state.practiceStarted || !refs.current.localStream) {
+      return;
+    }
+
+    refs.current.localStream.getAudioTracks().forEach((track) => {
+      track.enabled = iAmSpeaker;
+    });
+
+    // Nút mic đọc trạng thái trực tiếp từ track nên phải được báo là track vừa đổi.
+    window.dispatchEvent(new Event('local_audio_changed'));
+  }, [state.practiceStarted, iAmSpeaker, currentTurn?.id, refs]);
+
   useEffect(() => {
     if (state.error?.type === 'partner_disconnected') {
       stopLocalRecording();
@@ -413,6 +434,7 @@ export default function SessionPage() {
         remoteVideoRef={remoteVideoRef}
         partnerName={state.partnerName}
         role={state.role}
+        turns={turns}
         myReady={state.practiceReady}
         partnerReady={state.partnerPracticeReady}
         onReady={handlePracticeReady}

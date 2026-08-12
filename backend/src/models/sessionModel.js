@@ -115,6 +115,12 @@ async function selectEligibleTopic(client, focus = 'full') {
 
 // Lấy đúng số câu của từng phần được chọn, theo thứ tự Part 1 -> 2 -> 3. Trả về
 // một mảng phẳng vì `createTurns` chỉ cần biết thứ tự câu hỏi.
+//
+// Random trong từng phần, không phải `ORDER BY id`. Chủ đề đã được chọn random
+// từ trước, nhưng trong một chủ đề thì `ORDER BY id LIMIT n` luôn trả về đúng n
+// câu đầu tiên — nên luyện lại cùng chủ đề là gặp lại y nguyên bộ câu hỏi cũ,
+// và những câu có id lớn hơn thì không bao giờ được dùng. Random đặt trong vòng
+// lặp từng phần nên thứ tự Part 1 -> 2 -> 3 giữa các phần vẫn được giữ.
 async function selectSessionQuestions(client, topicId, focus = 'full') {
   const questions = [];
 
@@ -124,7 +130,7 @@ async function selectSessionQuestions(client, topicId, focus = 'full') {
         SELECT id, part_number
         FROM questions
         WHERE topic_id = $1 AND part_number = $2
-        ORDER BY id
+        ORDER BY RANDOM()
         LIMIT $3
       `,
       [topicId, part, PART_FORMAT[part].questions]

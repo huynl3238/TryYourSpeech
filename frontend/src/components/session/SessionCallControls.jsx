@@ -42,6 +42,23 @@ export function SessionCallControls({ remoteVideoRef, onEndCall, compact = false
     setSpeakerEnabled(!remoteVideoRef?.current?.muted);
   }, [refs, remoteVideoRef]);
 
+  // Phiên luyện tự tắt mic của người nghe và bật lại khi đến lượt họ nói, tức là
+  // track bị đổi từ bên ngoài component này. Không đồng bộ lại thì icon vẫn hiện
+  // "mic đang mở" trong khi mic đã tắt, và người dùng bấm một lần mà tưởng hỏng.
+  useEffect(() => {
+    function syncFromTracks() {
+      setMicEnabled(getTrackEnabled(refs.current.localStream, 'audio'));
+      setCameraEnabled(getTrackEnabled(refs.current.localStream, 'video'));
+    }
+
+    window.addEventListener('local_audio_changed', syncFromTracks);
+    window.addEventListener('local_stream_ready', syncFromTracks);
+    return () => {
+      window.removeEventListener('local_audio_changed', syncFromTracks);
+      window.removeEventListener('local_stream_ready', syncFromTracks);
+    };
+  }, [refs]);
+
   function toggleMic() {
     const nextEnabled = !micEnabled;
     setTracksEnabled(refs.current.localStream, 'audio', nextEnabled);

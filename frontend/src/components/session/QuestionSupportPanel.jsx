@@ -20,7 +20,7 @@ function getTaskText(isSpeaker, partNumber) {
     return 'Trả lời trực tiếp câu hỏi, sau đó mở rộng bằng lý do hoặc ví dụ ngắn.';
   }
 
-  return 'Lắng nghe câu trả lời. Bấm TAB khi nghe thấy lỗi cần góp ý, sau đó chọn loại lỗi bằng phím 1-4.';
+  return 'Lắng nghe câu trả lời. Bấm TAB khi nghe thấy điều đáng ghi lại, sau đó chọn loại đánh dấu bằng phím 1-8.';
 }
 
 export function QuestionSupportPanel({ turn, totalTurns, isSpeaker }) {

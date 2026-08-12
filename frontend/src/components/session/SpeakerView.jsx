@@ -57,7 +57,7 @@ export function SpeakerView({ localVideoRef, remoteVideoRef, turn, totalTurns, t
             </span>
           </div>
           <p style={{ color: '#78716c', fontSize: 'var(--font-size-xs)' }}>
-            AI/audio upload đang tắt để test video call
+            Chỉ bản ghi của bạn được lưu lại sau phiên
           </p>
         </div>
       </div>
