@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react';
+import { useCallback } from 'react';
 import { useSession } from '../context/SessionContext';
 
 function getSupportedMimeType() {
@@ -37,14 +37,18 @@ function createAudioRecorder(stream) {
 
 export function useMediaRecorder() {
   const { dispatch, refs } = useSession();
-  const localChunksRef = useRef([]);
-  const remoteChunksRef = useRef([]);
 
   const startLocalRecording = useCallback((stream, turnId) => {
     if (!stream) return;
     if (refs.current.localRecorder && refs.current.localRecorder.state !== 'inactive') return;
 
-    localChunksRef.current = [];
+    // One array per recorder, captured by this turn's handlers. A single shared
+    // array used to be emptied here at the start of every turn, while the
+    // previous recorder's `stop` event was still queued — so the moment two
+    // recordings start back to back (any turn whose prep time is 0, which is
+    // what real Part 1 and Part 3 look like) the finished turn would blob up
+    // the *next* turn's chunks, or an empty array, and be dropped as empty.
+    const chunks = [];
     let recorder;
     let mimeType;
 
@@ -64,12 +68,12 @@ export function useMediaRecorder() {
 
     recorder.ondataavailable = (e) => {
       if (e.data.size > 0) {
-        localChunksRef.current.push(e.data);
+        chunks.push(e.data);
       }
     };
 
     recorder.onstop = () => {
-      const blob = new Blob(localChunksRef.current, {
+      const blob = new Blob(chunks, {
         type: mimeType || 'audio/webm',
       });
       if (blob.size === 0) {
@@ -101,7 +105,8 @@ export function useMediaRecorder() {
     if (!remoteStream) return;
     if (refs.current.remoteRecorder && refs.current.remoteRecorder.state !== 'inactive') return;
 
-    remoteChunksRef.current = [];
+    // Same reason as the local recorder above: this array belongs to this turn.
+    const chunks = [];
     let recorder;
     let mimeType;
 
@@ -121,12 +126,12 @@ export function useMediaRecorder() {
 
     recorder.ondataavailable = (e) => {
       if (e.data.size > 0) {
-        remoteChunksRef.current.push(e.data);
+        chunks.push(e.data);
       }
     };
 
     recorder.onstop = () => {
-      const blob = new Blob(remoteChunksRef.current, {
+      const blob = new Blob(chunks, {
         type: mimeType || 'audio/webm',
       });
       if (blob.size === 0) {
