@@ -4,6 +4,7 @@ import {
   getMentorRoomParticipants,
   markSessionAbandoned,
   markSessionActive,
+  SESSION_FOCUSES,
 } from '../models/sessionModel.js';
 import { setIo, registerUserSocket, unregisterSocket } from './notifier.js';
 import { authenticateSocket } from './auth.js';
@@ -129,6 +130,20 @@ function parseSessionMode(mode) {
   return mode;
 }
 
+// Phần IELTS muốn luyện. Không gửi thì mặc định buổi đầy đủ, giữ nguyên hành vi
+// của những client cũ chưa biết tới tính năng này.
+function parseFocus(focus) {
+  if (focus === null || focus === undefined || focus === '') {
+    return 'full';
+  }
+
+  if (typeof focus !== 'string' || !SESSION_FOCUSES.includes(focus)) {
+    return null;
+  }
+
+  return focus;
+}
+
 function parseUserRole(userRole, sessionMode) {
   if (userRole === null || userRole === undefined || userRole === '') {
     return 'student';
@@ -180,11 +195,16 @@ function validateMatchRequest(data, account) {
     return { error: 'Band hien tai phai la so tu 0 den 9' };
   }
 
+  const focus = parseFocus(data.focus);
+  if (!focus) {
+    return { error: 'Phan luyen tap khong hop le' };
+  }
+
   // Mặc định là "Lựa chọn ghép cặp": vào hàng đợi nhưng máy không tự ghép. Chỉ
   // khi client nói rõ autoMatch === true thì mới được ghép tự động.
   const autoMatch = data.autoMatch === true;
 
-  return { displayName, band, sessionMode, userRole, autoMatch };
+  return { displayName, band, sessionMode, userRole, autoMatch, focus };
 }
 
 function isValidSignal(data) {
@@ -214,6 +234,9 @@ function findBestBandMatch(user) {
 
   for (const candidate of waitingQueue) {
     if (!candidate.autoMatch) continue;
+    // Cả hai người trả lời chung một bộ câu hỏi, nên phần luyện phải trùng nhau
+    // — không có cách nào cho một người luyện Part 1 còn người kia Part 3.
+    if (candidate.focus !== user.focus) continue;
 
     const bandDifference = getBandDifference(user, candidate);
 
@@ -255,10 +278,14 @@ function isSocketAlive(socketId) {
 // một hàng đợi đông, cả 10 chỗ sẽ toàn người cùng trình độ và người dùng không
 // bao giờ nhìn thấy ai khác mình.
 function buildPartnerList(viewer) {
+  // Chỉ hiện người chọn cùng phần luyện. Hiện cả người khác phần rồi chặn lúc
+  // mời thì tệ hơn: người dùng bấm mời và nhận về một lời từ chối của hệ thống
+  // mà không hiểu tại sao.
   const others = waitingQueue.filter(
     (candidate) =>
       candidate.socketId !== viewer.socketId &&
       candidate.userId !== viewer.userId &&
+      candidate.focus === viewer.focus &&
       isSocketAlive(candidate.socketId)
   );
 
@@ -304,6 +331,7 @@ function buildPartnerList(viewer) {
     // Cho người xem biết người này có thể biến mất bất cứ lúc nào vì đang được
     // máy ghép hộ, thay vì để họ mời rồi ngơ ngác khi lời mời hỏng.
     autoMatch: candidate.autoMatch === true,
+    focus: candidate.focus || 'full',
     waitingSeconds: Math.round((Date.now() - candidate.joinedAt) / 1000),
     // Đã từ chối nhau thì hiện nhưng không mời lại được.
     declined: declined.has(candidate.userId),
@@ -533,6 +561,7 @@ function createMatchUser(socket, matchRequest) {
     band: matchRequest.band,
     userRole: matchRequest.userRole,
     autoMatch: matchRequest.autoMatch === true,
+    focus: matchRequest.focus || 'full',
     joinedAt: Date.now(),
   };
 }
@@ -598,13 +627,29 @@ async function sweepWaitingQueue(io) {
 // `user` is the person who just asked and is not in the queue; `matchedUser` is
 // the person taken out of it. Neither is queued while this runs.
 async function createPeerMatch(io, user, matchedUser) {
+  // Chốt cuối. Cả hai đường tới đây (ghép ngẫu nhiên và đồng ý lời mời) đều đã
+  // kiểm phần luyện, nên lệch ở đây là một lỗi lập trình — thà không tạo phiên
+  // còn hơn ghi vào cơ sở dữ liệu một phiên mà một người luyện sai phần.
+  if (user.focus !== matchedUser.focus) {
+    console.error(`[Match] Từ chối ghép: phần luyện lệch (${user.focus} vs ${matchedUser.focus})`);
+    for (const person of [matchedUser, user]) {
+      // Đường ghép ngẫu nhiên chưa lấy ai ra khỏi hàng đợi, đường lời mời thì đã
+      // lấy cả hai. Ai còn đang chờ thì để yên, đừng báo lỗi cho người không hỏi gì.
+      if (isSocketQueued(person.socketId)) continue;
+      if (!requeueUser(io, person)) {
+        io.to(person.socketId).emit('match_error', { error: 'Hai người đang luyện hai phần khác nhau' });
+      }
+    }
+    return false;
+  }
+
   removeFromQueue(matchedUser.socketId);
 
   const roomId = randomUUID();
   let session = null;
 
   try {
-    session = await createMatchedSession(roomId, matchedUser, user, 'peer');
+    session = await createMatchedSession(roomId, matchedUser, user, 'peer', user.focus);
   } catch (err) {
     console.error('Failed to create matched session:', err.message);
     // Both go back, not just the one who was waiting. The person who asked used
@@ -804,6 +849,15 @@ function handleInvitePartner(io, socket, data) {
 
   if (declinedPairs.has(pairKey(from.userId, to.userId))) {
     socket.emit('invite_error', { error: 'Người này đã từ chối lời mời trước đó' });
+    return;
+  }
+
+  // Danh sách đã lọc theo phần luyện, nên tới được đây là client đang giữ một
+  // danh sách cũ — người kia vừa đổi phần. Chặn ở đây vì phiên chỉ có một bộ
+  // câu hỏi cho cả hai.
+  if (from.focus !== to.focus) {
+    socket.emit('invite_error', { error: 'Người này đang luyện phần khác với bạn' });
+    broadcastPartnerLists(io);
     return;
   }
 

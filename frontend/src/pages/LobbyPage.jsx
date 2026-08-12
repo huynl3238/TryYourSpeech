@@ -64,6 +64,16 @@ const NAV_ITEMS = [
   { key: 'admin', label: 'Quản trị', icon: 'admin_panel_settings', adminOnly: true, route: '/admin' },
 ];
 
+// Ước lượng tính cho hai người: mỗi câu hỏi cả hai đều trả lời, nên gấp đôi
+// thời lượng một mình. Part 1 = 4 câu x 45s, Part 2 = 1 cue card (1 phút chuẩn
+// bị + 2 phút nói), Part 3 = 3 câu x 60s — tình cờ cả ba đều ra khoảng 6 phút.
+const FOCUS_CHOICES = [
+  { value: 'part1', label: 'Part 1', estimate: '~6 phút', desc: 'Hỏi đáp ngắn về đời sống, sở thích.' },
+  { value: 'part2', label: 'Part 2', estimate: '~6 phút', desc: 'Một cue card, mỗi người nói dài 2 phút.' },
+  { value: 'part3', label: 'Part 3', estimate: '~6 phút', desc: 'Thảo luận sâu, câu hỏi trừu tượng hơn.' },
+  { value: 'full', label: 'Cả 3 part', estimate: '~18 phút', desc: 'Đủ ba phần như một bài thi thật.' },
+];
+
 const ERROR_TYPE_CONFIG = {
   pronunciation: { label: 'Phát âm', badgeClass: 'error-pronunciation', borderColor: '#ef4444' },
   grammar: { label: 'Ngữ pháp', badgeClass: 'error-grammar', borderColor: '#f59e0b' },
@@ -504,6 +514,8 @@ function PracticePanel({
   onEditProfile,
   matchMode,
   setMatchModeChoice,
+  focus,
+  setFocus,
   picker,
 }) {
   const [checkOpen, setCheckOpen] = useState(false);
@@ -608,6 +620,35 @@ function PracticePanel({
                 {matchMode
                   ? 'Hệ thống tự ghép bạn với người có band chênh tối đa 1.0.'
                   : 'Bạn xem danh sách người đang chờ và tự mời người mình muốn.'}
+              </p>
+            </div>
+
+            {/* Chọn phần IELTS muốn luyện. Chỉ ghép được với người chọn cùng
+                phần, vì cả hai trả lời chung một bộ câu hỏi. */}
+            <div className="flex flex-col items-center gap-2">
+              <span className="text-[11px] uppercase tracking-[0.09em] text-[#A8A29E] font-bold">Phần muốn luyện</span>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 max-w-[420px]">
+                {FOCUS_CHOICES.map((option) => (
+                  <button
+                    key={option.value}
+                    id={`focus-${option.value}-btn`}
+                    type="button"
+                    onClick={() => setFocus(option.value)}
+                    className={`px-3 py-2 rounded-xl border text-left transition-colors ${
+                      focus === option.value
+                        ? 'border-[#D97757] bg-[#F7ECE6]'
+                        : 'border-[#EAE7E3] bg-white hover:bg-[#F1EEEA]'
+                    }`}
+                  >
+                    <span className={`block text-[13.5px] font-bold ${focus === option.value ? 'text-[#8A4A33]' : 'text-[#1C1917]'}`}>
+                      {option.label}
+                    </span>
+                    <span className="block text-[11px] text-[#A8A29E]">{option.estimate}</span>
+                  </button>
+                ))}
+              </div>
+              <p className="max-w-[320px] text-center text-[11.5px] text-[#A8A29E]">
+                {FOCUS_CHOICES.find((option) => option.value === focus)?.desc}
               </p>
             </div>
 
@@ -3566,6 +3607,10 @@ export default function LobbyPage() {
   // Lựa chọn ở màn hình trước khi bấm bắt đầu. Sau khi vào hàng chờ thì chế độ
   // thật nằm ở state.matchAutoMatch, do server xác nhận.
   const [matchModeChoice, setMatchModeChoice] = useState(false);
+  // Mặc định Part 2 cho khớp với phiên mentor, và vì đây là phần người học hay
+  // luyện riêng nhất. Đổi được trước khi vào hàng chờ, không đổi được khi đã chờ
+  // — hàng đợi đã ghim phần luyện để lọc danh sách.
+  const [focus, setFocus] = useState('part2');
   const navigate = useNavigate();
 
   const isSearching = state.phase === 'searching';
@@ -3588,7 +3633,7 @@ export default function LobbyPage() {
 
   function handleSubmit(e) {
     e.preventDefault();
-    findMatch(displayName, band, matchModeChoice);
+    findMatch(displayName, band, matchModeChoice, focus);
   }
 
   if (state.error?.type === 'match_error') {
@@ -3658,7 +3703,10 @@ export default function LobbyPage() {
             onEditProfile={() => setActiveTab('profile')}
             matchMode={matchModeChoice}
             setMatchModeChoice={setMatchModeChoice}
+            focus={focus}
+            setFocus={setFocus}
             picker={{
+              focusLabel: FOCUS_CHOICES.find((option) => option.value === focus)?.label || 'Cả 3 part',
               partners: state.partnerList,
               autoMatch: state.matchAutoMatch,
               outgoingInvite: state.outgoingInvite,

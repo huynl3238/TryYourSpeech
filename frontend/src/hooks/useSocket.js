@@ -234,7 +234,8 @@ export function useSocket() {
   // handshake; band is the only thing this side still gets to choose.
   // autoMatch mặc định false: vào hàng chờ nhưng máy không tự ghép, người dùng
   // tự chọn. Muốn máy ghép hộ thì phải nói rõ.
-  const findMatch = useCallback((displayName, band, autoMatch = false) => {
+  // `focus` là phần IELTS muốn luyện; chỉ ghép được với người chọn cùng phần.
+  const findMatch = useCallback((displayName, band, autoMatch = false, focus = 'full') => {
     dispatch({ type: 'SET_USER', payload: { displayName, band } });
     dispatch({ type: 'SET_MATCH_MODE', payload: autoMatch });
     dispatch({ type: 'CLEAR_MATCHMAKING' });
@@ -242,7 +243,7 @@ export function useSocket() {
       socket.disconnect();
     }
     socket.connect();
-    socket.emit('find_match', { band, autoMatch });
+    socket.emit('find_match', { band, autoMatch, focus });
   }, [dispatch]);
 
   const cancelMatch = useCallback(() => {

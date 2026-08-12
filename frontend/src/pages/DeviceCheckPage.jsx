@@ -260,6 +260,10 @@ export default function DeviceCheckPage() {
   }
 
   const partnerBand = state.sessionData?.participants?.find((p) => p.id === state.partnerId)?.band;
+  const practisedParts = [...new Set(state.turns.map((turn) => turn.partNumber))]
+    .sort((a, b) => a - b)
+    .map((partNumber) => `Part ${partNumber}`)
+    .join(', ');
 
   return (
     <div className="min-h-screen bg-zinc-50 flex items-start justify-center px-4 py-6 md:py-10">
@@ -337,7 +341,11 @@ export default function DeviceCheckPage() {
                 <CardContent className="p-4">
                   <p className="text-xs font-medium text-zinc-400 uppercase tracking-wide mb-1.5">Chủ đề</p>
                   <p className="text-sm font-medium text-zinc-900">{state.sessionData.topic?.name || 'IELTS Speaking'}</p>
-                  <p className="text-xs text-zinc-400 mt-0.5">{state.turns.length} lượt · Part 1, 2, 3</p>
+                  {/* Trước đây luôn ghi "Part 1, 2, 3" dù phiên có thể chỉ luyện
+                      một phần. Lấy đúng các part có trong lượt nói. */}
+                  <p className="text-xs text-zinc-400 mt-0.5">
+                    {state.turns.length} lượt · {practisedParts || 'IELTS Speaking'}
+                  </p>
                 </CardContent>
               </Card>
             )}

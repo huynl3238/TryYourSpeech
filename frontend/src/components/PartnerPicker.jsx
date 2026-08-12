@@ -453,6 +453,7 @@ export function PartnerPicker({
   onRespondInvite,
   onSwitchToRandom,
   onCancel,
+  focusLabel,
 }) {
   const [waitedLongEnough, setWaitedLongEnough] = useState(false);
   const elapsedSeconds = useElapsedSeconds();
@@ -482,6 +483,15 @@ export function PartnerPicker({
             ? 'Hệ thống sẽ tự ghép bạn với người có band chênh tối đa 1.0 ngay khi có.'
             : 'Mời một người trong danh sách, hoặc chờ người khác mời bạn.'}
         </p>
+
+        {/* Danh sách chỉ có người chọn cùng phần, nên phải nói rõ đang chờ ai —
+            không thì hàng chờ trống trông như hệ thống hỏng. */}
+        {focusLabel && (
+          <p className="mt-2 text-[12.5px] text-[#78716C]">
+            Chỉ hiện người cũng đang luyện{' '}
+            <b className="font-semibold text-[#8A4A33]">{focusLabel}</b>
+          </p>
+        )}
 
         <div className="mt-3 inline-flex items-center gap-2.5 rounded-full border border-[#EAE7E3] bg-white px-3.5 py-1.5 text-[12.5px] shadow-sm">
           <span className="inline-flex items-center gap-1.5 text-[#57534E]">

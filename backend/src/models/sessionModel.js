@@ -1,16 +1,35 @@
 import { randomUUID } from 'crypto';
 import pool from '../config/db.js';
 
-const TEST_TURNS_PER_USER = 3;
-const TEST_TURN_DURATION_MS = 30000;
-const TEST_SHORT_PREP_DURATION_MS = 30000;
-const TEST_LONG_PREP_DURATION_MS = 60000;
+// Đúng thời lượng IELTS Speaking thật (AGENTS.md "Phase 3 — Luyện nói"). Part 1
+// và Part 3 hỏi rồi trả lời ngay nên không có thời gian chuẩn bị; chỉ Part 2 có
+// một phút đọc cue card. Trước đây mọi lượt đều là 30 giây kèm 30 giây chuẩn bị
+// — chế độ test, không phải format thật.
+const PART_FORMAT = {
+  1: { questions: 4, durationMs: 45000, prepDurationMs: 0 },
+  2: { questions: 1, durationMs: 120000, prepDurationMs: 60000 },
+  3: { questions: 3, durationMs: 60000, prepDurationMs: 0 },
+};
+
+const FOCUS_PARTS = {
+  part1: [1],
+  part2: [2],
+  part3: [3],
+  full: [1, 2, 3],
+};
+
+export const SESSION_FOCUSES = Object.keys(FOCUS_PARTS);
+
+function getFocusParts(focus) {
+  return FOCUS_PARTS[focus] || FOCUS_PARTS.full;
+}
 
 function mapSessionRow(row) {
   return {
     id: row.id,
     status: row.status,
     sessionMode: row.session_mode || 'peer',
+    focus: row.focus || 'full',
     userAId: row.user_a_id,
     userBId: row.user_b_id,
   };
@@ -70,7 +89,15 @@ async function syncSessionUser(client, user) {
   return row;
 }
 
-async function selectEligibleTopic(client) {
+// Bộ câu hỏi chỉ hợp lệ khi có đủ số câu cho đúng phần được chọn. Đòi đủ chứ
+// không đòi "ít nhất một câu" là có lý do: một buổi Part 1 chỉ có một câu hỏi
+// dài 90 giây, không ai nhận ra đó là Part 1. Chọn Part 2 thì một bộ chỉ có
+// cue card cũng dùng được, dù nó không đủ cho buổi đầy đủ.
+async function selectEligibleTopic(client, focus = 'full') {
+  const having = getFocusParts(focus)
+    .map((part) => `COUNT(*) FILTER (WHERE q.part_number = ${part}) >= ${PART_FORMAT[part].questions}`)
+    .join(' AND ');
+
   const result = await client.query(`
     SELECT t.id, t.name
     FROM topics t
@@ -78,10 +105,7 @@ async function selectEligibleTopic(client) {
     WHERE COALESCE(t.status, 'open') = 'open'
       AND COALESCE(t.scope, 'system') = 'system'
     GROUP BY t.id, t.name
-    HAVING
-      COUNT(*) FILTER (WHERE q.part_number = 1) >= 1 AND
-      COUNT(*) FILTER (WHERE q.part_number = 2) >= 1 AND
-      COUNT(*) FILTER (WHERE q.part_number = 3) >= 1
+    HAVING ${having}
     ORDER BY RANDOM()
     LIMIT 1
   `);
@@ -89,39 +113,26 @@ async function selectEligibleTopic(client) {
   return result.rows[0] || null;
 }
 
-async function selectSessionQuestions(client, topicId) {
-  const part1 = await client.query(
-    `
-      SELECT id, part_number
-      FROM questions
-      WHERE topic_id = $1 AND part_number = 1
-      ORDER BY id
-      LIMIT 1
-    `,
-    [topicId]
-  );
-  const part2 = await client.query(
-    `
-      SELECT id, part_number
-      FROM questions
-      WHERE topic_id = $1 AND part_number = 2
-      ORDER BY id
-      LIMIT 1
-    `,
-    [topicId]
-  );
-  const part3 = await client.query(
-    `
-      SELECT id, part_number
-      FROM questions
-      WHERE topic_id = $1 AND part_number = 3
-      ORDER BY id
-      LIMIT 1
-    `,
-    [topicId]
-  );
+// Lấy đúng số câu của từng phần được chọn, theo thứ tự Part 1 -> 2 -> 3. Trả về
+// một mảng phẳng vì `createTurns` chỉ cần biết thứ tự câu hỏi.
+async function selectSessionQuestions(client, topicId, focus = 'full') {
+  const questions = [];
 
-  return [...part1.rows, ...part2.rows, ...part3.rows].slice(0, TEST_TURNS_PER_USER);
+  for (const part of getFocusParts(focus)) {
+    const result = await client.query(
+      `
+        SELECT id, part_number
+        FROM questions
+        WHERE topic_id = $1 AND part_number = $2
+        ORDER BY id
+        LIMIT $3
+      `,
+      [topicId, part, PART_FORMAT[part].questions]
+    );
+    questions.push(...result.rows);
+  }
+
+  return questions;
 }
 
 // Mentor sessions use the mentor's selected focus. A focused session runs only
@@ -158,13 +169,11 @@ async function selectMentorQuestions(client, topicId, focus) {
 }
 
 function getTurnDurations(partNumber) {
-  const prepDurationMs = partNumber === 2
-    ? TEST_LONG_PREP_DURATION_MS
-    : TEST_SHORT_PREP_DURATION_MS;
+  const format = PART_FORMAT[partNumber] || PART_FORMAT[1];
 
   return {
-    durationMs: TEST_TURN_DURATION_MS,
-    prepDurationMs,
+    durationMs: format.durationMs,
+    prepDurationMs: format.prepDurationMs,
   };
 }
 
@@ -249,15 +258,16 @@ async function createMentorTurns(client, sessionId, studentId, questions) {
   }
 }
 
-export async function createMatchedSession(roomId, userA, userB, sessionMode = 'peer') {
+export async function createMatchedSession(roomId, userA, userB, sessionMode = 'peer', focus = 'full') {
+  const safeFocus = FOCUS_PARTS[focus] ? focus : 'full';
   const client = await pool.connect();
 
   try {
     await client.query('BEGIN');
 
-    const topic = await selectEligibleTopic(client);
+    const topic = await selectEligibleTopic(client, safeFocus);
     if (!topic) {
-      throw new Error('Chưa có đủ câu hỏi để tạo phiên luyện tập');
+      throw new Error('Chưa có bộ câu hỏi nào đủ câu cho phần luyện đã chọn');
     }
 
     const createdUserA = await syncSessionUser(client, userA);
@@ -270,13 +280,13 @@ export async function createMatchedSession(roomId, userA, userB, sessionMode = '
     const sessionId = randomUUID();
     await client.query(
       `
-        INSERT INTO sessions (id, room_id, user_a_id, user_b_id, topic_id, session_mode, status)
-        VALUES ($1, $2, $3, $4, $5, $6, 'matched')
+        INSERT INTO sessions (id, room_id, user_a_id, user_b_id, topic_id, session_mode, focus, status)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, 'matched')
       `,
-      [sessionId, roomId, createdUserA.id, createdUserB.id, topic.id, sessionMode]
+      [sessionId, roomId, createdUserA.id, createdUserB.id, topic.id, sessionMode, safeFocus]
     );
 
-    const questions = await selectSessionQuestions(client, topic.id);
+    const questions = await selectSessionQuestions(client, topic.id, safeFocus);
     if (sessionMode === 'mentor') {
       await createMentorTurns(client, sessionId, createdUserA.id, questions);
     } else {
@@ -288,6 +298,7 @@ export async function createMatchedSession(roomId, userA, userB, sessionMode = '
     return {
       sessionId,
       topic,
+      focus: safeFocus,
       userA: createdUserA,
       userB: createdUserB,
     };
@@ -335,10 +346,10 @@ export async function insertMentorSessionWithClient(client, { mentorId, studentI
 
   await client.query(
     `
-      INSERT INTO sessions (id, room_id, user_a_id, user_b_id, topic_id, session_mode, status)
-      VALUES ($1, $2, $3, $4, $5, 'mentor', 'matched')
+      INSERT INTO sessions (id, room_id, user_a_id, user_b_id, topic_id, session_mode, focus, status)
+      VALUES ($1, $2, $3, $4, $5, 'mentor', $6, 'matched')
     `,
-    [sessionId, roomId, studentId, mentorId, topic.id]
+    [sessionId, roomId, studentId, mentorId, topic.id, FOCUS_PARTS[focus] ? focus : 'full']
   );
 
   await createMentorTurns(client, sessionId, studentId, questions);
@@ -422,6 +433,7 @@ export async function getSessionDetail(sessionId) {
         s.id,
         s.status,
         s.session_mode,
+        s.focus,
         s.user_a_id,
         s.user_b_id,
         t.id AS topic_id,

@@ -114,7 +114,10 @@ test('finishing review hands AI grading off and returns without doing it', async
       `,
       [session.sessionId]
     );
-    assert.equal(results.rows.length, 6);
+    // Mọi lượt của phiên phải có một dòng kết quả. Đếm từ bảng turns thay vì
+    // ghim con số, để test không vỡ khi format buổi luyện đổi.
+    const turnCount = await pool.query('SELECT COUNT(*)::int AS total FROM turns WHERE session_id = $1', [session.sessionId]);
+    assert.equal(results.rows.length, turnCount.rows[0].total);
     assert.ok(
       results.rows.every((row) => row.status === 'failed'),
       'AI chưa cấu hình nên mọi lượt phải được ghi là failed, không treo ở processing'

@@ -202,15 +202,27 @@ test('database flow creates session, stores idempotent peer notes, and completes
 
     assert.equal(detail.session.status, 'matched');
     assert.equal(detail.participants.length, 2);
-    assert.equal(detail.turns.length, 6);
-    assert.ok(detail.turns.every((turn) => turn.durationMs === 30000));
+    // Đúng format IELTS Speaking thật: Part 1 bốn câu 45 giây, Part 2 một cue
+    // card 2 phút có 1 phút chuẩn bị, Part 3 ba câu 60 giây. Mỗi câu cả hai
+    // người đều trả lời nên số lượt gấp đôi số câu.
     assert.deepEqual(
       detail.turns.map((turn) => turn.partNumber),
-      [1, 1, 2, 2, 3, 3]
+      [1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 3, 3, 3, 3, 3, 3]
     );
     assert.deepEqual(
+      detail.turns.map((turn) => turn.durationMs),
+      [45000, 45000, 45000, 45000, 45000, 45000, 45000, 45000, 120000, 120000, 60000, 60000, 60000, 60000, 60000, 60000]
+    );
+    // Chỉ Part 2 có thời gian chuẩn bị. Part 1 và Part 3 là hỏi rồi trả lời ngay.
+    assert.deepEqual(
       detail.turns.map((turn) => turn.prepDurationMs),
-      [30000, 30000, 60000, 60000, 30000, 30000]
+      [0, 0, 0, 0, 0, 0, 0, 0, 60000, 60000, 0, 0, 0, 0, 0, 0]
+    );
+    // Hai người thay nhau nói trong cùng một câu hỏi, không phải một người nói
+    // hết rồi mới tới người kia.
+    assert.deepEqual(
+      detail.turns.slice(0, 4).map((turn) => turn.speakerRole),
+      ['A', 'B', 'A', 'B']
     );
 
     await markSessionActive(session.sessionId);
@@ -266,8 +278,10 @@ test('database flow creates session, stores idempotent peer notes, and completes
     assert.equal(history.user.displayName, 'Integration A');
     assert.equal(historySession.sessionMode, 'peer');
     assert.equal(historySession.partner.displayName, 'Integration B');
-    assert.equal(historySession.turnCount, 6);
-    assert.equal(historySession.speakingTurnCount, 3);
+    // 8 câu hỏi cho buổi đầy đủ, hai người trả lời hết -> 16 lượt, trong đó 8
+    // lượt là của người đang xem lịch sử.
+    assert.equal(historySession.turnCount, 16);
+    assert.equal(historySession.speakingTurnCount, 8);
     assert.equal(historySession.notesReceivedCount, 1);
     assert.equal(historySession.notesGivenCount, 0);
     assert.equal(historySession.resultStatus, 'completed');
@@ -315,12 +329,10 @@ test('mentor session creates student-only turns and completes with mentor review
       detail.participants.map((participant) => participant.userRole),
       ['student', 'mentor']
     );
-    assert.equal(detail.turns.length, 3);
+    // Phiên mentor: một lượt cho mỗi câu hỏi vì chỉ học viên nói, mentor nghe.
+    assert.equal(detail.turns.length, 8);
     assert.ok(detail.turns.every((turn) => turn.speakerId === session.userA.id));
-    assert.deepEqual(
-      detail.turns.map((turn) => turn.speakerRole),
-      ['A', 'A', 'A']
-    );
+    assert.ok(detail.turns.every((turn) => turn.speakerRole === 'A'));
 
     await markSessionActive(session.sessionId);
 
@@ -374,8 +386,9 @@ test('mentor session creates student-only turns and completes with mentor review
     assert.equal(historySession.sessionMode, 'mentor');
     assert.equal(historySession.partner.displayName, 'Mentor Integration');
     assert.equal(historySession.partner.userRole, 'mentor');
-    assert.equal(historySession.turnCount, 3);
-    assert.equal(historySession.speakingTurnCount, 3);
+    // Phiên mentor chỉ học viên nói, nên mọi lượt đều là lượt của học viên.
+    assert.equal(historySession.turnCount, 8);
+    assert.equal(historySession.speakingTurnCount, 8);
     assert.equal(historySession.notesReceivedCount, 1);
     assert.equal(historySession.resultStatus, 'mentor_reviewed');
   } finally {
@@ -614,7 +627,10 @@ test('classroom posts publish completed sessions and appear in the feed', async 
     assert.ok(feed.posts.some((post) => post.id === published.post.id));
 
     const detailPost = await getClassroomPost(published.post.id);
-    assert.equal(detailPost.post.aiTranscripts.length, 3);
+    // Đếm theo số lượt thật của phiên chứ không ghim một con số: bài đăng phải
+    // mang đủ transcript của mọi lượt, dù format buổi luyện có đổi.
+    const turnCount = await pool.query('SELECT COUNT(*)::int AS total FROM turns WHERE session_id = $1', [session.sessionId]);
+    assert.equal(detailPost.post.aiTranscripts.length, turnCount.rows[0].total);
     assert.equal(detailPost.post.sessionMode, 'mentor');
 
     const commentResult = await addClassroomComment({

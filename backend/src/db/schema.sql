@@ -229,6 +229,18 @@ ALTER TABLE sessions
 ADD CONSTRAINT sessions_session_mode_check
 CHECK (session_mode IN ('peer', 'mentor'));
 
+-- Phần IELTS mà cả hai người chọn luyện. Cùng tập giá trị với mentor_sessions.focus
+-- vì đúng một khái niệm; phiên đã có từ trước khi có tính năng này là 'full'.
+ALTER TABLE sessions
+ADD COLUMN IF NOT EXISTS focus VARCHAR(10) DEFAULT 'full';
+
+ALTER TABLE sessions
+DROP CONSTRAINT IF EXISTS sessions_focus_check;
+
+ALTER TABLE sessions
+ADD CONSTRAINT sessions_focus_check
+CHECK (focus IN ('part1', 'part2', 'part3', 'full'));
+
 -- Counts how many times AI grading has been started for this session. The recovery
 -- sweep retries anything stuck in 'processing', so without a ceiling a session that
 -- fails for a permanent reason (a corrupt recording, say) would be retried every few
