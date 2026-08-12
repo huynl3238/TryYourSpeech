@@ -9,6 +9,7 @@ import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Card, CardContent } from '../components/ui/card';
 import { cleanupMediaSession } from '../utils/mediaCleanup';
+import { canRecordUploadableAudio } from '../hooks/useMediaRecorder';
 
 // Every way a match can die before the practice starts. They share one screen
 // but each carries its own title and wording from the server event, so the user
@@ -62,6 +63,8 @@ export default function DeviceCheckPage() {
   const [sessionLoadStatus, setSessionLoadStatus] = useState('idle');
   const [sessionLoadError, setSessionLoadError] = useState('');
   const [sessionLoadRetry, setSessionLoadRetry] = useState(0);
+  // Không đổi trong suốt vòng đời trang, nên tính một lần.
+  const [canUploadAudio] = useState(() => canRecordUploadableAudio());
 
   const handleRemoteStream = useCallback((stream) => {
     if (remoteVideoRef.current) {
@@ -337,6 +340,18 @@ export default function DeviceCheckPage() {
                   <p className="text-xs text-zinc-400 mt-0.5">{state.turns.length} lượt · Part 1, 2, 3</p>
                 </CardContent>
               </Card>
+            )}
+
+            {/* Nói trước cho người dùng biết, vì hậu quả chỉ hiện ra ở cuối
+                phiên dưới dạng một nút "Tải lại" không bao giờ thành công. */}
+            {!canUploadAudio && (
+              <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3">
+                <p className="text-sm font-medium text-amber-800">Trình duyệt này không lưu được bản ghi âm</p>
+                <p className="text-xs text-amber-700 mt-1">
+                  Bạn vẫn luyện nói và đánh dấu lỗi bình thường, nhưng audio không tải lên được
+                  nên phiên này sẽ không có điểm AI. Dùng Chrome, Edge hoặc Firefox nếu bạn muốn được chấm điểm.
+                </p>
+              </div>
             )}
 
             {/* Ready button */}

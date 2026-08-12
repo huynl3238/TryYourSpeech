@@ -1,14 +1,25 @@
 import { useCallback } from 'react';
 import { useSession } from '../context/SessionContext';
 
+// The upload endpoint accepts audio/webm and nothing else, and the file is
+// stored as .webm before the AI pipeline reads it. Offering an audio/ogg
+// fallback here produced recordings that played back locally but were rejected
+// on upload, leaving a "Tải lại" button that could never succeed. Only ask for
+// what the server can actually take.
+const UPLOADABLE_MIME_TYPES = [
+  'audio/webm;codecs=opus',
+  'audio/webm',
+];
+
 function getSupportedMimeType() {
-  const types = [
-    'audio/webm;codecs=opus',
-    'audio/webm',
-    'audio/ogg;codecs=opus',
-    'audio/ogg',
-  ];
-  return types.find((type) => MediaRecorder.isTypeSupported(type)) || '';
+  return UPLOADABLE_MIME_TYPES.find((type) => MediaRecorder.isTypeSupported(type)) || '';
+}
+
+// Safari records audio/mp4 and cannot produce WebM at all. Practice, peer notes
+// and local playback still work there — only the upload does not — so this is a
+// warning the user is shown, not a reason to block the session.
+export function canRecordUploadableAudio() {
+  return typeof MediaRecorder !== 'undefined' && getSupportedMimeType() !== '';
 }
 
 function createAudioStream(stream) {
