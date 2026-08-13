@@ -2,6 +2,7 @@ import { Timer } from '../ui/Timer';
 import { useSession } from '../../context/SessionContext';
 import { QuestionSupportPanel } from './QuestionSupportPanel';
 import { SessionCallControls } from './SessionCallControls';
+import { CameraOffOverlay } from './CameraOffOverlay';
 
 export function SpeakerView({ localVideoRef, remoteVideoRef, turn, totalTurns, turnStartTime, onTurnEnd, onEndCall }) {
   const { state } = useSession();
@@ -37,10 +38,12 @@ export function SpeakerView({ localVideoRef, remoteVideoRef, turn, totalTurns, t
             muted
             style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }}
           />
+          {state.cameraOff && <CameraOffOverlay label="Camera của bạn đang tắt" />}
           <div className="video-label">Bạn</div>
 
           <div className="video-self-preview">
             <video ref={remoteVideoRef} autoPlay playsInline />
+            {state.partnerCameraOff && <CameraOffOverlay compact />}
             <div className="video-label" style={{ fontSize: 10 }}>{state.partnerName || 'Đối tác'}</div>
           </div>
         </div>

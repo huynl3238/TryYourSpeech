@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useSession } from '../../context/SessionContext';
 import { rememberMediaStream } from '../../utils/mediaCleanup';
+// Dùng thẳng socket chứ không gọi `useSocket()`: hook đó đăng ký cả một loạt trình
+// nghe sự kiện trong effect của nó, gọi thêm một lần nữa ở đây là mọi sự kiện phòng
+// bị xử lý hai lần. Ở đây chỉ cần gửi đi một tin, không cần nghe gì.
+import { socket } from '../../services/socket';
 
 function setTracksEnabled(stream, kind, enabled) {
   if (!stream) return;
@@ -13,9 +17,14 @@ function setTracksEnabled(stream, kind, enabled) {
     });
 }
 
+// Không có track nghĩa là thiết bị đang tắt, không phải đang bật. Trước đây hàm này
+// trả về `true` khi không tìm thấy track, mà tắt camera thì track video bị tháo hẳn
+// ra khỏi stream — nên cứ mỗi lần đồng bộ lại (xảy ra ở mỗi lượt nói, do phiên tự
+// khoá mic người nghe) là icon camera nhảy về "đang bật" dù camera vẫn tắt, và cú
+// bấm tiếp theo của người dùng hoá ra là bật camera lên ngoài ý muốn.
 function getTrackEnabled(stream, kind) {
   const track = stream?.getTracks().find((item) => item.kind === kind);
-  return track ? track.enabled : true;
+  return track ? track.enabled : false;
 }
 
 function removeTracks(stream, kind) {
@@ -31,14 +40,16 @@ function removeTracks(stream, kind) {
 }
 
 export function SessionCallControls({ remoteVideoRef, onEndCall, compact = false }) {
-  const { refs } = useSession();
+  const { state, dispatch, refs } = useSession();
   const [micEnabled, setMicEnabled] = useState(() => getTrackEnabled(refs.current.localStream, 'audio'));
-  const [cameraEnabled, setCameraEnabled] = useState(() => getTrackEnabled(refs.current.localStream, 'video'));
   const [speakerEnabled, setSpeakerEnabled] = useState(() => !remoteVideoRef?.current?.muted);
+  // Camera lấy từ state dùng chung, không giữ riêng trong component: các khung video
+  // ở 4 màn khác nhau đều phải biết để vẽ lớp phủ, mà nút này thì bị dựng lại mỗi
+  // lần đổi màn (nói -> nghe -> chuẩn bị). Giữ riêng là mỗi bên hiểu một kiểu.
+  const cameraEnabled = !state.cameraOff;
 
   useEffect(() => {
     setMicEnabled(getTrackEnabled(refs.current.localStream, 'audio'));
-    setCameraEnabled(getTrackEnabled(refs.current.localStream, 'video'));
     setSpeakerEnabled(!remoteVideoRef?.current?.muted);
   }, [refs, remoteVideoRef]);
 
@@ -48,7 +59,6 @@ export function SessionCallControls({ remoteVideoRef, onEndCall, compact = false
   useEffect(() => {
     function syncFromTracks() {
       setMicEnabled(getTrackEnabled(refs.current.localStream, 'audio'));
-      setCameraEnabled(getTrackEnabled(refs.current.localStream, 'video'));
     }
 
     window.addEventListener('local_audio_changed', syncFromTracks);
@@ -65,6 +75,14 @@ export function SessionCallControls({ remoteVideoRef, onEndCall, compact = false
     setMicEnabled(nextEnabled);
   }
 
+  // Đối tác không có cách nào tự biết camera bên này vừa tắt: tháo track chỉ làm
+  // luồng video ngừng chảy, mà ngừng chảy thì thẻ <video> của họ đứng lại ở khung
+  // cuối chứ không báo gì. Sự kiện `mute` của track thì tuỳ trình duyệt và thường
+  // trễ vài giây, nên nói thẳng cho họ biết là cách duy nhất chắc chắn.
+  function announceCameraState(off) {
+    socket.emit('signal', { type: 'camera_state', payload: { off } });
+  }
+
   async function toggleCamera() {
     if (cameraEnabled) {
       removeTracks(refs.current.localStream, 'video');
@@ -73,7 +91,8 @@ export function SessionCallControls({ remoteVideoRef, onEndCall, compact = false
         .find((sender) => sender.track?.kind === 'video');
       await videoSender?.replaceTrack(null);
       window.dispatchEvent(new Event('local_stream_ready'));
-      setCameraEnabled(false);
+      dispatch({ type: 'SET_CAMERA_OFF', payload: true });
+      announceCameraState(true);
       return;
     }
 
@@ -99,7 +118,8 @@ export function SessionCallControls({ remoteVideoRef, onEndCall, compact = false
       }
 
       window.dispatchEvent(new Event('local_stream_ready'));
-      setCameraEnabled(true);
+      dispatch({ type: 'SET_CAMERA_OFF', payload: false });
+      announceCameraState(false);
     } catch (err) {
       console.warn('[CallControls] Could not restart camera:', err.message);
     }

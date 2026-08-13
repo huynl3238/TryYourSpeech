@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react';
 import { SessionCallControls } from './SessionCallControls';
+import { CameraOffOverlay } from './CameraOffOverlay';
+import { useSession } from '../../context/SessionContext';
 
 const PART_TITLES = {
   1: 'Part 1 - Câu hỏi ngắn',
@@ -105,6 +107,7 @@ export function SessionBriefing({
   onReady,
   onEndCall,
 }) {
+  const { state } = useSession();
   const [showGuide, setShowGuide] = useState(true);
   const [guidePage, setGuidePage] = useState(0);
   const guidePages = useMemo(() => buildGuidePages(turns), [turns]);
@@ -135,11 +138,15 @@ export function SessionBriefing({
       <div className="warmup-stage">
         <section className="warmup-video-pane">
           <video ref={localVideoRef} autoPlay playsInline muted />
+          {state.cameraOff && <CameraOffOverlay label="Camera của bạn đang tắt" />}
           <div className="video-label">Bạn</div>
         </section>
 
         <section className="warmup-video-pane">
           <video ref={remoteVideoRef} autoPlay playsInline />
+          {state.partnerCameraOff && (
+            <CameraOffOverlay label={`${partnerName || 'Đối tác'} đã tắt camera`} />
+          )}
           <div className="video-label">{partnerName || 'Đối tác'}</div>
         </section>
 

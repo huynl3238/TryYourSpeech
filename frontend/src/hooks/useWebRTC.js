@@ -175,6 +175,15 @@ export function useWebRTC({ sendSignal, onSignal, onRemoteStream, onConnectionSt
   // Handle incoming signals
   useEffect(() => {
     const cleanup = onSignal(async (signal) => {
+      // Không phải tín hiệu WebRTC: chỉ là đối tác báo họ vừa bật/tắt camera. Phải
+      // xử lý TRƯỚC hàng chờ tín hiệu bên dưới — tin này vẫn đúng và vẫn cần hiển
+      // thị ngay dù peer connection chưa sẵn sàng, còn nếu bị xếp vào hàng chờ thì
+      // nó chỉ được đọc lại lúc `startCall` chạy, tức là quá muộn hoặc không bao giờ.
+      if (signal?.type === 'camera_state') {
+        dispatch({ type: 'SET_PARTNER_CAMERA_OFF', payload: signal.payload?.off === true });
+        return;
+      }
+
       const pc = refs.current.peerConnection;
 
       // Too early: hold it rather than lose it. startCall replays the queue the
@@ -193,7 +202,7 @@ export function useWebRTC({ sendSignal, onSignal, onRemoteStream, onConnectionSt
     });
 
     return cleanup;
-  }, [onSignal, applySignal, refs]);
+  }, [onSignal, applySignal, dispatch, refs]);
 
   const getLocalStream = useCallback(async (constraints = { audio: true, video: true }) => {
     const existingStream = refs.current.localStream;

@@ -44,7 +44,11 @@ function getInviteTimeoutMs() {
   const raw = Number(process.env.SOCKET_INVITE_TIMEOUT_MS);
   return Number.isFinite(raw) && raw > 0 ? raw : INVITE_TIMEOUT_MS;
 }
-const SIGNAL_TYPES = new Set(['offer', 'answer', 'ice-candidate']);
+// `camera_state` không phải tín hiệu WebRTC — nó chỉ báo cho đối tác biết camera
+// bên này vừa bật hay tắt. Đi kèm ở đây vì server đã chuyển tiếp `signal` sang
+// đúng người trong phòng, nên không cần thêm kênh riêng. Nội dung không được tin:
+// client nhận chỉ dùng nó để hiện lớp phủ, không đưa vào peer connection.
+const SIGNAL_TYPES = new Set(['offer', 'answer', 'ice-candidate', 'camera_state']);
 const SESSION_MODES = new Set(['peer', 'mentor']);
 const USER_ROLES = new Set(['student', 'mentor']);
 

@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Timer } from '../ui/Timer';
 import { SessionCallControls } from './SessionCallControls';
+import { CameraOffOverlay } from './CameraOffOverlay';
+import { useSession } from '../../context/SessionContext';
 
 function getCueCardItems(cueCard) {
   if (!cueCard) return [];
@@ -49,6 +51,7 @@ export function Part2PrepView({
   onPrepEnd,
   onEndCall,
 }) {
+  const { state } = useSession();
   const [showPrepWindow, setShowPrepWindow] = useState(true);
   const prepMs = turn?.prepDurationMs || 60000;
   const cueItems = getCueCardItems(turn?.cueCard);
@@ -79,11 +82,15 @@ export function Part2PrepView({
       <div className="warmup-stage prep-video-stage">
         <section className="warmup-video-pane">
           <video ref={localVideoRef} autoPlay playsInline muted />
+          {state.cameraOff && <CameraOffOverlay label="Camera của bạn đang tắt" />}
           <div className="video-label">Bạn</div>
         </section>
 
         <section className="warmup-video-pane">
           <video ref={remoteVideoRef} autoPlay playsInline />
+          {state.partnerCameraOff && (
+            <CameraOffOverlay label={`${partnerName || 'Đối tác'} đã tắt camera`} />
+          )}
           <div className="video-label">{partnerName || 'Đối tác'}</div>
         </section>
 

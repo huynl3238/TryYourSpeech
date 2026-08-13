@@ -47,6 +47,12 @@ const initialState = {
   outgoingInvite: null,
   inviteError: null,
 
+  // Camera đang tắt hay không, của mình và của đối tác. Phải nằm ở state chứ không
+  // phải trong `refs`: các khung video cần vẽ lại lớp phủ khi giá trị này đổi.
+  // Trạng thái của đối tác biết được qua tín hiệu `camera_state` họ gửi sang.
+  cameraOff: false,
+  partnerCameraOff: false,
+
   // True while the partner's socket is gone but their room is still being held
   // open for them. Not an error: the media link is peer-to-peer and usually
   // survives the blip, so the UI says "reconnecting" rather than ending anything.
@@ -102,6 +108,11 @@ function sessionReducer(state, action) {
         practiceStartServerTimestamp: null,
         practiceStartLocalTime: null,
         currentTurnIndex: 0,
+        // Ghép cặp mới thì trạng thái camera của phiên trước không còn đúng: người
+        // mới chưa gửi `camera_state` nào, mà lớp phủ cũ vẫn còn thì họ trông như
+        // đang tắt camera trong khi thực ra hình đang phát bình thường.
+        cameraOff: false,
+        partnerCameraOff: false,
         localAudioByTurnId: {},
         remoteAudioByTurnId: {},
         peerNotes: [],
@@ -181,6 +192,12 @@ function sessionReducer(state, action) {
         outgoingInvite: null,
         inviteError: null,
       };
+
+    case 'SET_CAMERA_OFF':
+      return { ...state, cameraOff: action.payload };
+
+    case 'SET_PARTNER_CAMERA_OFF':
+      return { ...state, partnerCameraOff: action.payload };
 
     case 'SET_PARTNER_RECONNECTING':
       return { ...state, partnerReconnecting: action.payload };

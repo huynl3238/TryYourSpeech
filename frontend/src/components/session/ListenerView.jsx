@@ -3,6 +3,7 @@ import { Timer } from '../ui/Timer';
 import { useSession } from '../../context/SessionContext';
 import { QuestionSupportPanel } from './QuestionSupportPanel';
 import { SessionCallControls } from './SessionCallControls';
+import { CameraOffOverlay } from './CameraOffOverlay';
 
 const MARKER_GROUPS = [
   {
@@ -177,6 +178,9 @@ export function ListenerView({
             playsInline
             style={{ width: '100%', height: '100%', objectFit: 'cover' }}
           />
+          {state.partnerCameraOff && (
+            <CameraOffOverlay label={`${state.partnerName || 'Đối tác'} đã tắt camera`} />
+          )}
 
           <div className="video-label">
             <span className="material-symbols-rounded" style={{ fontSize: 12, marginRight: 4 }}>person</span>
@@ -185,6 +189,7 @@ export function ListenerView({
 
           <div className="video-self-preview">
             <video ref={localVideoRef} autoPlay playsInline muted />
+            {state.cameraOff && <CameraOffOverlay compact />}
             <div className="video-label" style={{ fontSize: 10 }}>Bạn</div>
           </div>
         </div>

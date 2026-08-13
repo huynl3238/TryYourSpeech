@@ -1843,6 +1843,42 @@ input[type="range"]::-webkit-slider-thumb:hover {
   transform: scaleX(-1);
 }
 
+/* Che khung hình đóng băng khi camera tắt. `z-index` để dưới `.video-label` (3) nên
+   tên người vẫn đọc được, và dưới `.video-self-preview` (5) nên khung nhỏ tự xem
+   không bị lớp phủ của khung lớn trùm mất. */
+.camera-off-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px;
+  background: #202124;
+  color: rgba(255, 255, 255, 0.72);
+  text-align: center;
+}
+
+.camera-off-overlay .material-symbols-rounded {
+  font-size: 40px;
+}
+
+.camera-off-overlay p {
+  margin: 0;
+  font-size: 13px;
+}
+
+/* Khung tự xem chỉ 160x112 nên chữ không vừa, để lại đúng cái icon. */
+.camera-off-overlay.compact {
+  gap: 0;
+}
+
+.camera-off-overlay.compact .material-symbols-rounded {
+  font-size: 22px;
+}
+
 .video-label {
   position: absolute;
   bottom: 10px;
