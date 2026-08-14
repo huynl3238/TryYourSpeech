@@ -29,7 +29,8 @@ npm start                     # node server.js
 npm test                      # node --test (runs backend/test/*.test.js)
 node --test test/socket.test.js   # run a single test file
 npm run db:migrate            # apply src/db/schema.sql
-npm run db:seed               # load src/db/seed.sql (topics/questions)
+npm run db:seed               # questions.sql (bộ đề) + seed.sql (dữ liệu minh hoạ) — chỉ dùng khi dev
+npm run db:seed:questions     # chỉ questions.sql — lệnh dùng trên server thật
 npm run db:reset              # drop + recreate + seed
 ```
 
