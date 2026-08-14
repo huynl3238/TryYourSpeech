@@ -41,8 +41,13 @@ export function useSocket() {
       console.log('[Socket] Connected:', socket.id);
     }
 
+    // Socket của CHÍNH MÌNH đóng. Lúc đó không còn đường nào nhận tin "đối tác đã
+    // nối lại" hay "đối tác đi hẳn" nữa, nên nếu để nguyên thì vòng xoay chờ đứng
+    // lại vĩnh viễn — nó gắn ở khung ngoài cùng của app nên còn đi theo sang cả
+    // trang chủ. Ngừng nghe được thì phải thôi nói là đang chờ.
     function handleDisconnect() {
       console.log('[Socket] Disconnected');
+      dispatch({ type: 'SET_PARTNER_RECONNECTING', payload: false });
     }
 
     function handleWaiting() {
@@ -137,6 +142,14 @@ export function useSocket() {
       dispatch({ type: 'SET_PARTNER_RECONNECTING', payload: false });
     }
 
+    // Đối tác đi hẳn, nhưng việc của mình không hỏng theo: phần nói đã xong, còn
+    // lại là ghi chú và chấm điểm — làm một mình vẫn xong. Nên chỉ báo một dòng
+    // rồi thôi, không dựng màn hình lỗi như `partner_disconnected`; dựng lên là
+    // thổi bay phần ghi chú người dùng đang viết dở.
+    function handlePartnerLeft() {
+      dispatch({ type: 'SET_PARTNER_LEFT_NOTICE', payload: true });
+    }
+
     // This client is the one that came back, and the server has just put it into
     // the room it was already in. Clearing the error matters: the socket-level
     // 'disconnect' handler may have flagged one on the way down.
@@ -193,6 +206,7 @@ export function useSocket() {
     socket.on('webrtc_failed', handleWebrtcFailed);
     socket.on('partner_reconnecting', handlePartnerReconnecting);
     socket.on('partner_reconnected', handlePartnerReconnected);
+    socket.on('partner_left', handlePartnerLeft);
     socket.on('session_resumed', handleSessionResumed);
     socket.on('partner_list', handlePartnerList);
     socket.on('match_mode', handleMatchMode);
@@ -218,6 +232,7 @@ export function useSocket() {
       socket.off('webrtc_failed', handleWebrtcFailed);
       socket.off('partner_reconnecting', handlePartnerReconnecting);
       socket.off('partner_reconnected', handlePartnerReconnected);
+      socket.off('partner_left', handlePartnerLeft);
       socket.off('session_resumed', handleSessionResumed);
       socket.off('partner_list', handlePartnerList);
       socket.off('match_mode', handleMatchMode);
@@ -313,6 +328,15 @@ export function useSocket() {
     socket.emit('practice_ready');
   }, []);
 
+  // Phải gọi TRƯỚC `disconnectSocket`: đóng socket rồi thì không gửi được nữa, mà
+  // server không có cách nào khác để phân biệt người bấm nút thoát với người rớt
+  // mạng ba giây. Không nói thì người còn lại bị bảo là mình "đang kết nối lại".
+  const leaveSession = useCallback(() => {
+    if (socket.connected) {
+      socket.emit('leave_session');
+    }
+  }, []);
+
   const disconnectSocket = useCallback(() => {
     if (socket.connected) {
       socket.disconnect();
@@ -338,6 +362,7 @@ export function useSocket() {
     notifyPeerConnected,
     notifyPracticeComplete,
     notifyPracticeReady,
+    leaveSession,
     disconnectSocket,
     onSignal,
     onBeginSignaling,

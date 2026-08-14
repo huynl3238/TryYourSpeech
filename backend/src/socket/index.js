@@ -1082,6 +1082,40 @@ function handlePracticeReady(io, socket) {
   }
 }
 
+// Bấm nút thoát và rớt mạng đến server là giống hệt nhau: socket đứt, không kèm
+// lý do. Nên bên đi phải nói trước khi đóng. Thiếu tin này thì người còn lại nhận
+// `partner_reconnecting` — một câu sai ngay từ lúc hiện ra — rồi ngồi chờ hết 15
+// giây một người đã đi hẳn. Đóng tab đột ngột thì vẫn rơi về cơ chế chờ đó, không
+// tránh được: trình duyệt đóng rồi thì không gửi được gì nữa.
+function handleLeaveSession(io, socket) {
+  const roomId = userRoom.get(socket.id);
+  if (!roomId) return;
+
+  const room = rooms.get(roomId);
+  if (!room) return;
+
+  // Phần nói đã xong thì phòng chỉ còn cái vỏ. `closeRoom` ở đây sẽ đánh dấu phiên
+  // là bỏ dở, mà phiên đã luyện xong bị đánh dấu như vậy thì chặn luôn việc hoàn
+  // tất review và việc chấm — đúng cái hỏng mà `phase = 'done'` sinh ra để chặn.
+  if (room.phase === 'done') {
+    const partnerSocketId = getPartnerSocketId(roomId, socket.id);
+    if (partnerSocketId) io.to(partnerSocketId).emit('partner_left');
+    deleteRoom(roomId);
+    console.log(`[Room] ${roomId}: ${socket.data.user.id} rời sau khi đã luyện xong`);
+    return;
+  }
+
+  // Giữa buổi thì phiên đúng là bỏ dở, và `partner_disconnected` mô tả đúng việc
+  // vừa xảy ra với người kia. `deleteRoom` bên trong `closeRoom` cũng gỡ luôn
+  // socket này khỏi `userRoom`, nên lát nữa nó đóng thì `handleDisconnect` không
+  // còn thấy phòng nào để mở thời gian chờ — và lần nối lại sau ở trang chủ cũng
+  // không bị nhét về đúng cái phòng vừa bỏ.
+  closeRoom(io, roomId, 'partner_disconnected', { skipSocketId: socket.id }).catch((err) => {
+    console.error('leave_session failed:', err.message);
+  });
+  console.log(`[Room] ${roomId}: ${socket.data.user.id} chủ động rời phiên`);
+}
+
 function cleanupMentorWaiter(socketId) {
   for (const [sessionId, waiter] of mentorRoomWaiters) {
     let changed = false;
@@ -1206,7 +1240,15 @@ function beginReconnectGrace(io, roomId, room, socket) {
     // practice, the partner plays out the rest and presses complete. Abandoning
     // the session then would destroy a finished recording and block the AI from
     // ever running on it — the exact failure the room phases were added to stop.
+    //
+    // Nhưng vẫn phải nói cho người còn lại biết là hết chờ. Trước đây nhánh này
+    // xoá phòng trong im lặng, nên màn hình họ kẹt mãi ở "đối tác đang kết nối
+    // lại" — không sự kiện nào tắt nó được nữa vì phòng đã không còn. Dùng tin
+    // riêng chứ không phải `partner_disconnected`: tin kia dựng màn hình lỗi,
+    // trong khi phần ghi chú vẫn làm tiếp và vẫn chấm được một mình.
     if (room.phase === 'done') {
+      const partnerSocketId = getPartnerSocketId(roomId, socket.id);
+      if (partnerSocketId) io.to(partnerSocketId).emit('partner_left');
       deleteRoom(roomId);
       return;
     }
@@ -1291,7 +1333,13 @@ async function handleDisconnect(io, socket) {
   // not need this socket anymore. Tearing the room down quietly here is the
   // difference between a finished session and one marked abandoned, which also
   // blocks review completion and means the AI never runs on it.
+  //
+  // "Quietly" chỉ đúng với cái phòng, không đúng với người còn lại: họ vẫn nên
+  // biết bên kia đã đi, và đây là lần cuối còn nói được. Tin này chỉ để hiện một
+  // dòng báo — phiên vẫn nguyên, họ vẫn ghi chú và vẫn được chấm bình thường.
   if (room?.phase === 'done') {
+    const partnerSocketId = getPartnerSocketId(roomId, socket.id);
+    if (partnerSocketId) io.to(partnerSocketId).emit('partner_left');
     deleteRoom(roomId);
     return;
   }
@@ -1370,6 +1418,7 @@ export function setupSocket(io) {
         console.error('peer_connected failed:', err.message);
       });
     });
+    socket.on('leave_session', () => handleLeaveSession(io, socket));
     socket.on('practice_complete', () => handlePracticeComplete(socket));
     socket.on('practice_ready', () => handlePracticeReady(io, socket));
     socket.on('join_mentor_room', (data) => {

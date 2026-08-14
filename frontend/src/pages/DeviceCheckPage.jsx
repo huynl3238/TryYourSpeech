@@ -49,6 +49,7 @@ export default function DeviceCheckPage() {
     notifyDeviceReady,
     notifyDeviceFailed,
     notifyPeerConnected,
+    leaveSession,
     disconnectSocket,
   } = useSocket();
   const navigate = useNavigate();
@@ -218,7 +219,7 @@ export default function DeviceCheckPage() {
               <span className="material-symbols-rounded" style={{ fontSize: 16 }}>refresh</span>
               Thử lại
             </Button>
-            <Button variant="outline" onClick={() => { cleanupMediaSession(refs, [localVideoRef, remoteVideoRef]); disconnectSocket(); dispatch({ type: 'RESET' }); navigate('/'); }}>
+            <Button variant="outline" onClick={() => { cleanupMediaSession(refs, [localVideoRef, remoteVideoRef]); leaveSession(); disconnectSocket(); dispatch({ type: 'RESET' }); navigate('/'); }}>
               Về trang chủ
             </Button>
           </>
@@ -239,7 +240,7 @@ export default function DeviceCheckPage() {
               <span className="material-symbols-rounded" style={{ fontSize: 16 }}>refresh</span>
               Thử lại
             </Button>
-            <Button variant="outline" onClick={() => { cleanupMediaSession(refs, [localVideoRef, remoteVideoRef]); disconnectSocket(); dispatch({ type: 'RESET' }); navigate('/'); }}>
+            <Button variant="outline" onClick={() => { cleanupMediaSession(refs, [localVideoRef, remoteVideoRef]); leaveSession(); disconnectSocket(); dispatch({ type: 'RESET' }); navigate('/'); }}>
               Về trang chủ
             </Button>
           </>

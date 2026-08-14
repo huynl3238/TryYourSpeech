@@ -58,6 +58,12 @@ const initialState = {
   // survives the blip, so the UI says "reconnecting" rather than ending anything.
   partnerReconnecting: false,
 
+  // Đối tác đã rời hẳn, và chuyện đó KHÔNG cắt ngang việc của mình: hoặc phần nói
+  // đã xong (còn ghi chú và chấm điểm, làm một mình vẫn được), hoặc server đã hết
+  // chờ họ. Chỉ là một dòng báo rồi tự tắt, khác hẳn `error` — cái đó thay cả
+  // trang bằng màn hình lỗi, đặt ở đây thì người dùng mất luôn phần đang viết dở.
+  partnerLeftNotice: false,
+
   // Error
   error: null,       // { type, message }
 
@@ -201,6 +207,15 @@ function sessionReducer(state, action) {
 
     case 'SET_PARTNER_RECONNECTING':
       return { ...state, partnerReconnecting: action.payload };
+
+    // Hai trạng thái này loại trừ nhau: hết chờ rồi thì không còn "đang chờ" nữa.
+    // Đặt cùng một chỗ để không thể lỡ tay bật cái này mà quên tắt cái kia.
+    case 'SET_PARTNER_LEFT_NOTICE':
+      return {
+        ...state,
+        partnerLeftNotice: action.payload,
+        partnerReconnecting: action.payload ? false : state.partnerReconnecting,
+      };
 
     case 'SET_ERROR':
       return { ...state, error: action.payload };
