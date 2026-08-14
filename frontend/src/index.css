@@ -2570,9 +2570,18 @@ input[type="range"]::-webkit-slider-thumb:hover {
   font-size: 0.78rem;
 }
 
-/* Nút đánh dấu — đường vào cho màn cảm ứng, nơi không có phím TAB. */
+/* Nút đánh dấu — CHỈ dành cho màn cảm ứng, nơi không có phím TAB. Trên máy tính
+   ẩn hẳn: ở đó phím TAB nhanh hơn và giữ được tay trên bàn phím, mà người nghe
+   thì đang phải vừa nghe vừa đánh dấu trong thời gian thực.
+
+   Ẩn bằng CSS chứ không bằng JavaScript, vì điều kiện thiết bị được hỏi ngay lúc
+   trình duyệt dựng trang — không có khoảnh khắc nút hiện ra rồi biến mất, và nếu
+   người dùng xoay máy hay cắm chuột vào máy tính bảng thì nó tự đúng lại.
+
+   Điều kiện dưới đây phải khớp với `isTouchPrimaryDevice` trong utils/haptics.js:
+   cả hai cùng trả lời một câu hỏi — thiết bị này dùng ngón tay hay con trỏ. */
 .listener-mark-btn {
-  display: inline-flex;
+  display: none;
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
@@ -2613,6 +2622,7 @@ input[type="range"]::-webkit-slider-thumb:hover {
   }
 
   .listener-mark-btn {
+    display: inline-flex;
     width: 100%;
     height: 52px;
     justify-content: center;
