@@ -2570,6 +2570,64 @@ input[type="range"]::-webkit-slider-thumb:hover {
   font-size: 0.78rem;
 }
 
+/* Nút đánh dấu — đường vào cho màn cảm ứng, nơi không có phím TAB. */
+.listener-mark-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  height: 40px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 999px;
+  background: #D97757;
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.05s ease;
+}
+
+.listener-mark-btn:hover {
+  background: #C2643F;
+}
+
+/* Phản hồi tức thì khi chạm. Trên điện thoại không có trạng thái rê chuột, nên
+   nếu nút không nhúc nhích lúc bấm thì người dùng tưởng chưa ăn và bấm lại. */
+.listener-mark-btn:active {
+  transform: scale(0.96);
+}
+
+.listener-mark-btn .material-symbols-rounded {
+  font-size: 18px;
+}
+
+/* Trên màn hẹp nút chiếm trọn chiều ngang và cao hơn: người nghe đang nhìn vào
+   mặt người nói, họ bấm bằng ngón cái mà không nhìn xuống. Mốc 48px là kích
+   thước tối thiểu để chạm không trượt. Dòng gợi ý phím TAB thì ẩn đi — trên
+   điện thoại nó chỉ dẫn tới một phím không tồn tại. */
+@media (hover: none) and (pointer: coarse) {
+  .listener-footer-row {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+
+  .listener-mark-btn {
+    width: 100%;
+    height: 52px;
+    justify-content: center;
+    font-size: 1rem;
+  }
+
+  .listener-mark-btn .material-symbols-rounded {
+    font-size: 22px;
+  }
+
+  .listener-tab-hint kbd {
+    display: none;
+  }
+}
+
 .listener-tab-hint kbd,
 .marker-popup kbd {
   border: 1px solid #dadce0;

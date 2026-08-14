@@ -4,6 +4,7 @@ import { useSession } from '../../context/SessionContext';
 import { QuestionSupportPanel } from './QuestionSupportPanel';
 import { SessionCallControls } from './SessionCallControls';
 import { CameraOffOverlay } from './CameraOffOverlay';
+import { vibrateOnTouchDevice } from '../../utils/haptics';
 
 const MARKER_GROUPS = [
   {
@@ -113,12 +114,24 @@ export function ListenerView({
     setNoteText('');
   }, [pendingType, pendingTimestamp, noteText, turn, dispatch]);
 
+  // Phím TAB và nút bấm phải làm đúng một việc giống nhau. Tách thành hai đường
+  // riêng thì sớm muộn chúng lệch nhau — một bên ghi mốc thời gian, bên kia quên.
+  const openMarker = useCallback(() => {
+    if (markerState !== null) {
+      return;
+    }
+
+    setPendingTimestamp(elapsedRef.current);
+    setMarkerState('choosing');
+    // Chỉ rung trên thiết bị cảm ứng; trên máy tính hàm này tự không làm gì.
+    vibrateOnTouchDevice();
+  }, [markerState]);
+
   useEffect(() => {
     function handleKeyDown(e) {
       if (e.key === 'Tab' && markerState === null) {
         e.preventDefault();
-        setPendingTimestamp(elapsedRef.current);
-        setMarkerState('choosing');
+        openMarker();
         return;
       }
 
@@ -146,7 +159,7 @@ export function ListenerView({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [markerState, saveMarker]);
+  }, [markerState, saveMarker, openMarker]);
 
   const progressPct = Math.min((elapsed / totalMs) * 100, 100);
 
@@ -213,6 +226,20 @@ export function ListenerView({
 
         {markerState === null && (
           <div className="listener-footer-row">
+            {/* Đường vào duy nhất trước đây là phím TAB, nên trên điện thoại
+                người nghe không có cách nào đánh dấu — họ ngồi nghe hết lượt mà
+                không làm được việc của mình. Nút này là đường vào cho màn cảm
+                ứng, và trên máy tính nó còn cho người dùng biết tính năng này
+                tồn tại: dòng gợi ý chữ nhỏ bên cạnh rất dễ bị bỏ qua. */}
+            <button
+              type="button"
+              className="listener-mark-btn"
+              onClick={openMarker}
+              aria-label="Đánh dấu chỗ vừa nghe"
+            >
+              <span className="material-symbols-rounded">flag</span>
+              Đánh dấu
+            </button>
             <div className="listener-tab-hint">
               <kbd>TAB</kbd>
               <span>Đánh dấu nhanh · {markers.length} marker đã ghi · Mic của bạn tắt trong lượt nghe</span>
