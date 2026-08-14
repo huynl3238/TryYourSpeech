@@ -12,7 +12,8 @@ import { TurnTransition } from '../components/session/TurnTransition';
 import { SessionBriefing } from '../components/session/SessionBriefing';
 import { ErrorScreen } from '../components/ui/ErrorScreen';
 import { cleanupMediaSession } from '../utils/mediaCleanup';
-import { getSyncedTimeline, TURN_GAP_MS } from '../utils/sessionTimeline';
+import { getSyncedTimeline, getTurnBlockPosition } from '../utils/sessionTimeline';
+import { TurnRoleBar } from '../components/session/TurnRoleBar';
 
 function SessionLoadingScreen() {
   return (
@@ -32,7 +33,14 @@ function SessionLoadingScreen() {
 
 export default function SessionPage() {
   const { state, dispatch, refs } = useSession();
-  const { sendSignal, onSignal, notifyPracticeReady, notifyPracticeComplete, disconnectSocket } = useSocket();
+  const {
+    sendSignal,
+    onSignal,
+    notifyPracticeReady,
+    notifyPracticeComplete,
+    leaveSession,
+    disconnectSocket,
+  } = useSocket();
   const navigate = useNavigate();
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
@@ -77,6 +85,20 @@ export default function SessionPage() {
   const turnStartTime = syncedTimeline?.phase === 'speaking'
     ? syncedTimeline.stepStartedAtMs
     : null;
+
+  // Dựng một lần ở đây rồi truyền xuống, để màn chuyển lượt, màn người nói và
+  // màn người nghe không thể nói ba câu khác nhau về cùng một khoảnh khắc.
+  const partnerName = state.partnerName || 'Đối tác';
+  const blockPosition = currentTurn ? getTurnBlockPosition(turns, syncedTurnIndex) : null;
+  const turnRoleBar = currentTurn ? (
+    <TurnRoleBar
+      partNumber={currentTurn.partNumber}
+      blockPosition={blockPosition}
+      speakerName={iAmSpeaker ? 'Bạn' : partnerName}
+      listenerName={iAmSpeaker ? partnerName : 'Bạn'}
+      iAmSpeaker={iAmSpeaker}
+    />
+  ) : null;
 
   useEffect(() => {
     if (!state.practiceStarted || !Number.isFinite(state.practiceStartLocalTime)) {
@@ -309,6 +331,10 @@ export default function SessionPage() {
     stopLocalRecording();
     stopRemoteRecording();
     cleanupMediaSession(refs, [localVideoRef, remoteVideoRef]);
+    // Trước khi đóng socket, vì đóng rồi thì không nói được nữa. Server chỉ thấy
+    // socket đứt và mặc định là rớt mạng, nên nếu không nói thì đối tác bị bảo
+    // "đối tác đang kết nối lại" và ngồi chờ 15 giây một người đã bỏ đi.
+    leaveSession();
     disconnectSocket();
     dispatch({ type: 'RESET' });
     navigate('/');
@@ -407,23 +433,32 @@ export default function SessionPage() {
   }
 
   if (shouldShowTransition) {
-    // Đồng hồ đếm ngược lấy phần còn lại của khoảng nghỉ chứ không phải trọn
-    // TURN_GAP_MS, để màn này không kéo dài quá timeline nếu component mount
+    // Đồng hồ đếm ngược lấy phần còn lại của khoảng chờ chứ không phải trọn độ
+    // dài của nó, để màn này không kéo dài quá timeline nếu component mount
     // muộn (đổi tab, máy chậm). Timeline vẫn là nguồn quyết định: tick 250ms sẽ
     // tự chuyển sang lượt nói dù `onDone` có kịp chạy hay không.
     const remainingGapMs = Math.max(
       0,
-      syncedTimeline.stepStartedAtMs + TURN_GAP_MS - timelineNow
+      syncedTimeline.stepStartedAtMs + syncedTimeline.gapMs - timelineNow
     );
+
+    // Đổi người thì tiêu đề phải là lời báo đổi vai. Cùng người sang câu tiếp
+    // mà vẫn hô "đến lượt bạn nói" thì thành nhiễu: họ đang nói dở phần của
+    // mình, cái họ cần biết là câu hỏi tiếp theo.
+    const message = syncedTimeline.isSpeakerChange
+      ? (iAmSpeaker ? 'Đến lượt bạn nói' : `Đến lượt ${partnerName} nói`)
+      : (iAmSpeaker ? 'Câu tiếp theo của bạn' : `Câu tiếp theo của ${partnerName}`);
 
     return (
       <TurnTransition
-        message={iAmSpeaker ? 'Đến lượt bạn nói' : `Đến lượt ${state.partnerName || 'đối tác'} nói`}
+        message={message}
         subMessage={
           iAmSpeaker
-            ? `Part ${currentTurn.partNumber} · Lượt ${currentTurn.turnIndex}/${turns.length} · Mic của bạn đã được bật`
-            : `Part ${currentTurn.partNumber} · Lượt ${currentTurn.turnIndex}/${turns.length} · Bấm TAB để đánh dấu khi nghe`
+            ? 'Mic của bạn đã được bật'
+            : 'Bấm TAB để đánh dấu khi nghe'
         }
+        roleBar={turnRoleBar}
+        questionText={currentTurn.questionText}
         delayMs={remainingGapMs}
         onDone={handleTransitionEnd}
       />
@@ -438,6 +473,7 @@ export default function SessionPage() {
         turn={currentTurn}
         isSpeaker={iAmSpeaker}
         partnerName={state.partnerName}
+        roleBar={turnRoleBar}
         prepStartTime={syncedTimeline?.stepStartedAtMs}
         onPrepEnd={handlePrepEnd}
         onEndCall={handleEndCall}
@@ -451,6 +487,7 @@ export default function SessionPage() {
       remoteVideoRef={remoteVideoRef}
       turn={currentTurn}
       totalTurns={turns.length}
+      roleBar={turnRoleBar}
       turnStartTime={turnStartTime}
       onTurnEnd={handleTurnEnd}
       onEndCall={handleEndCall}
@@ -461,6 +498,7 @@ export default function SessionPage() {
       localVideoRef={localVideoRef}
       turn={currentTurn}
       totalTurns={turns.length}
+      roleBar={turnRoleBar}
       turnStartTime={turnStartTime}
       onTurnEnd={handleTurnEnd}
       onEndCall={handleEndCall}

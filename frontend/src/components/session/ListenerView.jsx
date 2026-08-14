@@ -57,6 +57,7 @@ export function ListenerView({
   localVideoRef,
   turn,
   totalTurns,
+  roleBar,
   turnStartTime,
   onTurnEnd,
   onEndCall,
@@ -157,9 +158,7 @@ export function ListenerView({
             <span className="material-symbols-rounded" style={{ fontSize: 14 }}>hearing</span>
             Bạn đang nghe
           </span>
-          <span style={{ color: '#5f6368', fontSize: 'var(--font-size-xs)' }}>
-            Part {turn?.partNumber} · Lượt {turn?.turnIndex}/{totalTurns}
-          </span>
+          {roleBar}
         </div>
 
         <div className="session-timer-block compact">

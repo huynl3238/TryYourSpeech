@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { SessionCallControls } from './SessionCallControls';
 import { CameraOffOverlay } from './CameraOffOverlay';
 import { useSession } from '../../context/SessionContext';
+import { getTurnGapMs } from '../../utils/sessionTimeline';
 
 const PART_TITLES = {
   1: 'Part 1 - Câu hỏi ngắn',
@@ -67,10 +68,16 @@ function buildGuidePages(turns) {
   }
 
   const partCards = buildPartCards(turns);
-  const totalMs = turns.reduce(
-    (sum, turn) => sum + (Number(turn.prepDurationMs) || 0) + (Number(turn.durationMs) || 0),
-    0
-  );
+  // Cộng cả khoảng chờ, không chỉ thời gian nói. Nó có mặt trước mỗi lượt không
+  // có thời gian chuẩn bị — đúng điều kiện mà `getSyncedTimeline` dùng — và
+  // cộng lại là vài phút, nên bỏ qua thì con số ở đây hụt hẳn so với buổi thật
+  // và người dùng canh giờ theo nó sẽ bị trễ.
+  const totalMs = turns.reduce((sum, turn, turnIndex) => {
+    const prepDurationMs = Number(turn.prepDurationMs) || 0;
+    const gapMs = prepDurationMs > 0 ? 0 : getTurnGapMs(turns, turnIndex);
+
+    return sum + gapMs + prepDurationMs + (Number(turn.durationMs) || 0);
+  }, 0);
   const partList = partCards.length === 1
     ? `riêng ${partCards[0].title.split(' - ')[0]}`
     : `${partCards.length} phần`;
@@ -84,7 +91,7 @@ function buildGuidePages(turns) {
         `Phiên này luyện ${partList} theo đúng thời lượng IELTS Speaking, tổng ${turns.length} lượt nói và khoảng ${Math.max(
           1,
           Math.round(totalMs / 60000)
-        )} phút. Hai bạn thay phiên trả lời cùng một câu hỏi, người còn lại lắng nghe và đánh dấu theo thời gian thực.`,
+        )} phút. Mỗi người trả lời hết một part rồi mới đổi lượt — giống một lượt thi liền mạch — còn người kia lắng nghe và đánh dấu lỗi theo thời gian thực. Người mở màn đổi qua lại giữa các part để không ai luôn phải nói trước.`,
       ],
       cards: [
         ...partCards,

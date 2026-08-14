@@ -218,11 +218,12 @@ test('database flow creates session, stores idempotent peer notes, and completes
       detail.turns.map((turn) => turn.prepDurationMs),
       [0, 0, 0, 0, 0, 0, 0, 0, 60000, 60000, 0, 0, 0, 0, 0, 0]
     );
-    // Hai người thay nhau nói trong cùng một câu hỏi, không phải một người nói
-    // hết rồi mới tới người kia.
+    // Mỗi người nói hết cả part rồi mới đổi lượt, và người mở màn đảo qua lại
+    // giữa các part: A mở Part 1, B mở Part 2, A mở Part 3. Trước đây hai người
+    // thay nhau theo từng câu ('ABABABAB') và A luôn là người nói trước.
     assert.deepEqual(
-      detail.turns.slice(0, 4).map((turn) => turn.speakerRole),
-      ['A', 'B', 'A', 'B']
+      detail.turns.map((turn) => turn.speakerRole),
+      ['A', 'A', 'A', 'A', 'B', 'B', 'B', 'B', 'B', 'A', 'A', 'A', 'A', 'B', 'B', 'B']
     );
 
     await markSessionActive(session.sessionId);

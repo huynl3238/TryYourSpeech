@@ -4,7 +4,7 @@ import { QuestionSupportPanel } from './QuestionSupportPanel';
 import { SessionCallControls } from './SessionCallControls';
 import { CameraOffOverlay } from './CameraOffOverlay';
 
-export function SpeakerView({ localVideoRef, remoteVideoRef, turn, totalTurns, turnStartTime, onTurnEnd, onEndCall }) {
+export function SpeakerView({ localVideoRef, remoteVideoRef, turn, totalTurns, roleBar, turnStartTime, onTurnEnd, onEndCall }) {
   const { state } = useSession();
   const totalMs = turn?.durationMs || 45000;
 
@@ -16,9 +16,7 @@ export function SpeakerView({ localVideoRef, remoteVideoRef, turn, totalTurns, t
             <span className="recording-dot" />
             Bạn đang nói
           </span>
-          <span style={{ color: '#5f6368', fontSize: 'var(--font-size-xs)' }}>
-            Part {turn?.partNumber} · Lượt {turn?.turnIndex}/{totalTurns}
-          </span>
+          {roleBar}
         </div>
 
         <div className="session-timer-block compact">

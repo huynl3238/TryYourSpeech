@@ -1,9 +1,67 @@
-// Khoảng nghỉ chèn giữa hai lượt liền nhau. Part 1 và Part 3 có
-// `prepDurationMs = 0` vì đúng chuẩn IELTS là hỏi rồi trả lời ngay, nên trước
-// đây đồng hồ hết ở tick nào là lượt kế tiếp bắt đầu ngay tick đó: người đang
-// nói bị cắt giữa câu, người kế tiếp không có tín hiệu nào báo đến lượt mình.
-// Part 2 không cần vì 60 giây chuẩn bị đã là khoảng đệm.
-export const TURN_GAP_MS = 4000;
+// Khoảng chờ chèn trước mỗi lượt của Part 1 và Part 3 (Part 2 không cần vì 60
+// giây đọc cue card đã là khoảng đệm). Trong đó câu hỏi được hiện sẵn, nên đây
+// chính là thời gian đọc đề — đúng như trong phòng thi giám khảo mất mấy giây
+// đọc câu hỏi lên, và phần đó không bị tính vào thời gian trả lời.
+//
+// Hai độ dài cho hai tình huống khác nhau, vì mỗi người nói hết cả part rồi
+// mới đổi lượt:
+//
+//   - Cùng người, sang câu tiếp: chỉ cần đọc đề. 5 giây.
+//   - Đổi người: còn phải báo đổi vai và chuyển mic, người kia phải kịp nhận ra
+//     tới lượt mình. 8 giây.
+//
+// Vẫn KHÔNG phải `prepDurationMs`: Part 1 và Part 3 giữ đúng 0 giây chuẩn bị
+// như IELTS thật. Hai thứ này thay thế nhau chứ không cộng vào nhau — lượt nào
+// có thời gian chuẩn bị thì đi thẳng vào màn chuẩn bị, không có khoảng chờ.
+export const SPEAKER_CHANGE_GAP_MS = 8000;
+export const NEXT_QUESTION_GAP_MS = 5000;
+
+// Lượt đầu tiên của cả buổi tính là đổi người: chưa ai nói gì, và người mở màn
+// cũng cần được báo là đến lượt mình y như mọi lần đổi vai khác.
+export function getTurnGapMs(turns, turnIndex) {
+  const previousTurn = turns[turnIndex - 1];
+
+  if (!previousTurn) {
+    return SPEAKER_CHANGE_GAP_MS;
+  }
+
+  return previousTurn.speakerRole === turns[turnIndex].speakerRole
+    ? NEXT_QUESTION_GAP_MS
+    : SPEAKER_CHANGE_GAP_MS;
+}
+
+// Vị trí của một lượt trong khối liền mạch của cùng một người, trong cùng một
+// part — để màn hình nói được "Câu 2/4" thay vì "Lượt 6/16", con số mà từ khi
+// chia khối thì không còn nghĩa gì với người đang nói.
+//
+// Phải chặn theo cả part chứ không chỉ theo người: người chốt một part cũng có
+// thể là người mở part kế tiếp (Part 1 kết bằng B thì Part 2 mở bằng B), nên
+// nếu chỉ so người thì hai khối liền nhau bị dính thành một.
+export function getTurnBlockPosition(turns, turnIndex) {
+  const turn = turns?.[turnIndex];
+
+  if (!turn) {
+    return null;
+  }
+
+  const sameBlock = (other) =>
+    other && other.speakerRole === turn.speakerRole && other.partNumber === turn.partNumber;
+
+  let firstIndex = turnIndex;
+  while (sameBlock(turns[firstIndex - 1])) {
+    firstIndex -= 1;
+  }
+
+  let lastIndex = turnIndex;
+  while (sameBlock(turns[lastIndex + 1])) {
+    lastIndex += 1;
+  }
+
+  return {
+    position: turnIndex - firstIndex + 1,
+    total: lastIndex - firstIndex + 1,
+  };
+}
 
 // Toàn bộ tiến trình một phiên luyện được suy ra từ đúng hai thứ: mảng `turns`
 // lấy từ backend, và mốc `practice_start`. Hai máy chạy hàm này độc lập nên
@@ -27,12 +85,19 @@ export function getSyncedTimeline(turns, practiceStartLocalTime, now) {
     const prepDurationMs = Number(turn.prepDurationMs) || 0;
     const speakDurationMs = Number(turn.durationMs) || 0;
 
-    if (turnIndex > 0 && prepDurationMs === 0) {
-      const gapEndOffsetMs = stepStartOffsetMs + TURN_GAP_MS;
+    // Kể cả lượt đầu tiên. Trước đây lượt 0 bị loại trừ, nên người mở màn cả
+    // buổi bị đẩy thẳng vào câu hỏi mà không có lấy một giây để đọc — đúng cái
+    // bất lợi mà khoảng chờ sinh ra để xoá, mà lại rơi vào người bất lợi nhất:
+    // người chưa quen nhịp buổi luyện.
+    if (prepDurationMs === 0) {
+      const gapMs = getTurnGapMs(turns, turnIndex);
+      const gapEndOffsetMs = stepStartOffsetMs + gapMs;
       if (elapsedMs < gapEndOffsetMs) {
         return {
           phase: 'transition',
           turnIndex,
+          gapMs,
+          isSpeakerChange: gapMs === SPEAKER_CHANGE_GAP_MS,
           stepStartedAtMs: practiceStartLocalTime + stepStartOffsetMs,
           isComplete: false,
         };

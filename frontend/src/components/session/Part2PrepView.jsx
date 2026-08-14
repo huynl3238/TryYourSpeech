@@ -47,6 +47,7 @@ export function Part2PrepView({
   turn,
   isSpeaker,
   partnerName,
+  roleBar,
   prepStartTime,
   onPrepEnd,
   onEndCall,
@@ -66,8 +67,12 @@ export function Part2PrepView({
             <span className="material-symbols-rounded" style={{ fontSize: 14 }}>edit_note</span>
             {getPrepLabel(turn?.partNumber)}
           </span>
+          {/* Màn này cũng là chỗ đổi vai — Part 2 có thời gian chuẩn bị nên
+              không có màn chuyển lượt chen vào trước. Nếu ở đây không nói rõ ai
+              nói ai nhận xét thì lần đổi vai đó trôi qua mà không ai được báo. */}
+          {roleBar}
           <span style={{ color: '#5f6368', fontSize: 'var(--font-size-xs)' }}>
-            {isSpeaker ? 'Bạn sắp trả lời' : `${partnerName || 'Đối tác'} sắp trả lời`} · Chưa ghi âm
+            Chưa ghi âm
           </span>
         </div>
 

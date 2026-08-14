@@ -183,46 +183,77 @@ function getTurnDurations(partNumber) {
   };
 }
 
-async function createTurns(client, sessionId, userAId, userBId, questions) {
-  let turnIndex = 1;
+// Gom câu hỏi theo part, giữ nguyên thứ tự đã chọn (Part 1 -> 2 -> 3).
+function groupQuestionsByPart(questions) {
+  const groups = [];
 
   for (const question of questions) {
-    const { durationMs, prepDurationMs } = getTurnDurations(question.part_number);
-    const speakers = [
-      { id: userAId, role: 'A' },
-      { id: userBId, role: 'B' },
-    ];
+    const currentGroup = groups[groups.length - 1];
+
+    if (currentGroup && currentGroup.partNumber === question.part_number) {
+      currentGroup.questions.push(question);
+    } else {
+      groups.push({ partNumber: question.part_number, questions: [question] });
+    }
+  }
+
+  return groups;
+}
+
+// Một người nói hết cả part rồi mới đổi lượt, thay vì đổi sau từng câu.
+//
+// Đổi mỗi câu thì Part 1 mất hẳn cái mạch hội thoại của nó: trả lời xong một
+// câu là ngồi im 45 giây rồi mới được nói tiếp — không giống kỳ thi nào. Nó
+// cũng hành người đánh dấu lỗi, vì họ phải đổi vai cứ 45 giây một lần, trong
+// khi việc đó cần tập trung liên tục.
+//
+// Người mở màn luân phiên theo từng part. Trước đây A luôn nói trước ở cả 8
+// câu, nghĩa là B luôn được nghe đáp án của A rồi mới tới lượt mình — một lợi
+// thế có thật, và chia khối làm nó to hơn hẳn vì B nghe trọn cả part trước khi
+// bắt đầu. Đảo người mở màn mỗi part thì lợi thế đó chia đều cho cả hai.
+async function createTurns(client, sessionId, userAId, userBId, questions) {
+  const userA = { id: userAId, role: 'A' };
+  const userB = { id: userBId, role: 'B' };
+  const partGroups = groupQuestionsByPart(questions);
+  let turnIndex = 1;
+
+  for (const [groupIndex, group] of partGroups.entries()) {
+    const speakers = groupIndex % 2 === 0 ? [userA, userB] : [userB, userA];
 
     for (const speaker of speakers) {
-      await client.query(
-        `
-          INSERT INTO turns (
-            id,
-            session_id,
-            speaker_id,
-            speaker_role,
-            question_id,
-            part_number,
-            turn_index,
-            duration_ms,
-            prep_duration_ms
-          )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        `,
-        [
-          randomUUID(),
-          sessionId,
-          speaker.id,
-          speaker.role,
-          question.id,
-          question.part_number,
-          turnIndex,
-          durationMs,
-          prepDurationMs,
-        ]
-      );
+      for (const question of group.questions) {
+        const { durationMs, prepDurationMs } = getTurnDurations(question.part_number);
 
-      turnIndex += 1;
+        await client.query(
+          `
+            INSERT INTO turns (
+              id,
+              session_id,
+              speaker_id,
+              speaker_role,
+              question_id,
+              part_number,
+              turn_index,
+              duration_ms,
+              prep_duration_ms
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          `,
+          [
+            randomUUID(),
+            sessionId,
+            speaker.id,
+            speaker.role,
+            question.id,
+            question.part_number,
+            turnIndex,
+            durationMs,
+            prepDurationMs,
+          ]
+        );
+
+        turnIndex += 1;
+      }
     }
   }
 }
