@@ -133,6 +133,36 @@ test('khối không được dính sang part kế tiếp dù cùng một ngườ
   assert.deepEqual(getTurnBlockPosition(TURNS, 4), { position: 1, total: 1 }, 'Part 2 là khối riêng');
 });
 
+test('giữa hai lượt nói luôn có một pha không-nói để máy ghi âm kịp đóng file', () => {
+  // Đây là điều kiện sống còn của việc ghi âm, và nó không hiển nhiên nữa kể từ
+  // khi một người nói liền 4 câu: mỗi lượt là một file riêng, và trình duyệt chỉ
+  // đóng file cũ rồi mở file mới khi thoát khỏi pha 'speaking'. Nếu có hai lượt
+  // nói dính liền nhau không qua pha nào khác, máy ghi âm sẽ không được lệnh
+  // dừng — lượt đó mất bản ghi, và chỉ một lượt mất là CẢ BÀI không chấm được.
+  //
+  // Duyệt từng mili giây thì quá chậm, nên tìm mốc bắt đầu nói của từng lượt rồi
+  // kiểm tra thời điểm ngay trước đó.
+  let previousPhase = null;
+
+  for (let elapsedMs = 0; elapsedMs <= 642000 + 60000; elapsedMs += 1000) {
+    const step = at(elapsedMs);
+    const phase = step.isComplete ? 'complete' : `${step.phase}:${step.turnIndex}`;
+
+    if (previousPhase && phase !== previousPhase) {
+      const cameFromSpeaking = previousPhase.startsWith('speaking');
+      const goesToSpeaking = phase.startsWith('speaking');
+
+      assert.equal(
+        cameFromSpeaking && goesToSpeaking,
+        false,
+        `hai lượt nói dính liền nhau tại ${elapsedMs}ms (${previousPhase} -> ${phase})`
+      );
+    }
+
+    previousPhase = phase;
+  }
+});
+
 test('chưa có mốc bắt đầu thì không đoán bừa', () => {
   // Người vào phiên trước khi `practice_start` về thì chưa có gì để tính. Đoán
   // bừa một mốc ở đây là cho một máy chạy trước máy kia.
