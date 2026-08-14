@@ -1,5 +1,9 @@
 import { randomUUID } from 'crypto';
+import { mkdir, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { assessAzurePronunciation } from '../services/azurePronunciationAssessment.js';
+import { convertAudioToWav } from '../services/audioConversion.js';
 import { generateHolisticFeedback } from '../services/ieltsHolisticFeedback.js';
 import { transcribeAudioFile } from '../services/openaiClient.js';
 import { recordAiUsage } from './aiUsageModel.js';
@@ -14,6 +18,8 @@ export { getAiConfigStatus };
 
 const TURNS_INCOMPLETE_ERROR =
   'Một số lượt nói chưa xử lý được nên chưa thể chấm tổng thể cả bài.';
+const uploadsDirectory = fileURLToPath(new URL('../../uploads', import.meta.url));
+const tempDirectory = join(uploadsDirectory, 'tmp');
 
 function getMissingConfigError(missingConfigNames) {
   return `AI services are not configured. Missing: ${missingConfigNames.join(', ')}`;
@@ -165,6 +171,10 @@ async function markTurnResultFailed(client, turnId, errorMessage) {
 // Fluency/Lexical/Grammar and the pronunciation band are no longer per-turn — they are
 // graded once for the whole test and stored in session_ai_results.
 async function markTurnTranscribed(client, turnId, transcript, pronunciation) {
+  const pronunciationFeedback = pronunciation?.unavailableReason
+    ? { pronunciationStatus: pronunciation.unavailableReason }
+    : null;
+
   await client.query(
     `
       UPDATE ai_results
@@ -175,13 +185,18 @@ async function markTurnTranscribed(client, turnId, transcript, pronunciation) {
           grammar_score = NULL,
           pronunciation_score = NULL,
           pronunciation_detail = $3,
-          ai_feedback = NULL,
+          ai_feedback = $4,
           error_message = NULL,
           updated_at = NOW()
       WHERE turn_id = $1
         AND status = 'processing'
     `,
-    [turnId, transcript, JSON.stringify(pronunciation?.detail || [])]
+    [
+      turnId,
+      transcript,
+      JSON.stringify(pronunciation?.detail || []),
+      pronunciationFeedback ? JSON.stringify(pronunciationFeedback) : null,
+    ]
   );
 }
 
@@ -247,8 +262,7 @@ async function upsertSessionResultFailed(client, sessionId, userId, errorMessage
 // Both audio calls are billed by recording length, so the turn's own duration is
 // the billed quantity — no estimate involved. Usage is recorded only after the
 // call returns: a request that errors out is not charged.
-async function transcribeTurnAudio(turn, sessionId) {
-  const filePath = resolveUploadAudioPath(turn.audio_url);
+async function transcribeTurnAudio(turn, sessionId, filePath) {
   const runtimeConfig = getAiRuntimeConfig();
 
   const transcript = await transcribeAudioFile({
@@ -271,22 +285,70 @@ async function transcribeTurnAudio(turn, sessionId) {
 
 // Azure runs unscripted (no reference text): the candidate's speech is spontaneous,
 // so pronunciation is assessed against Azure's acoustic model, not a transcript.
-async function assessPronunciation(turn, sessionId) {
-  const pronunciation = await assessAzurePronunciation({
-    audioUrl: turn.audio_url,
-    durationMs: turn.duration_ms,
-  });
+function createUnavailablePronunciation(unavailableReason) {
+  return {
+    pronunciationScore: null,
+    accuracyScore: null,
+    fluencyScore: null,
+    prosodyScore: null,
+    detail: [],
+    raw: [],
+    recognizedText: '',
+    unavailableReason,
+  };
+}
 
-  await recordAiUsage({
-    sessionId,
+export async function runOptionalPronunciationAssessment({ enabled, turnId, assess }) {
+  if (!enabled) {
+    return createUnavailablePronunciation('not_configured');
+  }
+
+  try {
+    return await assess();
+  } catch (err) {
+    console.warn(`Azure pronunciation failed for turn ${turnId}:`, err.message);
+    return createUnavailablePronunciation('provider_error');
+  }
+}
+
+async function assessPronunciation(turn, sessionId, audioPath) {
+  const runtimeConfig = getAiRuntimeConfig();
+
+  return runOptionalPronunciationAssessment({
+    enabled: runtimeConfig.azurePronunciationEnabled,
     turnId: turn.turn_id,
-    provider: 'azure',
-    operation: 'pronunciation',
-    model: getAiRuntimeConfig().azureSpeechLanguage,
-    audioSeconds: turn.duration_ms / 1000,
-  });
+    assess: async () => {
+      const pronunciation = await assessAzurePronunciation({
+        audioPath,
+        durationMs: turn.duration_ms,
+      });
 
-  return pronunciation;
+      await recordAiUsage({
+        sessionId,
+        turnId: turn.turn_id,
+        provider: 'azure',
+        operation: 'pronunciation',
+        model: runtimeConfig.azureSpeechLanguage,
+        audioSeconds: turn.duration_ms / 1000,
+      });
+
+      return pronunciation;
+    },
+  });
+}
+
+async function createTurnWav(turn) {
+  const sourcePath = resolveUploadAudioPath(turn.audio_url);
+  await mkdir(tempDirectory, { recursive: true });
+  const wavPath = join(tempDirectory, `ai-${turn.turn_id}-${randomUUID()}.wav`);
+
+  try {
+    await convertAudioToWav(sourcePath, wavPath);
+    return wavPath;
+  } catch (err) {
+    await rm(wavPath, { force: true });
+    throw err;
+  }
 }
 
 // Combines the per-turn Azure scores into one acoustic profile for the whole test so
@@ -315,6 +377,9 @@ async function runHolisticScoring(processedTurns, sessionId) {
   const aggregatedPronunciation = aggregatePronunciation(
     processedTurns.map(({ pronunciation }) => pronunciation)
   );
+  const unavailablePronunciationTurns = processedTurns.filter(
+    ({ pronunciation }) => pronunciation?.unavailableReason
+  ).length;
 
   const feedback = await generateHolisticFeedback({
     parts,
@@ -347,6 +412,11 @@ async function runHolisticScoring(processedTurns, sessionId) {
       // Bỏ bảng đó đi thì mọi con số đưa cho người dùng đều là số do nhà cung cấp
       // đo hoặc do chính rubric IELTS quy định.
       pronunciation: {
+        status: unavailablePronunciationTurns === 0
+          ? 'completed'
+          : unavailablePronunciationTurns === processedTurns.length
+            ? 'unavailable'
+            : 'partial',
         accuracyScore: aggregatedPronunciation.accuracyScore,
         fluencyScore: aggregatedPronunciation.fluencyScore,
         prosodyScore: aggregatedPronunciation.prosodyScore,
@@ -363,15 +433,22 @@ async function runSpeakerPipeline(client, sessionId, speakerId, speakerTurns) {
   let anyTurnFailed = false;
 
   for (const turn of speakerTurns) {
+    let wavPath = null;
+
     try {
-      const transcript = await transcribeTurnAudio(turn, sessionId);
-      const pronunciation = await assessPronunciation(turn, sessionId);
+      wavPath = await createTurnWav(turn);
+      const transcript = await transcribeTurnAudio(turn, sessionId, wavPath);
+      const pronunciation = await assessPronunciation(turn, sessionId, wavPath);
       await markTurnTranscribed(client, turn.turn_id, transcript, pronunciation);
       processedTurns.push({ turn, transcript, pronunciation });
     } catch (err) {
       console.error(`AI pipeline failed for turn ${turn.turn_id}:`, err.message);
       await markTurnResultFailed(client, turn.turn_id, err.message || 'AI processing failed');
       anyTurnFailed = true;
+    } finally {
+      if (wavPath) {
+        await rm(wavPath, { force: true });
+      }
     }
   }
 

@@ -11,13 +11,18 @@ Set these values in `backend/.env`:
 
 ```env
 OPENAI_API_KEY=
-AZURE_SPEECH_KEY=
-AZURE_SPEECH_REGION=
 ```
 
 Do not commit real API keys.
 
 ## Optional environment variables
+
+Azure is optional. Configure both values to enable word/phoneme pronunciation detail; missing credentials or a runtime Azure error do not block transcription and holistic OpenAI scoring:
+
+```env
+AZURE_SPEECH_KEY=
+AZURE_SPEECH_REGION=
+```
 
 These values already have local defaults:
 
@@ -61,3 +66,6 @@ The response includes:
 ```
 
 The health endpoint reports config names only. It never returns secret values.
+When Azure is not configured, `services.ai.ok` can still be `true`, while
+`provider.pronunciation` is `"unavailable"` and the Azure names appear in
+`optionalMissing`.

@@ -1,3 +1,5 @@
+import { getAudioFileExtension } from '../utils/audioFormat';
+
 function getBaseUrl() {
   const configuredUrl = import.meta.env.VITE_BACKEND_URL;
   if (configuredUrl) return configuredUrl;
@@ -335,8 +337,13 @@ export async function closeMentorSession({ mentorSessionId, mentorId }) {
 }
 
 export async function uploadAudio({ audio, turnId, sessionId, speakerId, questionId, durationMs }) {
+  const extension = getAudioFileExtension(audio?.type);
+  if (!extension) {
+    throw new Error('Trình duyệt đã tạo định dạng audio không được hỗ trợ');
+  }
+
   const formData = new FormData();
-  formData.append('audio', audio, `${turnId}.webm`);
+  formData.append('audio', audio, `${turnId}.${extension}`);
   formData.append('turnId', turnId);
   formData.append('sessionId', sessionId);
   formData.append('speakerId', speakerId);

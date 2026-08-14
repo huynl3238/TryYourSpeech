@@ -5,7 +5,7 @@ if (ffmpegPath) {
   ffmpeg.setFfmpegPath(ffmpegPath);
 }
 
-export function convertWebmToWav(inputPath, outputPath) {
+export function convertAudioToWav(inputPath, outputPath) {
   return new Promise((resolve, reject) => {
     ffmpeg(inputPath)
       .noVideo()

@@ -1,5 +1,8 @@
 const REQUIRED_AI_CONFIG = [
   'OPENAI_API_KEY',
+];
+
+const OPTIONAL_AI_CONFIG = [
   'AZURE_SPEECH_KEY',
   'AZURE_SPEECH_REGION',
 ];
@@ -45,22 +48,27 @@ export function getAiRuntimeConfig() {
     openAiTranscriptionModel: process.env.OPENAI_TRANSCRIPTION_MODEL || DEFAULT_OPENAI_TRANSCRIPTION_MODEL,
     openAiFeedbackModel: process.env.OPENAI_FEEDBACK_MODEL || DEFAULT_OPENAI_FEEDBACK_MODEL,
     azureSpeechLanguage: process.env.AZURE_SPEECH_LANGUAGE || DEFAULT_AZURE_SPEECH_LANGUAGE,
+    azurePronunciationEnabled: OPTIONAL_AI_CONFIG.every(hasEnvValue),
     monthlyAssessmentLimit: getMonthlyAssessmentLimit(),
   };
 }
 
 export function getAiConfigStatus() {
-  const missing = getMissingAiConfigNames();
+  const requiredMissing = getMissingAiConfigNames();
+  const optionalMissing = OPTIONAL_AI_CONFIG.filter((name) => !hasEnvValue(name));
+  const allConfig = [...REQUIRED_AI_CONFIG, ...OPTIONAL_AI_CONFIG];
 
   return {
-    ok: missing.length === 0,
+    ok: requiredMissing.length === 0,
     provider: {
       transcription: 'openai',
-      pronunciation: 'azure',
+      pronunciation: optionalMissing.length === 0 ? 'azure' : 'unavailable',
       feedback: 'openai',
     },
-    configured: REQUIRED_AI_CONFIG.filter((name) => !missing.includes(name)),
-    missing,
+    configured: allConfig.filter((name) => !requiredMissing.includes(name) && !optionalMissing.includes(name)),
+    missing: [...requiredMissing, ...optionalMissing],
+    requiredMissing,
+    optionalMissing,
     runtime: getAiRuntimeConfig(),
   };
 }

@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getAiRuntimeConfig } from '../config/ai.js';
-import { convertWebmToWav } from './audioConversion.js';
+import { convertAudioToWav } from './audioConversion.js';
 
 const require = createRequire(import.meta.url);
 const speechSdk = require('microsoft-cognitiveservices-speech-sdk');
@@ -49,7 +49,7 @@ async function prepareWavAudio(audioPath) {
 
   await mkdir(tempDirectory, { recursive: true });
   const wavPath = join(tempDirectory, `azure-${randomUUID()}.wav`);
-  await convertWebmToWav(audioPath, wavPath);
+  await convertAudioToWav(audioPath, wavPath);
 
   return { wavPath, shouldDelete: true };
 }
@@ -254,9 +254,13 @@ export function shouldUseContinuousMode(durationMs) {
   return Number.isFinite(durationMs) && durationMs >= continuousModeMinimumDurationMs;
 }
 
-export async function assessAzurePronunciation({ audioUrl, durationMs, referenceText }) {
-  const audioPath = resolveAudioPath(audioUrl);
-  const { wavPath, shouldDelete } = await prepareWavAudio(audioPath);
+export async function assessAzurePronunciation({ audioUrl, audioPath, durationMs, referenceText }) {
+  const sourcePath = audioPath || resolveAudioPath(audioUrl);
+  if (!isSafeUploadPath(sourcePath)) {
+    throw new Error('audio path is invalid');
+  }
+
+  const { wavPath, shouldDelete } = await prepareWavAudio(sourcePath);
   const recognizer = await createRecognizer(wavPath);
   const pronunciationConfig = createPronunciationConfig(referenceText);
 

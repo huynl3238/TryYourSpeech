@@ -278,8 +278,8 @@ export default function SessionPage() {
   // giờ lẫn vào bản ghi của người nói — nên đây là sửa trải nghiệm.
   //
   // Chỉ áp dụng sau khi phiên đã bắt đầu, vì ở bước làm quen hai người cần nói
-  // chuyện với nhau. Nếu người nghe tự bấm bật mic giữa lượt thì tôn trọng lựa
-  // chọn đó đến hết lượt; chỉ đặt lại khi sang lượt mới.
+  // chuyện với nhau. Trong lúc luyện, nút điều khiển cũng khóa việc người nghe
+  // bật mic ngược lại để không tạo vòng lặp loa -> mic giữa hai thiết bị.
   useEffect(() => {
     if (!state.practiceStarted || !refs.current.localStream) {
       return;

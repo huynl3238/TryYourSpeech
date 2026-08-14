@@ -2,6 +2,7 @@ import { useCallback, useEffect } from 'react';
 import { useSession } from '../context/SessionContext';
 import { getConfig } from '../services/api';
 import { cleanupMediaSession, rememberMediaStream } from '../utils/mediaCleanup';
+import { getSpeechMediaConstraints, markAudioTracksAsSpeech } from '../utils/mediaConstraints';
 
 export function useWebRTC({ sendSignal, onSignal, onRemoteStream, onConnectionStateChange }) {
   const { dispatch, refs } = useSession();
@@ -204,7 +205,7 @@ export function useWebRTC({ sendSignal, onSignal, onRemoteStream, onConnectionSt
     return cleanup;
   }, [onSignal, applySignal, dispatch, refs]);
 
-  const getLocalStream = useCallback(async (constraints = { audio: true, video: true }) => {
+  const getLocalStream = useCallback(async (constraints = getSpeechMediaConstraints()) => {
     const existingStream = refs.current.localStream;
     if (existingStream?.getTracks().some((track) => track.readyState === 'live')) {
       return existingStream;
@@ -220,7 +221,7 @@ export function useWebRTC({ sendSignal, onSignal, onRemoteStream, onConnectionSt
       refs.current.localStreamPromise = navigator.mediaDevices
         .getUserMedia(constraints)
         .then((stream) => {
-          refs.current.localStream = rememberMediaStream(stream);
+          refs.current.localStream = rememberMediaStream(markAudioTracksAsSpeech(stream));
           return refs.current.localStream;
         })
         .finally(() => {

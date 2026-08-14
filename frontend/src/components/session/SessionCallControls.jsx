@@ -5,6 +5,7 @@ import { rememberMediaStream } from '../../utils/mediaCleanup';
 // nghe sự kiện trong effect của nó, gọi thêm một lần nữa ở đây là mọi sự kiện phòng
 // bị xử lý hai lần. Ở đây chỉ cần gửi đi một tin, không cần nghe gì.
 import { socket } from '../../services/socket';
+import { canEnableMicrophoneDuringSession } from '../../utils/microphonePolicy';
 
 function setTracksEnabled(stream, kind, enabled) {
   if (!stream) return;
@@ -47,6 +48,7 @@ export function SessionCallControls({ remoteVideoRef, onEndCall, compact = false
   // ở 4 màn khác nhau đều phải biết để vẽ lớp phủ, mà nút này thì bị dựng lại mỗi
   // lần đổi màn (nói -> nghe -> chuẩn bị). Giữ riêng là mỗi bên hiểu một kiểu.
   const cameraEnabled = !state.cameraOff;
+  const canEnableMic = canEnableMicrophoneDuringSession(state);
 
   useEffect(() => {
     setMicEnabled(getTrackEnabled(refs.current.localStream, 'audio'));
@@ -71,6 +73,10 @@ export function SessionCallControls({ remoteVideoRef, onEndCall, compact = false
 
   function toggleMic() {
     const nextEnabled = !micEnabled;
+    if (nextEnabled && !canEnableMic) {
+      return;
+    }
+
     setTracksEnabled(refs.current.localStream, 'audio', nextEnabled);
     setMicEnabled(nextEnabled);
   }
@@ -139,8 +145,9 @@ export function SessionCallControls({ remoteVideoRef, onEndCall, compact = false
         type="button"
         className={`call-control-btn ${micEnabled ? '' : 'muted'}`}
         onClick={toggleMic}
-        aria-label={micEnabled ? 'Tắt mic' : 'Bật mic'}
-        title={micEnabled ? 'Tắt mic' : 'Bật mic'}
+        disabled={!micEnabled && !canEnableMic}
+        aria-label={micEnabled ? 'Tắt mic' : canEnableMic ? 'Bật mic' : 'Mic bị khóa trong lượt nghe'}
+        title={micEnabled ? 'Tắt mic' : canEnableMic ? 'Bật mic' : 'Mic bị khóa trong lượt nghe'}
       >
         <span className="material-symbols-rounded">{micEnabled ? 'mic' : 'mic_off'}</span>
       </button>

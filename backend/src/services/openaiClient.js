@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { basename } from 'node:path';
+import { basename, extname } from 'node:path';
 
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 
@@ -29,12 +29,26 @@ async function readErrorDetail(response) {
   }
 }
 
+function getAudioContentType(filePath) {
+  const extension = extname(filePath).toLowerCase();
+  const contentTypes = {
+    '.wav': 'audio/wav',
+    '.webm': 'audio/webm',
+    '.mp4': 'audio/mp4',
+    '.m4a': 'audio/mp4',
+    '.ogg': 'audio/ogg',
+    '.mp3': 'audio/mpeg',
+  };
+
+  return contentTypes[extension] || 'application/octet-stream';
+}
+
 export async function transcribeAudioFile({ filePath, model, language }) {
   const buffer = await readFile(filePath);
   const form = new FormData();
-  form.append('file', new Blob([buffer]), basename(filePath));
+  form.append('file', new Blob([buffer], { type: getAudioContentType(filePath) }), basename(filePath));
   form.append('model', model);
-  form.append('response_format', 'text');
+  form.append('response_format', 'json');
   if (language) {
     form.append('language', language);
   }
@@ -49,7 +63,18 @@ export async function transcribeAudioFile({ filePath, model, language }) {
     throw new Error(`OpenAI transcription failed (${response.status}): ${await readErrorDetail(response)}`);
   }
 
-  return (await response.text()).trim();
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error('OpenAI transcription returned invalid JSON');
+  }
+
+  if (typeof data?.text !== 'string' || data.text.trim().length === 0) {
+    throw new Error('OpenAI transcription returned no transcript');
+  }
+
+  return data.text.trim();
 }
 
 // `onUsage` is optional and receives the token counts OpenAI billed for this

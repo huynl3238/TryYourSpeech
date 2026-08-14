@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   getAiConfigStatus,
   prepareAiPipeline,
+  runOptionalPronunciationAssessment,
 } from '../src/models/aiPipelineModel.js';
 
 const AI_ENV_NAMES = [
@@ -58,24 +59,52 @@ test('prepareAiPipeline marks every processing turn failed when AI config is mis
   assert.match(updates[0].params[1], /OPENAI_API_KEY/);
 });
 
-test('getAiConfigStatus reports missing names without exposing values', () => {
+test('getAiConfigStatus keeps OpenAI scoring available when optional Azure is missing', () => {
   clearAiEnv();
   process.env.OPENAI_API_KEY = 'secret-value';
 
   const status = getAiConfigStatus();
 
-  assert.equal(status.ok, false);
+  assert.equal(status.ok, true);
   assert.deepEqual(status.configured, ['OPENAI_API_KEY']);
   assert.deepEqual(status.missing, [
     'AZURE_SPEECH_KEY',
     'AZURE_SPEECH_REGION',
   ]);
   assert.equal(status.provider.transcription, 'openai');
-  assert.equal(status.provider.pronunciation, 'azure');
+  assert.equal(status.provider.pronunciation, 'unavailable');
   assert.equal(status.provider.feedback, 'openai');
   assert.equal(JSON.stringify(status).includes('secret-value'), false);
 
   clearAiEnv();
+});
+
+test('optional pronunciation failure does not fail the OpenAI scoring pipeline', async () => {
+  const originalWarn = console.warn;
+  console.warn = () => {};
+
+  try {
+    const missing = await runOptionalPronunciationAssessment({
+      enabled: false,
+      turnId: 'turn-1',
+      assess: async () => {
+        throw new Error('must not run');
+      },
+    });
+    assert.equal(missing.unavailableReason, 'not_configured');
+
+    const providerFailure = await runOptionalPronunciationAssessment({
+      enabled: true,
+      turnId: 'turn-2',
+      assess: async () => {
+        throw new Error('Azure is unavailable');
+      },
+    });
+    assert.equal(providerFailure.unavailableReason, 'provider_error');
+    assert.deepEqual(providerFailure.detail, []);
+  } finally {
+    console.warn = originalWarn;
+  }
 });
 
 test('prepareAiPipeline runs the turn pipeline and records failure when audio is unavailable', async () => {

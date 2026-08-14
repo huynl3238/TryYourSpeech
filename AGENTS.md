@@ -134,6 +134,7 @@ REDIS_URL=redis://localhost:6379
 OPENAI_API_KEY=
 OPENAI_TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe
 OPENAI_FEEDBACK_MODEL=gpt-4.1-mini
+# Azure là phần phát âm chi tiết tùy chọn; thiếu hoặc lỗi không được chặn chấm tổng thể bằng OpenAI.
 AZURE_SPEECH_KEY=
 AZURE_SPEECH_REGION=
 AZURE_SPEECH_LANGUAGE=en-US
@@ -482,11 +483,11 @@ Nếu user bấm hoàn tất review trước khi audio upload xong, session vẫ
 
 Khi đủ điều kiện, server xử lý mỗi turn độc lập:
 
-1. Nhận `audio/webm`.
+1. Nhận đúng container do browser tạo (`audio/webm`, `audio/mp4` hoặc `audio/ogg`) và kiểm tra magic bytes, không tin tên file.
 2. Convert sang WAV 16kHz mono bằng `fluent-ffmpeg`.
-3. Gửi WAV cho Whisper để lấy transcript.
-4. Gửi WAV + transcript cho Azure Pronunciation Assessment.
-5. Gửi transcript + Azure scores + câu hỏi + peer notes cho OpenAI text model.
+3. Gửi WAV cho OpenAI transcription để lấy transcript.
+4. Nếu Azure đã cấu hình, gửi cùng file WAV cho Azure Pronunciation Assessment. Lỗi Azure không được chặn transcript và phần chấm tổng thể bằng OpenAI.
+5. Gửi transcript + Azure scores (nếu có) + câu hỏi + peer notes cho OpenAI text model.
 6. Lưu kết quả.
 7. Trả kết quả cho frontend.
 
@@ -535,25 +536,25 @@ Ghi remote stream từ WebRTC track khi người đối phương đang nói:
 ```js
 peerConnection.ontrack = (event) => {
   const remoteStream = event.streams[0];
-  const remoteRecorder = new MediaRecorder(remoteStream, {
-    mimeType: 'audio/webm;codecs=opus',
-  });
+  const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus']
+    .find((type) => MediaRecorder.isTypeSupported(type));
+  const remoteRecorder = new MediaRecorder(remoteStream, mimeType ? { mimeType } : {});
 };
 ```
 
 Remote Blob không upload trong MVP. Chỉ dùng local để review audio của đối phương. Chỉ upload audio của chính user theo từng `turnId` để AI chấm.
 
-Khi browser không support `audio/webm;codecs=opus`, fallback sang MIME type đầu tiên được `MediaRecorder.isTypeSupported()` chấp nhận. Không hardcode một MIME type duy nhất mà không kiểm tra support.
+Khi browser không support `audio/webm;codecs=opus`, fallback sang MIME type đầu tiên được `MediaRecorder.isTypeSupported()` chấp nhận. iPhone thường tạo `audio/mp4`. Blob, filename upload và file lưu trên server phải giữ đúng container thật; không được gắn nhãn `.webm` cho dữ liệu MP4.
 
 ### Audio conversion server-side
 
-1. Client upload `audio/webm` của một turn lên `POST /api/audio/upload`.
+1. Client upload WebM, MP4 hoặc Ogg của một turn lên `POST /api/audio/upload`.
 2. Server nhận bằng `multer`.
-3. Server validate `turnId`, `sessionId`, `speakerId`, `questionId` và quyền upload.
+3. Server validate `turnId`, `sessionId`, `speakerId`, `questionId`, quyền upload và magic bytes của container.
 4. Lưu file tạm vào temp directory.
 5. Convert bằng `fluent-ffmpeg` sang WAV: 16kHz, mono, `pcm_s16le`.
 6. Gửi WAV cho AI services.
-7. Xóa file tạm `.webm` và `.wav` sau khi xử lý xong.
+7. Xóa file tạm đầu vào và `.wav` sau khi xử lý xong.
 
 ### Nghe lại audio — `GET /api/turns/:turnId/audio`
 
@@ -567,7 +568,7 @@ Cần đăng nhập (`requireAuth`). Được nghe khi:
 
 Không đủ quyền và không tồn tại đều trả `404` giống hệt nhau, để người dò `turnId` không biết được id nào là thật. Endpoint dùng `res.sendFile` vì nó tự trả lời Range request — đây là thứ cho phép tua tới đúng chỗ được đánh dấu lỗi thay vì phát lại từ đầu.
 
-Cột `turns.audio_url` vẫn giữ đường dẫn trên đĩa (`/uploads/audio/<turnId>.webm`) cho AI đọc trực tiếp; chỉ có API trả về cho client là đổi sang `/api/turns/<turnId>/audio`. Không được lẫn hai thứ này.
+Cột `turns.audio_url` vẫn giữ đường dẫn trên đĩa (`/uploads/audio/<turnId>.<ext>`) cho AI đọc trực tiếp; chỉ có API trả về cho client là đổi sang `/api/turns/<turnId>/audio`. Endpoint nghe lại phải trả `Content-Type` theo magic bytes để các file iPhone cũ bị gắn nhầm đuôi `.webm` vẫn phát được. Không được lẫn hai loại URL này.
 
 ---
 
@@ -644,7 +645,7 @@ Fields:
 
 | Field | Type | Bắt buộc | Mô tả |
 |---|---|---:|---|
-| `audio` | File | Có | File `audio/webm` của turn hiện tại |
+| `audio` | File | Có | File WebM, MP4 hoặc Ogg của turn hiện tại |
 | `turnId` | string | Có | ID của speaking turn |
 | `sessionId` | string | Có | ID phiên luyện tập |
 | `speakerId` | string | Có | ID user đang upload audio của chính mình |
@@ -656,7 +657,7 @@ Response thành công:
 ```json
 {
   "turnId": "uuid",
-  "audioUrl": "/uploads/audio/turn-id.webm",
+  "audioUrl": "/uploads/audio/turn-id.mp4",
   "status": "uploaded",
   "aiStatus": "pending"
 }
@@ -1065,9 +1066,16 @@ PostgreSQL không tự cập nhật `updated_at`. MVP không cần trigger riên
 
 ### MediaRecorder không hỗ trợ MIME type
 
-- Kiểm tra `MediaRecorder.isTypeSupported('audio/webm;codecs=opus')`.
-- Nếu không hỗ trợ, fallback sang MIME type browser hỗ trợ.
+- Kiểm tra lần lượt WebM/Opus, WebM, MP4 và Ogg/Opus bằng `MediaRecorder.isTypeSupported()`.
+- Nếu không hỗ trợ MIME được yêu cầu, để MediaRecorder chọn mặc định rồi lấy MIME thật từ `recorder.mimeType` hoặc chunk đầu tiên.
+- Không ép Blob hoặc filename thành WebM khi browser thực tế tạo MP4.
 - Nếu browser không hỗ trợ MediaRecorder, hiển thị lỗi rõ ràng.
+
+### Chống vọng và hú mic
+
+- Luồng gọi phải yêu cầu `echoCancellation`, `noiseSuppression` và `autoGainControl`; bật `voiceIsolation` khi browser công bố hỗ trợ.
+- Sau khi bài luyện bắt đầu, chỉ người có `speakerRole` của lượt hiện tại được phép bật mic. Người nghe không được bật mic ngược lại vì loa của họ đang phát remote audio; mở cả hai mic có thể tạo vòng lặp loa → mic và gây tiếng hú/rít.
+- Trước khi bài luyện bắt đầu, cả hai mic vẫn được mở để hai người làm quen và kiểm tra kết nối.
 
 ### Disconnect giữa session
 

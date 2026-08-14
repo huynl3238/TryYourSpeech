@@ -47,7 +47,7 @@ There is no linter configured. Backend uses Node's built-in test runner (no test
 ## Environment
 
 Backend reads `backend/.env` (`process.env.X`); frontend reads `import.meta.env.VITE_X`. See `AGENTS.md` "Environment Variables" for the full list. Key points:
-- AI runs only when `OPENAI_API_KEY`, `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION` are set; `GET /api/health` reports config status.
+- Core transcription and holistic scoring require `OPENAI_API_KEY`. Azure credentials are optional and add word/phoneme pronunciation detail; an Azure failure must not block the OpenAI result. `GET /api/health` reports both required and optional config status.
 - Sign-in needs `JWT_SECRET` + `GOOGLE_CLIENT_ID` (and `VITE_GOOGLE_CLIENT_ID` on the frontend). Email + password sign-in additionally needs `RESEND_API_KEY`, `EMAIL_FROM`, `APP_URL` — without them those endpoints return 503 and only Google sign-in works. `/api/health` reports `auth` and `email` the same way it reports `ai`.
 - Audio upload + AI assessment is gated behind `AI_AUDIO_UPLOAD_ENABLED=true` (returns 503 otherwise) — currently used to test the video-call flow without AI.
 - Frontend never reads ICE/TURN config directly; it fetches it from `GET /api/config`. `ICE_SERVERS` is a JSON array of TURN servers (empty locally; STUN is always added by the backend).
@@ -60,7 +60,7 @@ Backend reads `backend/.env` (`process.env.X`); frontend reads `import.meta.env.
 - `socket/index.js`: **the entire realtime layer.** In-memory `waitingQueue`, `rooms`, and `userRoom` maps drive band-difference matchmaking (`MAX_BAND_DIFFERENCE = 1.0`), WebRTC signal relaying, ready-state tracking, `session_start`/`practice_start` broadcasts, and disconnect/abandon handling. Read this file before touching anything socket-, matchmaking-, room-, or signaling-related. Do not use `socket.id` as a DB user id.
 - `routes/index.js`: all HTTP endpoints (config, health, sessions, results + retry, audio upload, peer-notes batch, review complete). Heavy input validation (UUID regex, payload shape) lives here; audio upload does a safe temp→final file swap with backup/restore on failure.
 - `models/`: DB access + orchestration layer over PostgreSQL. Session lifecycle, turns, audio-upload status, peer reviews, AI results, and the AI pipeline are each their own model module.
-- `services/`: external integrations — `azurePronunciationAssessment.js` (Azure SDK), `ieltsRubricScoring.js` (band scoring), `audioConversion.js` (ffmpeg webm→wav).
+- `services/`: external integrations — `azurePronunciationAssessment.js` (Azure SDK), `ieltsRubricScoring.js` (band scoring), `audioConversion.js` (ffmpeg WebM/MP4/Ogg→WAV).
 - `db/`: `schema.sql`, `seed.sql`, and the migrate/seed/reset scripts.
 
 **Azure Speech SDK is CommonJS.** In this ESM project it must be loaded via `createRequire(import.meta.url)` — never a direct `import` (see `services/azurePronunciationAssessment.js` and `config/ai.js`). Azure uses continuous pronunciation assessment for turns >30s.

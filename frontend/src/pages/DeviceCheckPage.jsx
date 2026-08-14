@@ -10,6 +10,7 @@ import { Badge } from '../components/ui/badge';
 import { Card, CardContent } from '../components/ui/card';
 import { cleanupMediaSession } from '../utils/mediaCleanup';
 import { canRecordUploadableAudio } from '../hooks/useMediaRecorder';
+import { getSpeechMediaConstraints } from '../utils/mediaConstraints';
 
 // Every way a match can die before the practice starts. They share one screen
 // but each carries its own title and wording from the server event, so the user
@@ -94,7 +95,7 @@ export default function DeviceCheckPage() {
   useEffect(() => {
     async function setup() {
       try {
-        const stream = await getLocalStream({ audio: true, video: true });
+        const stream = await getLocalStream(getSpeechMediaConstraints());
         await initPeerConnection();
         addLocalTracks(stream);
         if (localVideoRef.current) {
@@ -358,7 +359,7 @@ export default function DeviceCheckPage() {
                 <p className="text-sm font-medium text-amber-800">Trình duyệt này không lưu được bản ghi âm</p>
                 <p className="text-xs text-amber-700 mt-1">
                   Bạn vẫn luyện nói và đánh dấu lỗi bình thường, nhưng audio không tải lên được
-                  nên phiên này sẽ không có điểm AI. Dùng Chrome, Edge hoặc Firefox nếu bạn muốn được chấm điểm.
+                  nên phiên này sẽ không có điểm AI. Hãy cập nhật trình duyệt hoặc thử một trình duyệt có hỗ trợ MediaRecorder.
                 </p>
               </div>
             )}

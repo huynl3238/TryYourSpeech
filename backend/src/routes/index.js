@@ -58,7 +58,12 @@ import {
   reviewMentorApplication,
   submitMentorApplication,
 } from '../models/mentorApplicationModel.js';
-import { convertWebmToWav } from '../services/audioConversion.js';
+import { convertAudioToWav } from '../services/audioConversion.js';
+import {
+  AUDIO_FILE_EXTENSIONS,
+  inspectAudioFile,
+  isSupportedAudioUploadMimeType,
+} from '../services/audioFormat.js';
 import { getAdminStats } from '../models/adminStatsModel.js';
 import { getLiveStats } from '../socket/index.js';
 import { getAuthConfigStatus } from '../config/auth.js';
@@ -94,8 +99,8 @@ const upload = multer({
     files: 1,
   },
   fileFilter: (_req, file, cb) => {
-    if (file.mimetype !== 'audio/webm') {
-      cb(new Error('audio must be an audio/webm file'));
+    if (!isSupportedAudioUploadMimeType(file.mimetype)) {
+      cb(new Error('audio must be a supported WebM, MP4, or Ogg file'));
       return;
     }
 
@@ -207,6 +212,14 @@ async function deleteFileIfExists(filePath) {
   }
 
   await rm(filePath, { force: true });
+}
+
+async function deleteOtherTurnAudioFiles(turnId, keptExtension) {
+  for (const extension of AUDIO_FILE_EXTENSIONS) {
+    if (extension !== keptExtension) {
+      await deleteFileIfExists(join(audioDirectory, `${turnId}.${extension}`));
+    }
+  }
 }
 
 async function replaceUploadedFile(sourcePath, destinationPath) {
@@ -1148,10 +1161,11 @@ router.post('/audio/upload', requireAuth, requireAudioUploadEnabled, uploadSingl
 
     await mkdir(audioDirectory, { recursive: true });
 
-    finalPath = join(audioDirectory, `${turnId}.webm`);
+    const audioFormat = await inspectAudioFile(req.file.path);
+    finalPath = join(audioDirectory, `${turnId}.${audioFormat.extension}`);
     wavPath = join(tempDirectory, `${turnId}-${randomUUID()}.wav`);
     replacement = await replaceUploadedFile(req.file.path, finalPath);
-    await convertWebmToWav(finalPath, wavPath);
+    await convertAudioToWav(finalPath, wavPath);
 
     const result = await saveAudioUpload({
       sessionId,
@@ -1159,10 +1173,18 @@ router.post('/audio/upload', requireAuth, requireAudioUploadEnabled, uploadSingl
       speakerId,
       questionId,
       durationMs,
-      audioUrl: `/uploads/audio/${turnId}.webm`,
+      audioUrl: `/uploads/audio/${turnId}.${audioFormat.extension}`,
     });
 
-    await deleteFileIfExists(replacement.backupPath);
+    try {
+      await deleteFileIfExists(replacement.backupPath);
+      await deleteOtherTurnAudioFiles(turnId, audioFormat.extension);
+    } catch (cleanupError) {
+      // The database and the new recording are already committed. A stale
+      // backup is harmless; treating cleanup as an upload failure here would
+      // delete the valid new file and leave the database pointing at nothing.
+      console.warn('Failed to clean up an older audio file:', cleanupError.message);
+    }
     res.json(result);
   } catch (err) {
     await deleteFileIfExists(req.file?.path);
@@ -1196,7 +1218,11 @@ router.get('/turns/:turnId/audio', requireAuth, async (req, res) => {
       return;
     }
 
-    res.sendFile(resolveUploadAudioPath(audioUrl), (err) => {
+    const audioPath = resolveUploadAudioPath(audioUrl);
+    const audioFormat = await inspectAudioFile(audioPath);
+    res.type(audioFormat.contentType);
+
+    res.sendFile(audioPath, (err) => {
       if (err && !res.headersSent) {
         console.warn('Failed to serve audio:', err.message);
         res.status(404).json({ error: 'Không tìm thấy bản ghi âm' });
