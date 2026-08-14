@@ -11,6 +11,7 @@
     "db:seed:questions": "node src/db/seed.js --questions-only",
     "db:reset": "node src/db/reset.js",
     "db:wipe-users": "node src/db/wipeUsers.js",
+    "db:clear-history": "node src/db/clearPracticeHistory.js",
     "db:set-role": "node src/db/setRole.js"
   },
   "dependencies": {
