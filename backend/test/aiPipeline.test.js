@@ -4,6 +4,8 @@ import {
   getAiConfigStatus,
   prepareAiPipeline,
   runOptionalPronunciationAssessment,
+  runSpeakerPipelinesConcurrently,
+  runTurnAiServices,
 } from '../src/models/aiPipelineModel.js';
 
 const AI_ENV_NAMES = [
@@ -41,6 +43,122 @@ function createPipelineClient(turns) {
 
   return client;
 }
+
+function createDeferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+
+  return { promise, resolve, reject };
+}
+
+test('transcription and pronunciation start together and keep their original results', async () => {
+  const transcription = createDeferred();
+  const pronunciation = createDeferred();
+  const started = [];
+
+  const resultPromise = runTurnAiServices({
+    transcribe: () => {
+      started.push('transcription');
+      return transcription.promise;
+    },
+    assess: () => {
+      started.push('pronunciation');
+      return pronunciation.promise;
+    },
+  });
+
+  assert.deepEqual(started, ['transcription', 'pronunciation']);
+
+  transcription.resolve('The original transcript');
+  pronunciation.resolve({ pronunciationScore: 83, detail: [{ word: 'original' }] });
+
+  assert.deepEqual(await resultPromise, {
+    transcript: 'The original transcript',
+    pronunciation: {
+      pronunciationScore: 83,
+      detail: [{ word: 'original' }],
+    },
+  });
+});
+
+test('a failed provider waits for the other provider before the WAV may be cleaned up', async () => {
+  const pronunciation = createDeferred();
+  const transcriptionError = new Error('transcription failed');
+  let finished = false;
+
+  const resultPromise = runTurnAiServices({
+    transcribe: async () => {
+      throw transcriptionError;
+    },
+    assess: () => pronunciation.promise,
+  }).finally(() => {
+    finished = true;
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(finished, false);
+
+  pronunciation.resolve({ pronunciationScore: 80 });
+  await assert.rejects(resultPromise, transcriptionError);
+  assert.equal(finished, true);
+});
+
+test('both speaker pipelines start together but an error waits for the other speaker', async () => {
+  const speakerA = createDeferred();
+  const speakerB = createDeferred();
+  const started = [];
+  let finished = false;
+  const bySpeaker = new Map([
+    ['speaker-a', [{ turn_id: 'turn-a' }]],
+    ['speaker-b', [{ turn_id: 'turn-b' }]],
+  ]);
+
+  const resultPromise = runSpeakerPipelinesConcurrently(
+    bySpeaker,
+    async (speakerId) => {
+      started.push(speakerId);
+      return speakerId === 'speaker-a' ? speakerA.promise : speakerB.promise;
+    }
+  ).finally(() => {
+    finished = true;
+  });
+
+  assert.deepEqual(started, ['speaker-a', 'speaker-b']);
+
+  speakerA.reject(new Error('database unavailable'));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(finished, false);
+
+  speakerB.resolve(true);
+  await assert.rejects(resultPromise, /database unavailable/);
+  assert.equal(finished, true);
+});
+
+test('speaker results stay attached to the right user when they finish out of order', async () => {
+  const speakerA = createDeferred();
+  const speakerB = createDeferred();
+  const bySpeaker = new Map([
+    ['speaker-a', [{ turn_id: 'turn-a' }]],
+    ['speaker-b', [{ turn_id: 'turn-b' }]],
+  ]);
+
+  const resultPromise = runSpeakerPipelinesConcurrently(
+    bySpeaker,
+    (speakerId) => speakerId === 'speaker-a' ? speakerA.promise : speakerB.promise
+  );
+
+  speakerB.resolve(false);
+  speakerA.resolve(true);
+
+  assert.deepEqual(await resultPromise, [
+    { speakerId: 'speaker-a', completed: true },
+    { speakerId: 'speaker-b', completed: false },
+  ]);
+});
 
 test('prepareAiPipeline marks every processing turn failed when AI config is missing', async () => {
   clearAiEnv();

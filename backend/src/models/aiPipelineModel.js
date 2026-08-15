@@ -351,6 +351,34 @@ async function createTurnWav(turn) {
   }
 }
 
+// Transcription and pronunciation read the same immutable WAV, but neither
+// result is an input to the other: Azure deliberately runs without reference
+// text. Starting them together removes one full provider wait per turn without
+// changing either provider, prompt, audio, or scoring rule.
+//
+// allSettled is important here. If transcription fails quickly, the WAV must
+// stay on disk until Azure has also released it; Promise.all would reject early
+// and the caller's finally block could delete a file Azure is still reading.
+export async function runTurnAiServices({ transcribe, assess }) {
+  const [transcriptionResult, pronunciationResult] = await Promise.allSettled([
+    transcribe(),
+    assess(),
+  ]);
+
+  if (transcriptionResult.status === 'rejected') {
+    throw transcriptionResult.reason;
+  }
+
+  if (pronunciationResult.status === 'rejected') {
+    throw pronunciationResult.reason;
+  }
+
+  return {
+    transcript: transcriptionResult.value,
+    pronunciation: pronunciationResult.value,
+  };
+}
+
 // Combines the per-turn Azure scores into one acoustic profile for the whole test so
 // the pronunciation band reflects the entire performance, not a single answer.
 function aggregatePronunciation(pronunciations) {
@@ -437,8 +465,10 @@ async function runSpeakerPipeline(client, sessionId, speakerId, speakerTurns) {
 
     try {
       wavPath = await createTurnWav(turn);
-      const transcript = await transcribeTurnAudio(turn, sessionId, wavPath);
-      const pronunciation = await assessPronunciation(turn, sessionId, wavPath);
+      const { transcript, pronunciation } = await runTurnAiServices({
+        transcribe: () => transcribeTurnAudio(turn, sessionId, wavPath),
+        assess: () => assessPronunciation(turn, sessionId, wavPath),
+      });
       await markTurnTranscribed(client, turn.turn_id, transcript, pronunciation);
       processedTurns.push({ turn, transcript, pronunciation });
     } catch (err) {
@@ -471,6 +501,29 @@ async function runSpeakerPipeline(client, sessionId, speakerId, speakerTurns) {
     );
     return false;
   }
+}
+
+// A peer session has at most two independent speakers. Run their pipelines at
+// the same time, while each speaker's turns stay sequential and ordered. This
+// caps traffic at two OpenAI calls and two Azure calls at once instead of
+// bursting every turn together. Waiting for allSettled also prevents an
+// infrastructure error in one pipeline from releasing the session lock while
+// the other pipeline is still writing results.
+export async function runSpeakerPipelinesConcurrently(bySpeaker, runSpeaker) {
+  const entries = Array.from(bySpeaker.entries());
+  const outcomes = await Promise.allSettled(
+    entries.map(([speakerId, speakerTurns]) => runSpeaker(speakerId, speakerTurns))
+  );
+
+  const rejected = outcomes.find((outcome) => outcome.status === 'rejected');
+  if (rejected) {
+    throw rejected.reason;
+  }
+
+  return outcomes.map((outcome, index) => ({
+    speakerId: entries[index][0],
+    completed: outcome.value,
+  }));
 }
 
 async function failProcessingTurns(client, sessionId, errorMessage) {
@@ -511,18 +564,26 @@ async function failSessionBecauseMonthlyLimitReached(client, sessionId, limit) {
 }
 
 async function runSessionPipeline(client, sessionId) {
+  const startedAt = Date.now();
   const turns = await getProcessingTurns(client, sessionId);
   const bySpeaker = groupTurnsBySpeaker(turns);
-  let completedSpeakers = 0;
-
-  for (const [speakerId, speakerTurns] of bySpeaker) {
-    const ok = await runSpeakerPipeline(client, sessionId, speakerId, speakerTurns);
-    if (ok) {
-      completedSpeakers += 1;
-    }
-  }
+  const speakerResults = await runSpeakerPipelinesConcurrently(
+    bySpeaker,
+    (speakerId, speakerTurns) => runSpeakerPipeline(
+      client,
+      sessionId,
+      speakerId,
+      speakerTurns
+    )
+  );
+  const completedSpeakers = speakerResults.filter((result) => result.completed).length;
 
   const allFailed = bySpeaker.size > 0 && completedSpeakers === 0;
+  const processingDurationMs = Date.now() - startedAt;
+
+  console.log(
+    `[AI] Session ${sessionId}: processed ${turns.length} turn(s) for ${bySpeaker.size} speaker(s) in ${processingDurationMs}ms`
+  );
 
   return {
     started: true,
@@ -533,6 +594,7 @@ async function runSessionPipeline(client, sessionId) {
     processedTurns: turns.length,
     completedSpeakers,
     failedSpeakers: bySpeaker.size - completedSpeakers,
+    processingDurationMs,
   };
 }
 
