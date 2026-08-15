@@ -89,6 +89,10 @@ test('maybeStartSessionProcessing claims the session without grading it', async 
       return { rows: [{ id: 'turn-1' }] };
     }
 
+    if (sql.includes('SELECT DISTINCT speaker_id')) {
+      return { rows: [{ speaker_id: 'user-1' }] };
+    }
+
     // Not everything is terminal yet, so the session stays in 'processing' and
     // the background run takes over.
     if (sql.includes('UPDATE sessions') && sql.includes('RETURNING status')) {
@@ -109,6 +113,11 @@ test('maybeStartSessionProcessing claims the session without grading it', async 
     client.calls.filter((call) => call.sql.includes('INSERT INTO ai_results')).length,
     1,
     'phải đặt chỗ kết quả AI cho lượt đã upload'
+  );
+  assert.equal(
+    client.calls.filter((call) => call.sql.includes('INSERT INTO session_ai_results')).length,
+    1,
+    'phải đặt chỗ kết quả chấm cả bài trước khi worker bắt đầu'
   );
   assert.equal(
     client.calls.some((call) => call.sql.includes('json_agg')),
@@ -177,7 +186,9 @@ test('the background run marks turns failed when AI is not configured', async ()
   });
 
   const result = await runAiForClaimedSession(client, SESSION_ID);
-  const failedUpdates = client.calls.filter((call) => call.sql.includes('UPDATE ai_results'));
+  const failedUpdates = client.calls.filter(
+    (call) => call.sql.includes('UPDATE ai_results') && call.sql.includes("status = 'failed'")
+  );
 
   assert.equal(result.status, 'failed');
   assert.equal(failedUpdates.length, 1);

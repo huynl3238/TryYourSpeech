@@ -250,3 +250,47 @@ test('two runs racing for one session grade it exactly once', async (t) => {
     await cleanup(session);
   }
 });
+
+test('a legacy crash before the holistic row existed can be recovered', async (t) => {
+  if (!(await canUseDatabase())) {
+    t.skip('Bỏ qua: cần Postgres đã chạy npm run db:migrate');
+    return;
+  }
+
+  let session = null;
+
+  try {
+    session = await createMatchedSession(
+      `ai-holistic-recovery-${randomUUID().slice(0, 8)}`,
+      { userId: await createUser('Recovery A', 6.5), band: 6.5 },
+      { userId: await createUser('Recovery B', 6), band: 6 }
+    );
+    await markSessionActive(session.sessionId);
+    await markEveryTurnUploaded(session.sessionId);
+    await pool.query("UPDATE sessions SET status = 'processing' WHERE id = $1", [session.sessionId]);
+    await pool.query(
+      `
+        INSERT INTO ai_results (id, turn_id, status, whisper_transcript)
+        SELECT gen_random_uuid(), id, 'completed', 'Completed before the crash'
+        FROM turns
+        WHERE session_id = $1
+      `,
+      [session.sessionId]
+    );
+
+    const result = await runSessionAiPipeline(session.sessionId);
+    assert.equal(result.ran, true);
+    assert.equal(await getSessionStatus(pool, session.sessionId), 'completed');
+
+    const holisticRows = await pool.query(
+      'SELECT status FROM session_ai_results WHERE session_id = $1',
+      [session.sessionId]
+    );
+    assert.ok(
+      holisticRows.rows.every((row) => row.status === 'failed'),
+      'AI chưa cấu hình nên recovery phải kết thúc rõ ràng bằng failed, không treo processing'
+    );
+  } finally {
+    await cleanup(session);
+  }
+});

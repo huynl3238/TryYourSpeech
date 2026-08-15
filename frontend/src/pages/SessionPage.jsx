@@ -57,6 +57,7 @@ export default function SessionPage() {
     stopLocalRecording,
     startRemoteRecording,
     stopRemoteRecording,
+    stopAllRecordingAndWait,
   } = useMediaRecorder();
 
   useWebRTC({
@@ -137,22 +138,26 @@ export default function SessionPage() {
     }
 
     hasNavigatedToReviewRef.current = true;
-    stopLocalRecording();
-    stopRemoteRecording();
     // Retire the room before leaving for the review phase. Without this the room
     // outlived the call, and the next disconnect — a refresh, a closed tab, or
     // simply searching for a new partner — was read as abandoning a session that
     // had in fact finished, which blocked review completion and the AI with it.
     notifyPracticeComplete();
-    cleanupMediaSession(refs, [localVideoRef, remoteVideoRef]);
-    // Mentor sessions branch to the mentor-review flow (mentor writes feedback,
-    // student reads it) instead of the peer note-review flow.
-    if (state.sessionMode === 'mentor') {
-      navigate('/mentor/review');
-    } else {
-      navigate('/review');
+
+    async function finishRecordingAndOpenReview() {
+      await stopAllRecordingAndWait();
+      cleanupMediaSession(refs, [localVideoRef, remoteVideoRef]);
+      // Mentor sessions branch to the mentor-review flow (mentor writes feedback,
+      // student reads it) instead of the peer note-review flow.
+      if (state.sessionMode === 'mentor') {
+        navigate('/mentor/review');
+      } else {
+        navigate('/review');
+      }
     }
-  }, [syncedTimeline?.isComplete, navigate, refs, stopLocalRecording, stopRemoteRecording, notifyPracticeComplete, state.sessionMode]);
+
+    finishRecordingAndOpenReview();
+  }, [syncedTimeline?.isComplete, navigate, refs, stopAllRecordingAndWait, notifyPracticeComplete, state.sessionMode]);
 
   useEffect(() => {
     if (!state.sessionId) {

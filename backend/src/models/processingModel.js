@@ -144,6 +144,63 @@ async function createMissingAiResults(client, sessionId) {
   }
 }
 
+async function createMissingSessionAiResults(client, sessionId) {
+  const result = await client.query(
+    `
+      SELECT DISTINCT speaker_id
+      FROM turns
+      WHERE session_id = $1 AND upload_status = 'uploaded'
+    `,
+    [sessionId]
+  );
+
+  for (const row of result.rows) {
+    await client.query(
+      `
+        INSERT INTO session_ai_results (id, session_id, user_id, status)
+        VALUES ($1, $2, $3, 'processing')
+        ON CONFLICT (session_id, user_id) DO NOTHING
+      `,
+      [randomUUID(), sessionId, row.speaker_id]
+    );
+  }
+}
+
+// A process can die after every turn of one speaker was transcribed but before
+// their holistic result was saved. In that state the durable holistic row is
+// still processing, while no turn is processing. Restore those turns so the
+// normal pipeline can safely rebuild the complete result on the next attempt.
+async function restoreTurnsForInterruptedHolisticScoring(client, sessionId) {
+  await client.query(
+    `
+      UPDATE ai_results ar
+      SET status = 'processing',
+          error_message = NULL,
+          updated_at = NOW()
+      FROM turns tr
+      WHERE ar.turn_id = tr.id
+        AND tr.session_id = $1
+        AND tr.upload_status = 'uploaded'
+        AND EXISTS (
+          SELECT 1
+          FROM session_ai_results sar
+          WHERE sar.session_id = tr.session_id
+            AND sar.user_id = tr.speaker_id
+            AND sar.status = 'processing'
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM turns pending_turn
+          JOIN ai_results pending_result ON pending_result.turn_id = pending_turn.id
+          WHERE pending_turn.session_id = tr.session_id
+            AND pending_turn.speaker_id = tr.speaker_id
+            AND pending_result.status = 'processing'
+        )
+    `,
+    [sessionId]
+  );
+}
+
 // Decides whether the session is ready for AI and, if so, claims it — but does
 // NOT grade anything. Grading is minutes of OpenAI and Azure calls; running it
 // here would hold the caller's HTTP request and its database transaction open
@@ -178,6 +235,7 @@ export async function maybeStartSessionProcessing(client, sessionId) {
   );
 
   await createMissingAiResults(client, sessionId);
+  await createMissingSessionAiResults(client, sessionId);
 
   // A session with no usable audio has nothing to grade, so it can finish right
   // here instead of waiting on a background run that would do nothing.
@@ -212,6 +270,10 @@ export async function runAiForClaimedSession(client, sessionId) {
     return { skipped: 'attempts-exhausted', attempts: MAX_AI_ATTEMPTS, sessionStatus };
   }
 
+  // Idempotent here as well as in the initial hand-off so sessions left in the
+  // old pre-holistic state by a previous deployment become recoverable.
+  await createMissingSessionAiResults(client, sessionId);
+  await restoreTurnsForInterruptedHolisticScoring(client, sessionId);
   const pipeline = await prepareAiPipeline(client, sessionId);
   await markSessionCompletedIfAllResultsTerminal(client, sessionId);
 

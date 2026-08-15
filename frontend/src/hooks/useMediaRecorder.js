@@ -4,6 +4,7 @@ import {
   getRecorderOutputMimeType,
   getSupportedRecorderMimeType,
 } from '../utils/audioFormat';
+import { stopRecorderAndWait } from '../utils/mediaRecorderLifecycle';
 
 // Ask for the best container the current browser can actually create. iOS uses
 // MP4/AAC while Chromium on desktop usually uses WebM/Opus, so the recorded Blob
@@ -96,11 +97,7 @@ export function useMediaRecorder() {
   }, [dispatch, refs]);
 
   const stopLocalRecording = useCallback(() => {
-    const recorder = refs.current.localRecorder;
-    if (recorder && recorder.state !== 'inactive') {
-      recorder.stop();
-      refs.current.localRecorder = null;
-    }
+    return stopRecorderAndWait(refs, 'localRecorder');
   }, [refs]);
 
   const startRemoteRecording = useCallback((remoteStream, turnId) => {
@@ -155,12 +152,14 @@ export function useMediaRecorder() {
   }, [dispatch, refs]);
 
   const stopRemoteRecording = useCallback(() => {
-    const recorder = refs.current.remoteRecorder;
-    if (recorder && recorder.state !== 'inactive') {
-      recorder.stop();
-      refs.current.remoteRecorder = null;
-    }
+    return stopRecorderAndWait(refs, 'remoteRecorder');
   }, [refs]);
+
+  const stopAllRecordingAndWait = useCallback(async () => {
+    const currentStops = [stopLocalRecording(), stopRemoteRecording()];
+    const pendingStops = Array.from(refs.current.recorderStopPromises || []);
+    await Promise.all([...currentStops, ...pendingStops]);
+  }, [refs, stopLocalRecording, stopRemoteRecording]);
 
   const stopAll = useCallback(() => {
     stopLocalRecording();
@@ -172,6 +171,7 @@ export function useMediaRecorder() {
     stopLocalRecording,
     startRemoteRecording,
     stopRemoteRecording,
+    stopAllRecordingAndWait,
     stopAll,
   };
 }

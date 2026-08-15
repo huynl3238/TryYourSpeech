@@ -86,6 +86,7 @@ export function cleanupMediaSession(refs, videoRefs = []) {
   refs.current.remoteStream = null;
   refs.current.localRecorder = null;
   refs.current.remoteRecorder = null;
+  refs.current.recorderStopPromises?.clear();
   refs.current.localChunks = [];
   refs.current.remoteChunks = [];
   refs.current.pendingIceCandidates = [];

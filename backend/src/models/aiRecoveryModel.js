@@ -19,23 +19,54 @@ const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
 let sweepTimer = null;
 
-// Staleness is measured on the ai_results rows rather than the session, because
-// sessions has no updated_at — and the result rows are the better signal anyway:
-// they are touched as each turn finishes, so a long run that is still making
-// progress does not look stuck.
+// Staleness is measured across both per-turn and holistic rows. The holistic row
+// is created before paid work begins, so a crash after the last transcript but
+// before whole-test scoring finishes remains visible to this sweep.
 async function findStuckSessionIds() {
   const result = await pool.query(
     `
-      SELECT tr.session_id AS id, MAX(ar.updated_at) AS last_progress
-      FROM ai_results ar
-      JOIN turns tr ON tr.id = ar.turn_id
-      JOIN sessions s ON s.id = tr.session_id
-      WHERE ar.status = 'processing'
-        AND s.status = 'processing'
+      SELECT
+        s.id,
+        GREATEST(turn_progress.last_progress, holistic_progress.last_progress) AS last_progress
+      FROM sessions s
+      LEFT JOIN LATERAL (
+        SELECT
+          MAX(ar.updated_at) AS last_progress,
+          BOOL_OR(ar.status = 'processing') AS has_processing
+        FROM turns tr
+        JOIN ai_results ar ON ar.turn_id = tr.id
+        WHERE tr.session_id = s.id
+      ) turn_progress ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT
+          MAX(sar.updated_at) AS last_progress,
+          BOOL_OR(sar.status = 'processing') AS has_processing
+        FROM session_ai_results sar
+        WHERE sar.session_id = s.id
+      ) holistic_progress ON TRUE
+      WHERE s.status = 'processing'
         AND s.session_mode = 'peer'
-      GROUP BY tr.session_id
-      HAVING MAX(ar.updated_at) < NOW() - ($1 || ' minutes')::interval
-      ORDER BY MAX(ar.updated_at)
+        AND (
+          COALESCE(turn_progress.has_processing, FALSE)
+          OR COALESCE(holistic_progress.has_processing, FALSE)
+          OR EXISTS (
+            SELECT 1
+            FROM turns missing_turn
+            WHERE missing_turn.session_id = s.id
+              AND missing_turn.upload_status = 'uploaded'
+              AND NOT EXISTS (
+                SELECT 1
+                FROM session_ai_results missing_result
+                WHERE missing_result.session_id = missing_turn.session_id
+                  AND missing_result.user_id = missing_turn.speaker_id
+              )
+          )
+        )
+        AND GREATEST(
+          COALESCE(turn_progress.last_progress, TIMESTAMP '-infinity'),
+          COALESCE(holistic_progress.last_progress, TIMESTAMP '-infinity')
+        ) < NOW() - ($1 || ' minutes')::interval
+      ORDER BY last_progress
       LIMIT 20
     `,
     [String(STALE_AFTER_MINUTES)]

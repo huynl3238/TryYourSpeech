@@ -40,8 +40,8 @@ export default function ReviewPage() {
   const [noteEdits, setNoteEdits] = useState({});
   const [uploadStatuses, setUploadStatuses] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [audioUrls, setAudioUrls] = useState({});
   const audioRef = useRef(null);
-  const audioUrlsRef = useRef({});
   const uploadInFlightRef = useRef(new Set());
 
   const partnerTurns = state.turns.filter((t) => t.speakerRole !== state.role);
@@ -114,12 +114,18 @@ export default function ReviewPage() {
   }, [state.turns, state.role, state.localAudioByTurnId, state.sessionId, state.userId, uploadStatuses, dispatch]);
 
   useEffect(() => {
-    if (!selectedTurnId) return;
-    const blob = state.remoteAudioByTurnId[selectedTurnId];
-    if (blob && !audioUrlsRef.current[selectedTurnId]) {
-      audioUrlsRef.current[selectedTurnId] = URL.createObjectURL(blob);
-    }
-  }, [selectedTurnId, state.remoteAudioByTurnId]);
+    const nextUrls = {};
+    Object.entries(state.remoteAudioByTurnId).forEach(([turnId, blob]) => {
+      if (blob) {
+        nextUrls[turnId] = URL.createObjectURL(blob);
+      }
+    });
+    setAudioUrls(nextUrls);
+
+    return () => {
+      Object.values(nextUrls).forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [state.remoteAudioByTurnId]);
 
   const notesForSelectedTurn = state.peerNotes.filter((n) => n.turnId === selectedTurnId);
 
@@ -351,7 +357,7 @@ export default function ReviewPage() {
                 <CardContent className="px-4 pb-4">
                   {state.remoteAudioByTurnId[selectedTurnId] ? (
                     <>
-                      <audio ref={audioRef} src={audioUrlsRef.current[selectedTurnId]} controls className="w-full" />
+                      <audio ref={audioRef} src={audioUrls[selectedTurnId]} controls className="w-full" />
                       {notesForSelectedTurn.length > 0 && (
                         <div className="mt-3">
                           <p className="text-xs text-zinc-400 mb-2">Nhấn để nhảy đến lỗi:</p>

@@ -298,6 +298,7 @@ export function SessionProvider({ children }) {
     remoteStream: null,
     localRecorder: null,
     remoteRecorder: null,
+    recorderStopPromises: new Set(),
     localChunks: [],
     remoteChunks: [],
     iceServers: null,

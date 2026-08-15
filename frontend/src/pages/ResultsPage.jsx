@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSession } from '../context/SessionContext';
-import { getBackendFileUrl, retryResults } from '../services/api';
+import { getBackendFileUrl, getResults, retryResults } from '../services/api';
+import { areAiResultsTerminal } from '../utils/aiResultStatus';
 import { resolveSessionId } from '../utils/sessionIdentity';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
@@ -276,6 +277,39 @@ export default function ResultsPage() {
   const [selectedTurnId, setSelectedTurnId] = useState('summary');
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState('');
+  const [resultPollAttempts, setResultPollAttempts] = useState(0);
+
+  const resultsAreTerminal = areAiResultsTerminal(results);
+
+  // WaitingAI normally keeps the user out until holistic scoring is terminal.
+  // Keep this second polling loop as a recovery layer for an old tab, a direct
+  // navigation, or a response that arrived during the final scoring hand-off.
+  useEffect(() => {
+    if (!results || resultsAreTerminal || results.sessionMode === 'mentor' || !resultSessionId || !state.userId) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    const id = setTimeout(async () => {
+      try {
+        const refreshedResults = await getResults(resultSessionId, state.userId);
+        if (!cancelled) {
+          dispatch({ type: 'SET_RESULTS', payload: refreshedResults });
+        }
+      } catch (err) {
+        console.warn('[Results] Poll error:', err.message);
+      } finally {
+        if (!cancelled) {
+          setResultPollAttempts((attempts) => attempts + 1);
+        }
+      }
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(id);
+    };
+  }, [results, resultsAreTerminal, resultSessionId, state.userId, dispatch, resultPollAttempts]);
 
   // If we landed here without any session context (e.g. a hard refresh cleared
   // the in-memory state), there is nothing to load — send the user home instead

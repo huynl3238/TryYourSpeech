@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSession } from '../context/SessionContext';
 import { getResults } from '../services/api';
+import { areAiResultsTerminal } from '../utils/aiResultStatus';
 import { Card, CardContent } from '../components/ui/card';
 
 const PIPELINE_STEPS = [
@@ -11,10 +12,6 @@ const PIPELINE_STEPS = [
   { key: 'feedback',     icon: 'psychology',        label: 'Đánh giá ngữ pháp, từ vựng, fluency (OpenAI)' },
   { key: 'scoring',      icon: 'calculate',         label: 'Tổng hợp điểm ước lượng IELTS' },
 ];
-
-function isTerminalAiStatus(status) {
-  return status === 'completed' || status === 'failed';
-}
 
 function shouldShowPipeline(status) {
   return status === 'processing' || status === 'completed';
@@ -47,10 +44,8 @@ export default function WaitingAIPage() {
     if (!state.sessionId || !state.userId) return;
     try {
       const results = await getResults(state.sessionId, state.userId);
-      const turnResults = results.turnResults || [];
       setSessionStatus(results.status || 'reviewing');
-      const allDone = turnResults.length > 0 && turnResults.every((t) => isTerminalAiStatus(t.aiStatus));
-      if (allDone) {
+      if (areAiResultsTerminal(results)) {
         dispatch({ type: 'SET_RESULTS', payload: results });
         navigate('/results');
         return;
