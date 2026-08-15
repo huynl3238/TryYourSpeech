@@ -14,21 +14,21 @@
 
 INSERT INTO topics (id, name, scope, owner_id, status)
 VALUES
-  ('de000000-0000-4000-8000-000000000001', 'Đề 01 — A beautiful place', 'system', NULL, 'open'),
-  ('de000000-0000-4000-8000-000000000002', 'Đề 02 — Childhood neighbourhood', 'system', NULL, 'open'),
-  ('de000000-0000-4000-8000-000000000003', 'Đề 03 — A big city you would like to visit', 'system', NULL, 'open'),
-  ('de000000-0000-4000-8000-000000000004', 'Đề 04 — A monument you like', 'system', NULL, 'open'),
-  ('de000000-0000-4000-8000-000000000005', 'Đề 05 — Doing something in a hurry', 'system', NULL, 'open'),
-  ('de000000-0000-4000-8000-000000000006', 'Đề 06 — A law that was a good idea', 'system', NULL, 'open'),
-  ('de000000-0000-4000-8000-000000000007', 'Đề 07 — A tourist attraction', 'system', NULL, 'open'),
-  ('de000000-0000-4000-8000-000000000008', 'Đề 08 — A review of a product or service', 'system', NULL, 'open'),
-  ('de000000-0000-4000-8000-000000000009', 'Đề 09 — A luxury item', 'system', NULL, 'open'),
-  ('de000000-0000-4000-8000-000000000010', 'Đề 10 — Technology you stopped using', 'system', NULL, 'open'),
-  ('de000000-0000-4000-8000-000000000011', 'Đề 11 — A hotel that you know', 'system', NULL, 'open'),
-  ('de000000-0000-4000-8000-000000000012', 'Đề 12 — A website you bought from', 'system', NULL, 'open'),
-  ('de000000-0000-4000-8000-000000000013', 'Đề 13 — A TV programme about science', 'system', NULL, 'open'),
-  ('de000000-0000-4000-8000-000000000014', 'Đề 14 — Something you bought for your home', 'system', NULL, 'open'),
-  ('de000000-0000-4000-8000-000000000015', 'Đề 15 — A book that made you think', 'system', NULL, 'open')
+  ('de000000-0000-4000-8000-000000000001', 'Đề 01: A beautiful place', 'system', NULL, 'open'),
+  ('de000000-0000-4000-8000-000000000002', 'Đề 02: Childhood neighbourhood', 'system', NULL, 'open'),
+  ('de000000-0000-4000-8000-000000000003', 'Đề 03: A big city you would like to visit', 'system', NULL, 'open'),
+  ('de000000-0000-4000-8000-000000000004', 'Đề 04: A monument you like', 'system', NULL, 'open'),
+  ('de000000-0000-4000-8000-000000000005', 'Đề 05: Doing something in a hurry', 'system', NULL, 'open'),
+  ('de000000-0000-4000-8000-000000000006', 'Đề 06: A law that was a good idea', 'system', NULL, 'open'),
+  ('de000000-0000-4000-8000-000000000007', 'Đề 07: A tourist attraction', 'system', NULL, 'open'),
+  ('de000000-0000-4000-8000-000000000008', 'Đề 08: A review of a product or service', 'system', NULL, 'open'),
+  ('de000000-0000-4000-8000-000000000009', 'Đề 09: A luxury item', 'system', NULL, 'open'),
+  ('de000000-0000-4000-8000-000000000010', 'Đề 10: Technology you stopped using', 'system', NULL, 'open'),
+  ('de000000-0000-4000-8000-000000000011', 'Đề 11: A hotel that you know', 'system', NULL, 'open'),
+  ('de000000-0000-4000-8000-000000000012', 'Đề 12: A website you bought from', 'system', NULL, 'open'),
+  ('de000000-0000-4000-8000-000000000013', 'Đề 13: A TV programme about science', 'system', NULL, 'open'),
+  ('de000000-0000-4000-8000-000000000014', 'Đề 14: Something you bought for your home', 'system', NULL, 'open'),
+  ('de000000-0000-4000-8000-000000000015', 'Đề 15: A book that made you think', 'system', NULL, 'open')
 ON CONFLICT (id) DO UPDATE
 SET
   name = EXCLUDED.name,

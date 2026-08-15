@@ -42,7 +42,7 @@ export default function ForgotPasswordPage() {
             onChange={setEmail}
             placeholder="ban@example.com"
             autoComplete="email"
-            hint="Nếu bạn đăng nhập bằng Google, hãy quay lại và bấm nút Google — tài khoản đó không có mật khẩu."
+            hint="Nếu bạn đăng nhập bằng Google, hãy quay lại và bấm nút Google. Tài khoản đó không có mật khẩu."
             required
           />
           {error && <FormMessage>{error}</FormMessage>}

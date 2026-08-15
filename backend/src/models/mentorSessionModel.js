@@ -432,7 +432,7 @@ export async function chooseApplicantAndStart({ mentorSessionId, mentorId, stude
         type: chosen ? 'mentor_session_chosen' : 'mentor_session_not_chosen',
         title: chosen ? 'Bạn đã được chọn vào phiên học' : 'Phiên học đã bắt đầu',
         body: chosen
-          ? `Mentor đã chọn bạn vào phiên ${focusLabel(mentorSession.focus)} — hãy vào ngay`
+          ? `Mentor đã chọn bạn vào phiên ${focusLabel(mentorSession.focus)}. Hãy vào ngay.`
           : `Mentor đã chọn học viên khác cho phiên ${focusLabel(mentorSession.focus)}`,
         entityType: chosen ? 'session' : 'mentor_session',
         entityId: chosen ? sessionId : mentorSessionId,

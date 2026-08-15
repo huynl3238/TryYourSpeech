@@ -486,7 +486,7 @@ function DeviceCheckModal({ onClose }) {
             <div className="flex-1">
               <div className="flex items-center justify-between">
                 <b className="text-[13px] font-semibold text-[#1C1917]">Micro</b>
-                <span className="text-[11px] font-bold text-[#059669]">{status === 'ready' ? 'Đang nhận — hãy thử nói' : '…'}</span>
+                <span className="text-[11px] font-bold text-[#059669]">{status === 'ready' ? 'Đang nhận, hãy thử nói' : '…'}</span>
               </div>
               <div className="flex gap-[3px] mt-2 h-2.5 items-end">
                 {Array.from({ length: 16 }).map((_, i) => (
@@ -1609,7 +1609,7 @@ function UserHistoryPanelReal() {
 
               <div className="flex items-center gap-3 shrink-0">
                 <div className="text-right">
-                  <div className="text-[17px] font-extrabold tracking-tight text-[#D97757] tabular-nums leading-none">{item.overallBand ? item.overallBand : '—'}</div>
+                  <div className="text-[17px] font-extrabold tracking-tight text-[#D97757] tabular-nums leading-none">{item.overallBand ? item.overallBand : '-'}</div>
                   <div className="text-[10px] uppercase tracking-wide text-[#A8A29E] font-bold mt-0.5">Band</div>
                 </div>
                 <span className={`text-[11.5px] font-bold px-2.5 py-1 rounded-full whitespace-nowrap ${
@@ -2897,7 +2897,7 @@ function TopicBuilderPanelReal() {
         <div className="p-5">
           {topicDetail?.topic?.ownerId === null && (
             <div className="mb-4 text-[13px] text-[#8A4A33] bg-[#F7ECE6] border border-[#EAC7B9] rounded-xl px-4 py-2.5">
-              Đây là bộ mẫu chung — bạn có thể dùng nhưng không chỉnh sửa. Hãy tạo bộ của riêng mình để tùy biến.
+              Đây là bộ mẫu chung. Bạn có thể sử dụng nhưng không thể chỉnh sửa. Hãy tạo bộ của riêng mình để tùy biến.
             </div>
           )}
           <div>

@@ -29,7 +29,7 @@ const WAITING_TIPS = [
   {
     icon: 'timer',
     title: 'Part 2 có một phút chuẩn bị',
-    text: 'Đừng viết thành câu. Ghi 4–5 từ khoá theo đúng thứ tự bạn sẽ nói, rồi nói theo chúng — như vậy bài nói có mở đầu, thân và kết.',
+    text: 'Đừng viết thành câu. Ghi 4–5 từ khoá theo đúng thứ tự bạn sẽ nói, rồi trình bày lần lượt để bài nói có mở đầu, thân và kết.',
   },
   {
     icon: 'record_voice_over',
@@ -186,7 +186,7 @@ function WaitingBeacon({ myBand, autoMatch }) {
       <div className="wait-medallion absolute inset-[18px] grid place-items-center rounded-full bg-[#D97757] shadow-[0_10px_26px_-8px_rgba(217,119,87,.65)]">
         <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-white/80">Band</span>
         <span className="-mt-0.5 text-[21px] font-extrabold leading-none tabular-nums text-white">
-          {myBand != null ? myBand.toFixed(1) : '—'}
+          {myBand != null ? myBand.toFixed(1) : '-'}
         </span>
       </div>
 
@@ -381,7 +381,7 @@ function PartnerRow({ partner, myBand, extraWaitSeconds, disabled, onInvite }) {
           </span>
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] text-[#A8A29E]">
-          <span className="font-semibold text-[#78716C]">Band {partner.band?.toFixed(1) ?? '—'}</span>
+          <span className="font-semibold text-[#78716C]">Band {partner.band?.toFixed(1) ?? '-'}</span>
           <span>·</span>
           <span className="tabular-nums">chờ {formatWaited(waitingSeconds)}</span>
           {/* Người này đang được máy ghép hộ nên có thể biến mất bất cứ lúc nào.
@@ -435,7 +435,7 @@ function EmptyQueue() {
 
       <p className="mt-4 text-[14px] font-semibold text-[#57534E]">Chưa có ai đang chờ</p>
       <p className="mt-1 text-[12.5px] text-[#A8A29E]">
-        Danh sách tự cập nhật ngay khi có người vào — bạn không cần tải lại trang.
+        Danh sách tự cập nhật khi có người vào, bạn không cần tải lại trang.
       </p>
     </div>
   );

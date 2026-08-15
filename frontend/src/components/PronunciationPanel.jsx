@@ -126,7 +126,7 @@ export function PronunciationPanel({ pronunciation, words }) {
       ) : (
         detail.length > 0 && (
           <p className="mt-4 border-t border-zinc-100 pt-3 text-[12.5px] text-emerald-600">
-            Không có từ nào dưới ngưỡng {ACCURACY_THRESHOLD}/100 — phát âm từng từ đều ổn.
+            Không có từ nào dưới ngưỡng {ACCURACY_THRESHOLD}/100. Phát âm từng từ đều ổn.
           </p>
         )
       )}

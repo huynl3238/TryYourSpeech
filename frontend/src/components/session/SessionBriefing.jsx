@@ -91,7 +91,7 @@ function buildGuidePages(turns) {
         `Phiên này luyện ${partList} theo đúng thời lượng IELTS Speaking, tổng ${turns.length} lượt nói và khoảng ${Math.max(
           1,
           Math.round(totalMs / 60000)
-        )} phút. Mỗi người trả lời hết một part rồi mới đổi lượt — giống một lượt thi liền mạch — còn người kia lắng nghe và đánh dấu lỗi theo thời gian thực. Người mở màn đổi qua lại giữa các part để không ai luôn phải nói trước.`,
+        )} phút. Mỗi người trả lời hết một part rồi mới đổi lượt, tương tự một lượt thi liền mạch. Người còn lại lắng nghe và đánh dấu lỗi theo thời gian thực. Người mở màn đổi qua lại giữa các part để không ai luôn phải nói trước.`,
       ],
       cards: [
         ...partCards,

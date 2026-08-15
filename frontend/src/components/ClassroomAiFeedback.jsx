@@ -20,7 +20,7 @@ const CRITERIA = [
 
 function formatBand(value) {
   const num = Number(value);
-  return Number.isFinite(num) ? num.toFixed(1) : '—';
+  return Number.isFinite(num) ? num.toFixed(1) : '-';
 }
 
 function EmptyNotice({ icon, title, text }) {

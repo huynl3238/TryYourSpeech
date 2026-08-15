@@ -33,7 +33,7 @@ function statusLabel(status) {
 }
 
 function formatDate(value) {
-  if (!value) return '—';
+  if (!value) return '-';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat('vi-VN', {
@@ -52,9 +52,9 @@ function formatDay(value) {
 }
 
 function formatDuration(seconds) {
-  if (seconds === null || seconds === undefined) return '—';
+  if (seconds === null || seconds === undefined) return '-';
   const total = Math.round(Number(seconds));
-  if (!Number.isFinite(total)) return '—';
+  if (!Number.isFinite(total)) return '-';
   const mins = Math.floor(total / 60);
   const secs = total % 60;
   return `${mins}p ${secs}s`;
@@ -154,7 +154,7 @@ function QuotaBar({ used, limit }) {
   if (!limit) {
     return (
       <p className="text-[12.5px] text-[#A8A29E]">
-        Không đặt hạn mức tháng — đã chấm <strong className="tabular-nums">{used}</strong> lượt nói tháng này.
+        Không đặt hạn mức tháng. Đã chấm <strong className="tabular-nums">{used}</strong> lượt nói trong tháng này.
       </p>
     );
   }
@@ -312,7 +312,7 @@ function MentorAdminPanel() {
                   {application.applicant.displayName}
                 </span>
                 <span className="rounded-full bg-[#F1EEEA] px-2 py-0.5 text-[11.5px] font-semibold text-[#57534E] tabular-nums">
-                  Band {application.applicant.band ?? '—'}
+                  Band {application.applicant.band ?? '-'}
                 </span>
                 <span className="rounded-full bg-[#F1EEEA] px-2 py-0.5 text-[11.5px] font-semibold text-[#57534E] tabular-nums">
                   {application.applicant.completedSessions} phiên hoàn thành
@@ -383,7 +383,7 @@ function MentorAdminPanel() {
             <div key={mentor.id} className="rounded-xl border border-[#EAE7E3] p-3">
               <p className="text-[13.5px] font-bold text-[#1C1917]">{mentor.displayName}</p>
               <p className="mt-0.5 text-[11.5px] text-[#A8A29E] tabular-nums">
-                Band {mentor.band ?? '—'} · {mentor.hostedSessions} buổi đã mở ·{' '}
+                Band {mentor.band ?? '-'} · {mentor.hostedSessions} buổi đã mở ·{' '}
                 {mentor.reviewsWritten} nhận xét
               </p>
               {revokingId === mentor.id ? (
@@ -449,7 +449,7 @@ function AiUsagePanel({ ai }) {
   return (
     <Panel
       title="Lượng dùng & chất lượng AI"
-      subtitle="Đo bằng chính đơn vị nhà cung cấp tính tiền: phút audio và token — đối chiếu thẳng được với hoá đơn"
+      subtitle="Đo bằng chính đơn vị nhà cung cấp tính tiền: phút audio và token, có thể đối chiếu trực tiếp với hoá đơn"
     >
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard
@@ -586,7 +586,7 @@ function AiUsagePanel({ ai }) {
                 {ai.failures.map((row) => (
                   <tr key={`${row.sessionId}-${row.userId}`} className="border-t border-[#EAE7E3]">
                     <td className="px-3 py-2 text-[#1C1917]">{row.displayName}</td>
-                    <td className="px-3 py-2 text-[#78716C]">{row.errorMessage || '—'}</td>
+                    <td className="px-3 py-2 text-[#78716C]">{row.errorMessage || '-'}</td>
                     <td className="whitespace-nowrap px-3 py-2 text-[#A8A29E]">{formatDate(row.updatedAt)}</td>
                   </tr>
                 ))}
@@ -600,7 +600,7 @@ function AiUsagePanel({ ai }) {
           of a dollar figure as "this is free". */}
       <p className="mt-5 text-[11px] leading-relaxed text-[#A8A29E]">
         Trang này không quy ra tiền: nhà cung cấp không trả về số tiền cho từng lần gọi, nên mọi con
-        số đô-la ở đây sẽ chỉ là ước đoán. Số tiền chính xác xem ở trang hoá đơn của OpenAI và Azure —
+        số đô-la ở đây sẽ chỉ là ước đoán. Số tiền chính xác xem ở trang hoá đơn của OpenAI và Azure.
         họ cũng tính theo đúng hai đại lượng phía trên.
       </p>
     </Panel>

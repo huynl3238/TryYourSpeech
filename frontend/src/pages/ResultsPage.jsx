@@ -64,7 +64,7 @@ function ScoreCircle({ score, color }) {
         textAnchor="middle" dominantBaseline="central"
         style={{ fill: '#18181b', fontSize: 13, fontWeight: 700, transform: `rotate(90deg)`, transformOrigin: `${size / 2}px ${size / 2}px`, fontFamily: 'inherit' }}
       >
-        {num != null ? num.toFixed(1) : '—'}
+        {num != null ? num.toFixed(1) : '-'}
       </text>
     </svg>
   );
@@ -197,7 +197,7 @@ function BandChip({ band, color }) {
   const num = Number.isFinite(Number(band)) ? Number(band) : null;
   return (
     <span className="text-xs font-bold tabular-nums px-2 py-0.5 rounded-full text-white" style={{ background: color }}>
-      {num != null ? num.toFixed(1) : '—'}
+      {num != null ? num.toFixed(1) : '-'}
     </span>
   );
 }
@@ -382,7 +382,7 @@ export default function ResultsPage() {
             <div className="rounded-lg border border-zinc-100 bg-zinc-50 p-4 text-center mb-2">
               <p className="text-xs text-zinc-400 mb-1 font-medium uppercase tracking-wide">Band ước lượng</p>
               <p className="text-4xl font-bold text-zinc-900 tabular-nums">
-                {holisticStatus === 'completed' ? (overallBand ?? '—') : '—'}
+                {holisticStatus === 'completed' ? (overallBand ?? '-') : '-'}
               </p>
               <p className="text-[10px] text-zinc-400 mt-1">
                 {holisticStatus === 'completed' ? 'Chấm cả bài' : holisticStatus === 'failed' ? 'AI gặp lỗi' : 'Đang chấm...'}
@@ -503,7 +503,7 @@ export default function ResultsPage() {
                         })}
                       </div>
                       <p className="text-[10px] text-zinc-400 mt-3 text-center">
-                        Điểm ước lượng — không phải điểm IELTS chính thức
+                        Điểm ước lượng, không phải điểm IELTS chính thức
                       </p>
                     </CardContent>
                   </Card>

@@ -325,7 +325,7 @@ export default function DeviceCheckPage() {
                   </div>
                   <div>
                     <p className="text-sm font-medium text-zinc-900">{state.partnerName}</p>
-                    <p className="text-xs text-zinc-400">Band {partnerBand ?? '—'}</p>
+                    <p className="text-xs text-zinc-400">Band {partnerBand ?? '-'}</p>
                   </div>
                 </div>
                 <div className={`rounded-lg px-3 py-2.5 text-xs ${state.role === 'A' ? 'bg-purple-50 text-purple-700' : 'bg-sky-50 text-sky-700'}`}>

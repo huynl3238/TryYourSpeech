@@ -128,7 +128,7 @@ function OpenSessionModal({ topics, onClose, onCreate, submitting }) {
             ) : (
               <select value={topicId} onChange={(e) => { setTopicId(e.target.value); setFormError(''); }}
                 className="w-full h-10 px-3 rounded-lg border border-[#EAE7E3] text-sm focus:outline-none focus:border-[#D97757]">
-                <option value="">— Chọn bộ câu hỏi —</option>
+                <option value="">Chọn bộ câu hỏi</option>
                 {usableTopics.map((t) => (
                   <option key={t.id} value={t.id}>
                     {t.name} ({t.questionCount} câu{t.ownerId === null ? ' · mẫu chung' : ''})
@@ -329,7 +329,7 @@ export default function MentorHostPage({ embedded = false }) {
                 {started ? (
                   <div className="px-5 py-4 bg-[#ECFDF5] border-t border-[#A7F3D0] text-sm text-[#065F46] flex items-center justify-between gap-3">
                     <span>
-                      Đã chọn <b>{chosen?.displayName || 'học viên'}</b> — các học viên còn lại đã được thông báo.
+                      Đã chọn <b>{chosen?.displayName || 'học viên'}</b>. Các học viên còn lại đã được thông báo.
                     </span>
                     {session.sessionId && (
                       <button

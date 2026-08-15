@@ -466,7 +466,7 @@ function StudentReviewView({ sessionId, userId }) {
                   <span className="material-symbols-rounded" style={{ fontSize: 28 }}>hourglass_top</span>
                 </div>
                 <h2 className="font-bold text-[#1C1917]">Đang chờ mentor nhận xét</h2>
-                <p className="text-sm text-[#78716C] mt-1.5">Mentor sẽ gửi nhận xét sau phiên. Bạn sẽ nhận được thông báo khi có — bấm "Tải lại" để xem.</p>
+                <p className="text-sm text-[#78716C] mt-1.5">Mentor sẽ gửi nhận xét sau phiên. Khi nhận được thông báo, hãy bấm "Tải lại" để xem.</p>
               </div>
             )}
 

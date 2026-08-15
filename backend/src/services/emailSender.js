@@ -89,7 +89,7 @@ export async function sendPasswordResetEmail({ to, displayName, token }) {
       body: 'Chúng tôi nhận được yêu cầu đặt lại mật khẩu cho tài khoản của bạn. Bấm nút bên dưới để đặt mật khẩu mới.',
       buttonLabel: 'Đặt lại mật khẩu',
       buttonUrl: url,
-      footer: 'Đường dẫn có hiệu lực trong 1 giờ và chỉ dùng được một lần. Nếu bạn không yêu cầu đặt lại mật khẩu, hãy bỏ qua email này — mật khẩu hiện tại vẫn giữ nguyên.',
+      footer: 'Đường dẫn có hiệu lực trong 1 giờ và chỉ dùng được một lần. Nếu bạn không yêu cầu đặt lại mật khẩu, hãy bỏ qua email này. Mật khẩu hiện tại vẫn giữ nguyên.',
     }),
   });
 }
