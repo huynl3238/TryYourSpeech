@@ -7,6 +7,7 @@ import { Badge } from '../components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Input } from '../components/ui/input';
 import { ErrorScreen } from '../components/ui/ErrorScreen';
+import { AudioPlayer } from '../components/AudioPlayer';
 
 const ERROR_TYPE_CONFIG = {
   grammar_error:        { label: 'Grammar error',              badgeClass: 'bg-amber-100 text-amber-700',  borderColor: '#f59e0b' },
@@ -130,10 +131,8 @@ export default function ReviewPage() {
   const notesForSelectedTurn = state.peerNotes.filter((n) => n.turnId === selectedTurnId);
 
   function handleMarkerClick(timestampMs) {
-    if (audioRef.current) {
-      audioRef.current.currentTime = timestampMs / 1000;
-      audioRef.current.play();
-    }
+    audioRef.current?.seekTo(timestampMs / 1000);
+    audioRef.current?.play();
   }
 
   function handleNoteEdit(clientNoteId, newText) {
@@ -357,7 +356,11 @@ export default function ReviewPage() {
                 <CardContent className="px-4 pb-4">
                   {state.remoteAudioByTurnId[selectedTurnId] ? (
                     <>
-                      <audio ref={audioRef} src={audioUrls[selectedTurnId]} controls className="w-full" />
+                      <AudioPlayer
+                        ref={audioRef}
+                        src={audioUrls[selectedTurnId]}
+                        durationMs={selectedTurn.durationMs}
+                      />
                       {notesForSelectedTurn.length > 0 && (
                         <div className="mt-3">
                           <p className="text-xs text-zinc-400 mb-2">Nhấn để nhảy đến lỗi:</p>

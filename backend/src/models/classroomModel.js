@@ -184,16 +184,25 @@ function mapTranscript(row) {
   const transcript = row.whisper_transcript || '';
   const words = transcript
     ? transcript.split(/\s+/).map((word) => ({ text: word }))
-    : [{ text: 'Transcript chua san sang.' }];
+    : [];
 
   return {
     turnId: row.turn_id,
+    speakerId: row.speaker_id,
     speakerName: row.speaker_name,
     speakerRole: row.speaker_role,
+    speakerUserRole: row.speaker_user_role || 'student',
     partNumber: Number(row.part_number),
     partLabel: getTurnLabel(Number(row.part_number)),
     questionText: row.question_text,
+    durationMs: Number(row.duration_ms || 0),
+    audioUrl: row.audio_url ? `/api/turns/${row.turn_id}/audio` : null,
     transcript,
+    transcriptStatus: transcript
+      ? 'ready'
+      : row.ai_status === 'failed'
+        ? 'failed'
+        : 'processing',
     words,
     scores: {
       fluency: toNumberOrNull(row.fluency_score),
@@ -405,10 +414,14 @@ export async function getClassroomPost(postId, { userId = null } = {}) {
       `
         SELECT
           tr.id AS turn_id,
+          tr.speaker_id,
           tr.speaker_role,
           tr.part_number,
+          tr.duration_ms,
+          tr.audio_url,
           q.question_text,
           speaker.display_name AS speaker_name,
+          speaker.user_role AS speaker_user_role,
           ar.status AS ai_status,
           ar.whisper_transcript,
           ar.fluency_score,
@@ -679,34 +692,67 @@ export async function publishClassroomPost({ sessionId, userId, title, descripti
       throw new Error('Không tìm thấy người cần đồng ý');
     }
 
-    const result = await client.query(
+    // Creating the request is idempotent. A repeated click, a slow response
+    // followed by a retry, or two tabs submitting together must not turn an
+    // already published post back into pending or create another notification.
+    // A declined request may be submitted again after the author revises it.
+    let result = await client.query(
       `
         INSERT INTO classroom_posts (id, session_id, author_id, title, description, status, approver_id, approved_at)
         VALUES ($1, $2, $3, $4, $5, 'pending', $6, NULL)
         ON CONFLICT (session_id)
-        DO UPDATE SET
-          author_id = EXCLUDED.author_id,
-          title = EXCLUDED.title,
-          description = EXCLUDED.description,
-          status = 'pending',
-          approver_id = EXCLUDED.approver_id,
-          approved_at = NULL,
-          updated_at = NOW()
+        DO NOTHING
         RETURNING id
       `,
       [randomUUID(), sessionId, userId, safeTitle, safeDescription, approverId]
     );
+    let shouldNotify = result.rowCount > 0;
+
+    if (!shouldNotify) {
+      result = await client.query(
+        `
+          UPDATE classroom_posts
+          SET
+            author_id = $2,
+            title = $3,
+            description = $4,
+            status = 'pending',
+            approver_id = $5,
+            approved_at = NULL,
+            updated_at = NOW()
+          WHERE session_id = $1
+            AND author_id = $2
+            AND status = 'declined'
+          RETURNING id
+        `,
+        [sessionId, userId, safeTitle, safeDescription, approverId]
+      );
+      shouldNotify = result.rowCount > 0;
+    }
+
+    if (!shouldNotify) {
+      result = await client.query(
+        `
+          SELECT id
+          FROM classroom_posts
+          WHERE session_id = $1
+        `,
+        [sessionId]
+      );
+    }
     const postId = result.rows[0].id;
 
-    await createNotification(client, {
-      recipientId: approverId,
-      actorId: userId,
-      type: 'classroom_consent_request',
-      title: 'Có người muốn đăng phiên luyện chung lên Lớp học',
-      body: safeTitle,
-      entityType: 'classroom_post',
-      entityId: postId,
-    });
+    if (shouldNotify) {
+      await createNotification(client, {
+        recipientId: approverId,
+        actorId: userId,
+        type: 'classroom_consent_request',
+        title: 'Có người muốn đăng phiên luyện chung lên Lớp học',
+        body: safeTitle,
+        entityType: 'classroom_post',
+        entityId: postId,
+      });
+    }
 
     await client.query('COMMIT');
     return await getClassroomPost(postId);
@@ -753,6 +799,17 @@ export async function approveClassroomPost({ postId, userId }) {
     await client.query(
       "UPDATE classroom_posts SET status = 'published', approved_at = NOW(), updated_at = NOW() WHERE id = $1",
       [postId]
+    );
+    await client.query(
+      `
+        UPDATE notifications
+        SET read_at = COALESCE(read_at, NOW())
+        WHERE recipient_id = $1
+          AND entity_type = 'classroom_post'
+          AND entity_id = $2
+          AND type = 'classroom_consent_request'
+      `,
+      [userId, postId]
     );
 
     // Notify both parties that the post is now public.
@@ -801,6 +858,17 @@ export async function declineClassroomPost({ postId, userId }) {
     await client.query(
       "UPDATE classroom_posts SET status = 'declined', updated_at = NOW() WHERE id = $1",
       [postId]
+    );
+    await client.query(
+      `
+        UPDATE notifications
+        SET read_at = COALESCE(read_at, NOW())
+        WHERE recipient_id = $1
+          AND entity_type = 'classroom_post'
+          AND entity_id = $2
+          AND type = 'classroom_consent_request'
+      `,
+      [userId, postId]
     );
 
     await createNotification(client, {

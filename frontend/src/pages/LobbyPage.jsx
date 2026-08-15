@@ -40,6 +40,7 @@ import { Card, CardContent } from '../components/ui/card';
 import { cleanupMediaSession } from '../utils/mediaCleanup';
 import { PartnerPicker } from '../components/PartnerPicker';
 import { ClassroomAiFeedback } from '../components/ClassroomAiFeedback';
+import { AudioPlayer } from '../components/AudioPlayer';
 import { getIdentity } from '../utils/identity';
 import { startNotificationsRealtime, onNotification } from '../services/notificationsRealtime';
 import MentorLearnerPage from './MentorLearnerPage';
@@ -701,6 +702,106 @@ function groupNotesByPart(notes) {
   }, []);
 }
 
+function getClassroomAudioGroups(post) {
+  const participantById = new Map(
+    (post.participants || []).map((participant) => [participant.id, participant])
+  );
+  const groups = new Map();
+
+  for (const turn of post.aiTranscripts || []) {
+    if (!turn.audioUrl) continue;
+
+    const participant = participantById.get(turn.speakerId);
+    const speakerUserRole = turn.speakerUserRole || participant?.userRole || 'student';
+    if (post.sessionMode === 'mentor' && speakerUserRole !== 'student') {
+      continue;
+    }
+
+    if (!groups.has(turn.speakerId)) {
+      groups.set(turn.speakerId, {
+        speakerId: turn.speakerId,
+        speakerName: turn.speakerName || participant?.name || 'Người nói',
+        speakerRole: turn.speakerRole,
+        turns: [],
+      });
+    }
+    groups.get(turn.speakerId).turns.push(turn);
+  }
+
+  return [...groups.values()];
+}
+
+function ParticipantAudioPlaylist({ group }) {
+  const [selectedTurnId, setSelectedTurnId] = useState(group.turns[0]?.turnId || '');
+  const selectedTurn = group.turns.find((turn) => turn.turnId === selectedTurnId)
+    || group.turns[0];
+
+  useEffect(() => {
+    if (!group.turns.some((turn) => turn.turnId === selectedTurnId)) {
+      setSelectedTurnId(group.turns[0]?.turnId || '');
+    }
+  }, [group.turns, selectedTurnId]);
+
+  if (!selectedTurn) return null;
+
+  return (
+    <div className="rounded-xl border border-[#EAE7E3] bg-[#FAFAF8] p-3.5">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <strong className="text-[13px] text-[#1C1917]">{group.speakerName}</strong>
+          <span className="text-[11.5px] text-[#78716C]"> · Vai {group.speakerRole}</span>
+        </div>
+        {group.turns.length > 1 && (
+          <select
+            value={selectedTurn.turnId}
+            onChange={(event) => setSelectedTurnId(event.target.value)}
+            className="max-w-full rounded-lg border border-[#EAE7E3] bg-white px-2.5 py-1.5 text-xs text-[#57534E]"
+            aria-label={`Chọn lượt nói của ${group.speakerName}`}
+          >
+            {group.turns.map((turn) => (
+              <option key={turn.turnId} value={turn.turnId}>
+                {turn.partLabel}: {turn.questionText}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+      <p className="mb-2 text-xs font-medium text-[#57534E]">{selectedTurn.questionText}</p>
+      <AudioPlayer src={selectedTurn.audioUrl} durationMs={selectedTurn.durationMs} />
+    </div>
+  );
+}
+
+function ClassroomAudioSection({ post }) {
+  const groups = getClassroomAudioGroups(post);
+
+  return (
+    <div className="rounded-2xl border border-[#EAE7E3] bg-white p-5 shadow-sm">
+      <div className="flex items-center gap-2 text-[15px] font-bold text-[#1C1917]">
+        <span className="material-symbols-rounded icon-fill text-[#D97757]" style={{ fontSize: 20 }}>graphic_eq</span>
+        Audio bài nói
+      </div>
+      <p className="mt-0.5 text-xs text-[#78716C]">
+        {post.sessionMode === 'mentor'
+          ? 'Bản ghi các lượt nói của học viên trong phiên mentor.'
+          : 'Bản ghi các lượt nói của cả hai người tham gia phiên peer.'}
+      </p>
+
+      {groups.length > 0 ? (
+        <div className={`mt-4 grid gap-3 ${groups.length > 1 ? 'md:grid-cols-2' : ''}`}>
+          {groups.map((group) => (
+            <ParticipantAudioPlaylist key={group.speakerId} group={group} />
+          ))}
+        </div>
+      ) : (
+        <div className="mt-4 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          Bài đăng chưa có bản ghi âm khả dụng.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ClassroomPostDetail({
   post,
   focusSection,
@@ -740,16 +841,7 @@ function ClassroomPostDetail({
         </div>
       </div>
 
-      {/* Video */}
-      <div className="relative aspect-video rounded-2xl overflow-hidden grid place-items-center" style={{ background: '#1C1917' }}>
-        <div className="flex flex-col items-center text-white/90">
-          <span className="w-14 h-14 rounded-full bg-white/95 grid place-items-center shadow-lg mb-2">
-            <span className="material-symbols-rounded icon-fill text-[#D97757]" style={{ fontSize: 26 }}>play_arrow</span>
-          </span>
-          <strong className="text-sm">{post.videoPlaceholder}</strong>
-          <small className="text-white/60">Video bài nói</small>
-        </div>
-      </div>
+      <ClassroomAudioSection post={post} />
 
       {/* Like / save */}
       <div className="flex items-center gap-1">
@@ -771,37 +863,35 @@ function ClassroomPostDetail({
 
         {post.aiTranscripts.length > 0 && (
           <div className="mt-4">
-            <div className="text-[12.5px] font-bold text-[#1C1917]">Script bài nói và lỗi phát âm</div>
-            <div className="text-[11.5px] text-[#78716C]">Từ màu đỏ là vị trí AI phát hiện phát âm chưa rõ.</div>
+            <div className="text-[12.5px] font-bold text-[#1C1917]">Transcript bài nói</div>
+            <div className="text-[11.5px] text-[#78716C]">Trạng thái transcript được hiển thị riêng cho từng lượt nói.</div>
             <div className="flex flex-col gap-3 mt-3">
               {post.aiTranscripts.map((transcript) => (
-                <div key={`${transcript.speakerRole}-${transcript.partNumber}`} className="border border-[#EAE7E3] rounded-xl p-3.5 bg-[#FAFAF8]">
+                <div key={transcript.turnId} className="border border-[#EAE7E3] rounded-xl p-3.5 bg-[#FAFAF8]">
                   <div className="flex items-center justify-between mb-2">
                     <div>
                       <strong className="text-[13px] text-[#1C1917]">{transcript.speakerName}</strong>
                       <span className="text-[11.5px] text-[#78716C]"> · Vai {transcript.speakerRole} · {transcript.partLabel}</span>
                     </div>
-                    <small className="text-[11px] font-bold text-[#DC2626]">{transcript.words.filter((w) => w.hasPronunciationError).length} lỗi phát âm</small>
+                    <small className={`text-[11px] font-bold ${transcript.transcriptStatus === 'ready' ? 'text-[#059669]' : transcript.transcriptStatus === 'failed' ? 'text-[#DC2626]' : 'text-[#B45309]'}`}>
+                      {transcript.transcriptStatus === 'ready'
+                        ? 'Đã có transcript'
+                        : post.sessionMode === 'mentor'
+                          ? 'Chưa có transcript'
+                          : transcript.transcriptStatus === 'failed'
+                            ? 'AI xử lý lỗi'
+                            : 'Đang xử lý'}
+                    </small>
                   </div>
-                  <p className="text-[13.5px] text-[#292524] leading-[1.9]">
-                    {transcript.words.map((word, index) => (
-                      <span
-                        key={`${word.text}-${index}`}
-                        title={word.feedback || undefined}
-                        style={word.hasPronunciationError ? { color: '#DC2626', fontWeight: 600, textDecoration: 'underline wavy #FCA5A5', textUnderlineOffset: 3 } : undefined}
-                      >
-                        {word.text}{' '}
-                      </span>
-                    ))}
-                  </p>
-                  {transcript.words.some((w) => w.hasPronunciationError) && (
-                    <div className="flex flex-col gap-1.5 mt-2.5">
-                      {transcript.words.filter((w) => w.hasPronunciationError).map((word, index) => (
-                        <div key={`${word.text}-${index}`} className="flex gap-2 text-[12px]">
-                          <span className="font-bold text-[#DC2626] shrink-0">{word.text}</span>
-                          <p className="text-[#57534E]">{word.feedback}</p>
-                        </div>
-                      ))}
+                  {transcript.transcript ? (
+                    <p className="text-[13.5px] text-[#292524] leading-[1.9]">{transcript.transcript}</p>
+                  ) : (
+                    <div className={`rounded-lg px-3 py-2.5 text-xs ${transcript.transcriptStatus === 'failed' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-800'}`}>
+                      {post.sessionMode === 'mentor'
+                        ? 'Phiên mentor này chưa có transcript. Audio của học viên vẫn có thể nghe ở phía trên.'
+                        : transcript.transcriptStatus === 'failed'
+                        ? 'AI chưa tạo được transcript cho lượt này. Audio vẫn có thể nghe ở phía trên.'
+                        : 'Transcript đang được xử lý. Audio vẫn có thể nghe ở phía trên.'}
                     </div>
                   )}
                 </div>
@@ -850,8 +940,14 @@ function ClassroomPostDetail({
                               <span className="text-[10.5px] font-bold px-2 py-0.5 rounded" style={{ color: config.borderColor, background: `${config.borderColor}1a` }}>{config.label}</span>
                               <span className="text-[10.5px] text-[#A8A29E] tabular-nums">lúc {formatTimestamp(note.timestampMs)}</span>
                             </div>
-                            <p className="text-[12px] font-semibold text-[#292524]">{note.questionText}</p>
-                            <p className="text-[12.5px] text-[#57534E] leading-relaxed mt-0.5">{note.noteText}</p>
+                            <p className={`text-[12.5px] leading-relaxed ${note.noteText ? 'font-medium text-[#292524]' : 'italic text-[#A8A29E]'}`}>
+                              {note.noteText || 'Người đánh dấu chưa bổ sung chú thích chi tiết.'}
+                            </p>
+                            {note.questionText && (
+                              <p className="mt-1.5 text-[11.5px] text-[#78716C]">
+                                <span className="font-semibold">Câu hỏi:</span> {note.questionText}
+                              </p>
+                            )}
                           </div>
                         );
                       })}
@@ -957,21 +1053,24 @@ function ClassroomPostCard({ post, onOpenDetail, onToggleLike = () => {}, onTogg
         ))}
       </div>
 
-      {/* Video thumbnail */}
+      {/* Audio preview */}
       <button
         type="button"
         onClick={() => onOpenDetail(post, 'ai')}
-        className="relative block w-[calc(100%-36px)] mx-[18px] mt-3.5 aspect-video rounded-xl overflow-hidden group"
-        style={{ background: '#1C1917' }}
+        className="mx-[18px] mt-3.5 flex w-[calc(100%-36px)] items-center gap-3 rounded-xl border border-[#EAE7E3] bg-[#FAFAF8] px-4 py-3 text-left hover:border-[#EAC7B9]"
       >
-        <span className="absolute inset-0 grid place-items-center">
-          <span className="w-14 h-14 rounded-full bg-white/95 grid place-items-center shadow-lg group-hover:scale-105 transition-transform">
-            <span className="material-symbols-rounded icon-fill text-[#D97757]" style={{ fontSize: 26 }}>play_arrow</span>
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#D97757] text-white">
+          <span className="material-symbols-rounded icon-fill" style={{ fontSize: 21 }}>graphic_eq</span>
+        </span>
+        <span className="min-w-0 flex-1">
+          <strong className="block text-[13px] text-[#1C1917]">Nghe audio bài nói</strong>
+          <span className="block truncate text-[11.5px] text-[#78716C]">
+            {post.sessionMode === 'mentor'
+              ? 'Audio của học viên trong phiên mentor'
+              : `Audio của ${post.participants.map((p) => p.name).filter(Boolean).join(' và ')}`}
           </span>
         </span>
-        <span className="absolute left-3 bottom-3 text-[11.5px] font-semibold text-white bg-black/50 backdrop-blur px-2.5 py-1 rounded-md">
-          {post.participants.map((p) => p.name).filter(Boolean).join(' & ')} · {post.videoPlaceholder}
-        </span>
+        <span className="material-symbols-rounded text-[#A8A29E]" style={{ fontSize: 18 }}>chevron_right</span>
       </button>
 
       {/* AI band + peer notes strip */}
@@ -1593,6 +1692,7 @@ function UserHistoryPanelReal() {
         {sessions.map((item) => {
           const isPublished = item.publicStatus === 'published';
           const isPending = item.publicStatus === 'pending';
+          const isHidden = item.publicStatus === 'hidden';
           return (
             <article key={item.id} className="bg-white border border-[#EAE7E3] rounded-2xl shadow-sm p-5 flex flex-col sm:flex-row sm:items-center gap-4">
               <div className="flex-1 min-w-0">
@@ -1617,7 +1717,7 @@ function UserHistoryPanelReal() {
                   : isPending ? 'text-[#B45309] bg-[#FEF6E7] border border-[#FCD9A5]'
                   : 'text-[#78716C] bg-[#F1EEEA] border border-[#EAE7E3]'
                 }`}>
-                  {isPublished ? 'Đã public' : isPending ? 'Chờ đồng ý' : getHistoryStatusLabel(item)}
+                  {isPublished ? 'Đã public' : isPending ? 'Chờ đồng ý' : isHidden ? 'Đã ẩn' : getHistoryStatusLabel(item)}
                 </span>
               </div>
 
@@ -1631,10 +1731,10 @@ function UserHistoryPanelReal() {
                 </button>
                 <button
                   onClick={() => handlePublishSession(item)}
-                  disabled={publishingSessionId === item.id || isPublished || isPending || item.status !== 'completed'}
+                  disabled={publishingSessionId === item.id || isPublished || isPending || isHidden || item.status !== 'completed'}
                   className="h-10 px-3.5 rounded-lg bg-[#D97757] text-white text-[13px] font-semibold hover:brightness-105 disabled:opacity-45 disabled:hover:brightness-100 whitespace-nowrap"
                 >
-                  {isPublished ? 'Đã public' : isPending ? 'Đã gửi yêu cầu' : publishingSessionId === item.id ? 'Đang gửi…' : 'Xin đăng bài'}
+                  {isPublished ? 'Đã public' : isPending ? 'Đã gửi yêu cầu' : isHidden ? 'Bài đã ẩn' : publishingSessionId === item.id ? 'Đang gửi…' : 'Xin đăng bài'}
                 </button>
               </div>
             </article>
@@ -1998,6 +2098,8 @@ function TeacherReviewsPanel() {
 
 function getStudentWorkStatusLabel(item) {
   if (item.reviewStatus === 'published') return 'Đã public';
+  if (item.reviewStatus === 'pending') return 'Đang chờ đồng ý';
+  if (item.publicStatus === 'hidden') return 'Đã ẩn';
   if (item.reviewStatus === 'ready_to_publish') return 'Sẵn sàng public';
   if (item.reviewStatus === 'needs_mentor_review') return 'Cần mentor nhận xét';
   if (item.reviewStatus === 'processing') return 'Đang xử lý AI';
@@ -2007,7 +2109,8 @@ function getStudentWorkStatusLabel(item) {
 
 function getStudentWorkStatusClass(item) {
   if (item.reviewStatus === 'published') return 'success';
-  if (item.reviewStatus === 'ready_to_publish') return 'warning';
+  if (item.publicStatus === 'hidden') return '';
+  if (item.reviewStatus === 'pending' || item.reviewStatus === 'ready_to_publish') return 'warning';
   return '';
 }
 
@@ -2161,6 +2264,8 @@ function TeacherReviewsPanelReal() {
             .map((participant) => participant.displayName)
             .join(' và ');
           const isPublished = item.publicStatus === 'published';
+          const isPending = item.publicStatus === 'pending';
+          const isHidden = item.publicStatus === 'hidden';
 
           return (
             <article key={item.id} className="bg-white border border-[#EAE7E3] rounded-2xl shadow-sm p-5">
@@ -2199,10 +2304,18 @@ function TeacherReviewsPanelReal() {
                 </button>
                 <button
                   onClick={() => handlePublishStudentWork(item)}
-                  disabled={publishingSessionId === item.id || isPublished || item.status !== 'completed'}
+                  disabled={publishingSessionId === item.id || isPublished || isPending || isHidden || item.status !== 'completed'}
                   className="h-10 px-3.5 rounded-lg bg-[#D97757] text-white text-[13px] font-semibold hover:brightness-105 disabled:opacity-45 disabled:hover:brightness-100"
                 >
-                  {isPublished ? 'Đã public' : publishingSessionId === item.id ? 'Đang gửi…' : 'Xin đăng bài'}
+                  {isPublished
+                    ? 'Đã public'
+                    : isPending
+                      ? 'Đã gửi yêu cầu'
+                      : isHidden
+                        ? 'Bài đã ẩn'
+                        : publishingSessionId === item.id
+                          ? 'Đang gửi…'
+                          : 'Xin đăng bài'}
                 </button>
               </div>
             </article>

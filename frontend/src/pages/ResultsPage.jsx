@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSession } from '../context/SessionContext';
-import { getBackendFileUrl, getResults, retryResults } from '../services/api';
+import { getResults, retryResults } from '../services/api';
 import { areAiResultsTerminal } from '../utils/aiResultStatus';
 import { resolveSessionId } from '../utils/sessionIdentity';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { PronunciationPanel } from '../components/PronunciationPanel';
+import { AudioPlayer } from '../components/AudioPlayer';
 
 // Ba tiêu chí tạo nên band tổng. Phát âm CỐ Ý không có ở đây.
 //
@@ -588,7 +589,10 @@ export default function ResultsPage() {
                 </CardHeader>
                 <CardContent className="px-4 pb-4">
                   {selectedTurnResult.audioUrl ? (
-                    <audio src={getBackendFileUrl(selectedTurnResult.audioUrl)} controls className="w-full" />
+                    <AudioPlayer
+                      src={selectedTurnResult.audioUrl}
+                      durationMs={selectedTurnResult.durationMs}
+                    />
                   ) : (
                     <p className="text-sm text-zinc-400">Audio chưa khả dụng</p>
                   )}

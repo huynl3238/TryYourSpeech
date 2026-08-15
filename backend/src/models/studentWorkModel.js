@@ -19,8 +19,12 @@ function toIsoString(value) {
 }
 
 function getReviewStatus(row) {
-  if (row.classroom_post_id) {
+  if (row.classroom_post_status === 'published') {
     return 'published';
+  }
+
+  if (row.classroom_post_status === 'pending') {
+    return 'pending';
   }
 
   if (row.status === 'completed') {
@@ -60,7 +64,7 @@ function mapStudentWorkRow(row) {
     sessionMode: row.session_mode || 'peer',
     status: row.status,
     reviewStatus: getReviewStatus(row),
-    publicStatus: row.classroom_post_id ? 'published' : 'private',
+    publicStatus: row.classroom_post_status || 'private',
     classroomPostId: row.classroom_post_id,
     topic: {
       id: row.topic_id,
@@ -120,6 +124,7 @@ export async function listStudentWork({ limit = 50, mentorId = null } = {}) {
           mr.id AS mentor_review_id,
           mr.overall_comment AS mentor_review_summary,
           cp.id AS classroom_post_id,
+          cp.status AS classroom_post_status,
           json_build_array(
             json_build_object(
               'id', ua.id,
@@ -167,7 +172,7 @@ export async function listStudentWork({ limit = 50, mentorId = null } = {}) {
         ) holistic_summary ON true
         LEFT JOIN mentor_reviews mr ON mr.session_id = s.id
         LEFT JOIN classroom_posts cp ON cp.session_id = s.id
-          AND cp.status = 'published'
+          AND cp.status <> 'declined'
         ${scopeSql}
         ORDER BY COALESCE(s.ended_at, s.started_at, s.created_at) DESC
         LIMIT $1

@@ -378,6 +378,10 @@ test('mentor session creates student-only turns and completes with mentor review
     assert.equal(results.sessionMode, 'mentor');
     assert.equal(results.mentorReview.overallComment, 'Good effort, but answers need more development.');
     assert.ok(results.turnResults.every((turn) => turn.aiStatus === 'not_required'));
+    assert.deepEqual(
+      results.turnResults.map((turn) => turn.durationMs),
+      detail.turns.map((turn) => turn.durationMs)
+    );
 
     const history = await getPracticeHistoryForUser({
       userId: session.userA.id,
@@ -633,6 +637,11 @@ test('classroom posts publish completed sessions and appear in the feed', async 
     const turnCount = await pool.query('SELECT COUNT(*)::int AS total FROM turns WHERE session_id = $1', [session.sessionId]);
     assert.equal(detailPost.post.aiTranscripts.length, turnCount.rows[0].total);
     assert.equal(detailPost.post.sessionMode, 'mentor');
+    assert.equal(detailPost.post.peerReviews[0].notes[0].noteText, 'Add one more example here');
+    assert.notEqual(
+      detailPost.post.peerReviews[0].notes[0].questionText,
+      detailPost.post.peerReviews[0].notes[0].noteText
+    );
 
     const commentResult = await addClassroomComment({
       postId: published.post.id,
@@ -717,6 +726,12 @@ test('student work list exposes completed sessions and public status', async (t)
       title: 'Student work published post',
       description: 'Published from student work.',
     });
+
+    const whilePending = await listStudentWork();
+    const pendingSession = whilePending.sessions.find((item) => item.id === session.sessionId);
+    assert.equal(pendingSession.reviewStatus, 'pending');
+    assert.equal(pendingSession.publicStatus, 'pending');
+
     await approveClassroomPost({
       postId: pendingPost.post.id,
       userId: session.userB.id,
@@ -781,6 +796,15 @@ test('notifications are created for mentor reviews and classroom publishing', as
       description: 'Publishing should notify the mentor.',
     });
 
+    const repeatedPendingPost = await publishClassroomPost({
+      sessionId: session.sessionId,
+      userId: session.userA.id,
+      title: 'Notification classroom post',
+      description: 'A retry must not create another notification.',
+    });
+    assert.equal(repeatedPendingPost.post.id, pendingPost.post.id);
+    assert.equal(repeatedPendingPost.post.status, 'pending');
+
     // The approver (userB) is asked to consent before anything goes public.
     const consentNotifications = await listNotificationsForUser({
       userId: session.userB.id,
@@ -789,11 +813,34 @@ test('notifications are created for mentor reviews and classroom publishing', as
       (item) => item.type === 'classroom_consent_request'
     );
     assert.equal(consentRequest.title, 'Có người muốn đăng phiên luyện chung lên Lớp học');
+    assert.equal(
+      consentNotifications.notifications.filter(
+        (item) => item.type === 'classroom_consent_request' && item.entityId === pendingPost.post.id
+      ).length,
+      1
+    );
 
     await approveClassroomPost({
       postId: pendingPost.post.id,
       userId: session.userB.id,
     });
+
+    const repeatedPublishedPost = await publishClassroomPost({
+      sessionId: session.sessionId,
+      userId: session.userA.id,
+      title: 'Notification classroom post',
+      description: 'A published post must stay published.',
+    });
+    assert.equal(repeatedPublishedPost.post.status, 'published');
+
+    const approverNotifications = await listNotificationsForUser({
+      userId: session.userB.id,
+    });
+    const consentRequestsAfterApproval = approverNotifications.notifications.filter(
+      (item) => item.type === 'classroom_consent_request' && item.entityId === pendingPost.post.id
+    );
+    assert.equal(consentRequestsAfterApproval.length, 1);
+    assert.equal(consentRequestsAfterApproval[0].isRead, true);
 
     // After consent, both participants get a "published" notification.
     const authorNotifications = await listNotificationsForUser({

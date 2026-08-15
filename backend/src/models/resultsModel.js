@@ -39,6 +39,7 @@ function mapTurnResult(row, sessionMode = 'peer') {
     turnId: row.turn_id,
     questionText: row.question_text,
     audioUrl: toAudioApiUrl(row.turn_id, row.audio_url),
+    durationMs: Number(row.duration_ms || 0),
     aiStatus: sessionMode === 'mentor' ? 'not_required' : row.ai_status || 'pending',
     transcript: row.whisper_transcript,
     scores: mapScores(row),
@@ -119,6 +120,7 @@ async function getTurnResults(client, sessionId, userId, sessionMode) {
       SELECT
         tr.id AS turn_id,
         tr.audio_url,
+        tr.duration_ms,
         q.question_text,
         ar.status AS ai_status,
         ar.whisper_transcript,

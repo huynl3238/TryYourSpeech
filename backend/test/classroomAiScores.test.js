@@ -52,9 +52,9 @@ async function seedPost({ holistic = null, turnScores = null } = {}) {
   );
   await pool.query(
     `INSERT INTO turns (id, session_id, speaker_id, speaker_role, question_id, part_number,
-       turn_index, duration_ms, prep_duration_ms, upload_status)
-     VALUES ($1, $2, $3, 'A', $4, 2, 1, 120000, 60000, 'uploaded')`,
-    [turnId, sessionId, authorId, questionId]
+       turn_index, duration_ms, prep_duration_ms, upload_status, audio_url)
+     VALUES ($1, $2, $3, 'A', $4, 2, 1, 120000, 60000, 'uploaded', $5)`,
+    [turnId, sessionId, authorId, questionId, `/uploads/audio/${turnId}.webm`]
   );
 
   if (turnScores) {
@@ -181,6 +181,14 @@ test('phiên chưa chấm AI thì báo rõ là chưa có, không trả điểm n
     assert.equal(post.ai.overallBand, null);
     assert.deepEqual(post.ai.scores, { fluency: null, lexical: null, grammar: null });
     assert.equal(post.ai.feedback, null);
+
+    const turn = post.aiTranscripts[0];
+    assert.equal(turn.audioUrl, `/api/turns/${seeded.turnId}/audio`);
+    assert.equal(turn.durationMs, 120000);
+    assert.equal(turn.speakerId, seeded.authorId);
+    assert.equal(turn.transcript, '');
+    assert.deepEqual(turn.words, []);
+    assert.equal(turn.transcriptStatus, 'processing');
   } finally {
     await cleanup(seeded);
   }
@@ -225,6 +233,7 @@ test('điểm tổng của một lượt nói không được cộng phát âm v
     const turn = post.aiTranscripts[0];
 
     assert.equal(turn.scores.overall, 7, 'phát âm đã bị cộng vào điểm tổng của lượt nói');
+    assert.equal(turn.transcriptStatus, 'ready');
     // Điểm phát âm thô vẫn giữ để hiển thị riêng, chỉ không được vào điểm tổng.
     assert.equal(turn.scores.pronunciation, 4);
   } finally {

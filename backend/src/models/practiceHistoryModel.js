@@ -100,12 +100,7 @@ function mapHistoryRow(row) {
     aiFailedCount: toInteger(row.ai_failed_count),
     aiPendingCount: toInteger(row.ai_pending_count),
     overallBand: toNumberOrNull(row.overall_band),
-    publicStatus:
-      row.classroom_post_status === 'published'
-        ? 'published'
-        : row.classroom_post_status === 'pending'
-          ? 'pending'
-          : 'private',
+    publicStatus: row.classroom_post_status || 'private',
   };
 }
 

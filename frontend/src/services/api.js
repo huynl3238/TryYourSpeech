@@ -7,6 +7,7 @@ function getBaseUrl() {
 }
 
 const BASE_URL = getBaseUrl();
+let refreshSessionInFlight = null;
 
 export function getBackendFileUrl(path) {
   if (!path) return '';
@@ -134,8 +135,15 @@ export async function resetPassword({ token, password }) {
   });
 }
 
-export async function refreshSession() {
-  return request('/auth/refresh', { method: 'POST' });
+export function refreshSession() {
+  if (!refreshSessionInFlight) {
+    refreshSessionInFlight = request('/auth/refresh', { method: 'POST' })
+      .finally(() => {
+        refreshSessionInFlight = null;
+      });
+  }
+
+  return refreshSessionInFlight;
 }
 
 export async function logout() {
@@ -390,6 +398,35 @@ export async function completeReview({ sessionId, userId }) {
 
 export async function getResults(sessionId, userId) {
   return request(`/results/${sessionId}?userId=${userId}`);
+}
+
+async function readAudioError(response) {
+  try {
+    const data = await response.json();
+    return data.error || 'Không thể tải bản ghi âm';
+  } catch {
+    return 'Không thể tải bản ghi âm';
+  }
+}
+
+// Media elements normally send the same-origin auth cookie themselves. Safari
+// can still fail a protected Range request after a long session, especially
+// around an access-token refresh. The player uses this full-file request as a
+// fallback, refreshes the cookie once on 401, then plays a local Blob URL.
+export async function fetchAudioBlob(path) {
+  const url = getBackendFileUrl(path);
+  let response = await fetch(url, { credentials: 'include' });
+
+  if (response.status === 401) {
+    await refreshSession();
+    response = await fetch(url, { credentials: 'include' });
+  }
+
+  if (!response.ok) {
+    throw new Error(await readAudioError(response));
+  }
+
+  return await response.blob();
 }
 
 export async function submitMentorReview(payload) {
