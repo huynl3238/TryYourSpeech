@@ -1,4 +1,5 @@
 import { createContext, useContext, useReducer, useRef } from 'react';
+import { resolveSessionId } from '../utils/sessionIdentity';
 
 const SessionContext = createContext(null);
 
@@ -129,6 +130,7 @@ function sessionReducer(state, action) {
     case 'SET_SESSION_DATA':
       return {
         ...state,
+        sessionId: resolveSessionId({ sessionId: state.sessionId, sessionData: action.payload }),
         sessionData: action.payload,
         turns: action.payload.turns || [],
       };
@@ -267,7 +269,12 @@ function sessionReducer(state, action) {
       };
 
     case 'SET_RESULTS':
-      return { ...state, results: action.payload, phase: 'results' };
+      return {
+        ...state,
+        sessionId: resolveSessionId({ sessionId: state.sessionId, results: action.payload }),
+        results: action.payload,
+        phase: 'results',
+      };
 
     case 'RESET':
       return { ...initialState };

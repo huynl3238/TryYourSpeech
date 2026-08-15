@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSession } from '../context/SessionContext';
 import { getBackendFileUrl, retryResults } from '../services/api';
+import { resolveSessionId } from '../utils/sessionIdentity';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -265,10 +266,16 @@ export default function ResultsPage() {
   const { state, dispatch } = useSession();
   const navigate = useNavigate();
   const results = state.results;
+  const resultSessionId = resolveSessionId({
+    sessionId: state.sessionId,
+    sessionData: state.sessionData,
+    results,
+  });
   const turnResults = useMemo(() => normalizeTurnResults(results, state.turns), [results, state.turns]);
   // 'summary' = the whole-test holistic overview; otherwise a turnId for per-answer detail.
   const [selectedTurnId, setSelectedTurnId] = useState('summary');
   const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState('');
 
   // If we landed here without any session context (e.g. a hard refresh cleared
   // the in-memory state), there is nothing to load — send the user home instead
@@ -309,12 +316,19 @@ export default function ResultsPage() {
 
   // Holistic scoring grades the whole test at once, so retry is session-level, not per-turn.
   async function handleRetry() {
+    if (!resultSessionId) {
+      setRetryError('Không tìm thấy mã phiên luyện tập. Vui lòng quay lại lịch sử và mở kết quả lần nữa.');
+      return;
+    }
+
+    setRetryError('');
     setRetrying(true);
     try {
-      await retryResults({ sessionId: state.sessionId, userId: state.userId });
+      await retryResults({ sessionId: resultSessionId, userId: state.userId });
       navigate('/waiting-review');
     } catch (err) {
       console.error('[Results] Retry failed:', err.message);
+      setRetryError(err.message || 'Không thể yêu cầu AI chấm lại lúc này.');
     } finally {
       setRetrying(false);
     }
@@ -447,12 +461,17 @@ export default function ResultsPage() {
                   <p className="text-xs text-red-700 mb-3">
                     {holistic?.error || 'Dịch vụ AI tạm thời gặp lỗi.'} Bạn có thể thử lại.
                   </p>
-                  <Button variant="destructive" size="sm" disabled={retrying} onClick={handleRetry}>
+                  <Button variant="destructive" size="sm" disabled={retrying || !resultSessionId} onClick={handleRetry}>
                     {retrying
                       ? <><div className="w-3.5 h-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin-slow" /> Đang thử...</>
                       : <><span className="material-symbols-rounded" style={{ fontSize: 12 }}>refresh</span> Chấm lại cả bài</>
                     }
                   </Button>
+                  {(retryError || !resultSessionId) && (
+                    <p className="text-xs text-red-700 mt-2">
+                      {retryError || 'Không tìm thấy mã phiên luyện tập. Vui lòng quay lại lịch sử và mở kết quả lần nữa.'}
+                    </p>
+                  )}
                 </div>
               ) : holisticStatus !== 'completed' ? (
                 <div className="rounded-lg bg-zinc-50 border border-zinc-100 p-8 text-center">
