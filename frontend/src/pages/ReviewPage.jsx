@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Input } from '../components/ui/input';
 import { ErrorScreen } from '../components/ui/ErrorScreen';
 import { AudioPlayer } from '../components/AudioPlayer';
+import { getEffectiveSpeakDurationMs } from '../utils/sessionTimeline';
 
 const ERROR_TYPE_CONFIG = {
   grammar_error:        { label: 'Grammar error',              badgeClass: 'bg-amber-100 text-amber-700',  borderColor: '#f59e0b' },
@@ -47,7 +48,14 @@ export default function ReviewPage() {
 
   const partnerTurns = state.turns.filter((t) => t.speakerRole !== state.role);
   const myTurns = state.turns.filter((t) => t.speakerRole === state.role);
-  const selectedTurn = state.turns.find((t) => t.id === selectedTurnId);
+  const selectedTurnIndex = state.turns.findIndex((t) => t.id === selectedTurnId);
+  const selectedTurn = state.turns[selectedTurnIndex];
+  // Lượt bị bấm kết thúc sớm thì bản ghi ngắn hơn thời lượng đã định. Ở màn này
+  // ta biết chính xác nó ngắn bao nhiêu, nên đưa luôn con số thật cho thanh phát
+  // thay vì để nó đoán từ thời lượng kế hoạch.
+  const selectedTurnDurationMs = selectedTurn
+    ? getEffectiveSpeakDurationMs(selectedTurn, selectedTurnIndex, state.earlyTurnEnds)
+    : 0;
 
   useEffect(() => {
     if (partnerTurns.length > 0 && !selectedTurnId) {
@@ -359,7 +367,7 @@ export default function ReviewPage() {
                       <AudioPlayer
                         ref={audioRef}
                         src={audioUrls[selectedTurnId]}
-                        durationMs={selectedTurn.durationMs}
+                        durationMs={selectedTurnDurationMs}
                       />
                       {notesForSelectedTurn.length > 0 && (
                         <div className="mt-3">

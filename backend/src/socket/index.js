@@ -442,6 +442,10 @@ function createRoom(roomId, userA, userB, sessionId, sessionMode) {
     practiceCompleteUsers: new Set(),
     practiceReadyUsers: new Set(),
     practiceStarted: false,
+    // turnIndex -> số mili giây đã nói thật, khi người nói bấm kết thúc sớm. Giữ
+    // ở phòng để tin phát ra cho hai máy luôn là cùng một con số, và để lần phát
+    // lại (nếu có) không mâu thuẫn với lần trước.
+    earlyTurnEnds: new Map(),
     sessionId,
     readyTimeout: null,
     connectTimeout: null,
@@ -1042,6 +1046,78 @@ function handleDeviceFailed(io, socket) {
   });
 }
 
+// Người dùng chủ động không vào phiên ở bước kiểm tra thiết bị. Khác hẳn thiết bị
+// hỏng và khác hẳn rớt mạng: không có gì trục trặc cả, họ chỉ đổi ý. Người kia
+// phải được nghe đúng lý do đó, nếu không họ sẽ đi kiểm tra micro của chính mình
+// hoặc ngồi chờ hết 60 giây một người đã đi.
+function handleDeviceDeclined(io, socket) {
+  const roomId = userRoom.get(socket.id);
+  if (!roomId) return;
+
+  const room = rooms.get(roomId);
+  if (!room || room.phase === 'done') return;
+
+  closeRoom(io, roomId, 'partner_declined', { skipSocketId: socket.id }).catch((err) => {
+    console.error('device_declined handling failed:', err.message);
+  });
+}
+
+// Người nói bấm kết thúc lượt sớm. Server không giữ danh sách lượt nên không tự
+// tính được lịch trình; việc của nó ở đây là làm một điểm phát duy nhất, để hai
+// máy rút ngắn cùng một lượt bằng cùng một con số. Phát cho CẢ người vừa bấm chứ
+// không chỉ cho đối tác: nếu người bấm tự áp con số của mình còn người kia áp con
+// số từ server, chỉ cần hai giá trị lệch nhau một chút là cả phần còn lại của
+// buổi luyện lệch theo.
+// Tách riêng phần quyết định để khoá được bằng test: đây là chỗ duy nhất trả lời
+// câu "lượt này chốt ở bao nhiêu giây", và một lỗi ở đây làm hai máy chạy lệch
+// nhau suốt phần còn lại của buổi luyện. Trả về `null` nghĩa là bỏ qua tin.
+//
+// Việc cắt theo độ dài thật của lượt nằm ở client, vì server không giữ danh sách
+// lượt. Ở đây chỉ cần bảo đảm một điều: một lượt đã chốt thì không dài ra được.
+export function resolveEarlyTurnEnd(data, currentMs) {
+  const turnIndex = Number(data?.turnIndex);
+  const spokenMs = Number(data?.spokenMs);
+
+  if (!Number.isInteger(turnIndex) || turnIndex < 0) return null;
+  if (!Number.isFinite(spokenMs) || spokenMs < 0) return null;
+
+  const safeSpokenMs = Math.round(spokenMs);
+
+  // Bấm hai lần, hoặc hai tin tới cùng lúc, phải cho ra đúng một kết quả.
+  if (Number.isFinite(currentMs) && currentMs <= safeSpokenMs) {
+    return { turnIndex, spokenMs: currentMs, isNew: false };
+  }
+
+  return { turnIndex, spokenMs: safeSpokenMs, isNew: true };
+}
+
+function handleEndTurnEarly(io, socket, data) {
+  const roomId = userRoom.get(socket.id);
+  if (!roomId) return;
+
+  const room = rooms.get(roomId);
+  if (!room || room.phase !== 'active' || !room.practiceStarted) return;
+
+  // Tra bằng số chứ không bằng giá trị thô: khoá của Map là số, nên `"3"` gửi lên
+  // sẽ không tìm thấy bản ghi đã chốt và lượt đó chốt lại được lần hai.
+  const requestedTurnIndex = Number(data?.turnIndex);
+  const resolved = resolveEarlyTurnEnd(data, room.earlyTurnEnds.get(requestedTurnIndex));
+  if (!resolved) return;
+
+  const { turnIndex, spokenMs, isNew } = resolved;
+
+  if (!isNew) {
+    io.to(socket.id).emit('turn_ended_early', { turnIndex, spokenMs });
+    return;
+  }
+
+  room.earlyTurnEnds.set(turnIndex, spokenMs);
+
+  for (const socketId of [room.userA.socketId, room.userB.socketId]) {
+    io.to(socketId).emit('turn_ended_early', { turnIndex, spokenMs });
+  }
+}
+
 // The practice timeline finished and both sides are heading for the review
 // phase. Marking the room done is what stops a later disconnect — closing the
 // tab, hitting refresh, or starting a new search — from abandoning a session
@@ -1310,6 +1386,10 @@ function resumeRoomIfAway(io, socket) {
     sessionId: room.sessionId,
     phase: room.phase,
     sessionMode: room.sessionMode,
+    // Lượt nào đã kết thúc sớm trong lúc máy này mất kết nối. Thiếu danh sách
+    // này thì họ quay lại với lịch trình cũ và chậm hơn đối tác đúng bằng phần
+    // đã tiết kiệm — lệch đó không tự hết, nó theo tới hết buổi.
+    earlyTurnEnds: Object.fromEntries(room.earlyTurnEnds),
   });
   console.log(`[Room] ${roomId}: ${userId} đã kết nối lại`);
 }
@@ -1413,6 +1493,8 @@ export function setupSocket(io) {
     socket.on('signal', (data) => handleSignal(io, socket, data));
     socket.on('device_ready', () => handleDeviceReady(io, socket));
     socket.on('device_failed', () => handleDeviceFailed(io, socket));
+    socket.on('device_declined', () => handleDeviceDeclined(io, socket));
+    socket.on('end_turn_early', (data) => handleEndTurnEarly(io, socket, data));
     socket.on('peer_connected', () => {
       handlePeerConnected(io, socket).catch((err) => {
         console.error('peer_connected failed:', err.message);

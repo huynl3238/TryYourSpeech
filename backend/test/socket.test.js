@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { setupSocket } from '../src/socket/index.js';
+import { resolveEarlyTurnEnd, setupSocket } from '../src/socket/index.js';
 
 let accountCounter = 0;
 
@@ -128,4 +128,60 @@ test('the same account cannot queue twice from two tabs', async () => {
   assert.equal(firstTab.emitted[0].event, 'waiting');
   assert.equal(secondTab.emitted[0].event, 'match_error');
   firstTab.handlers.cancel_find_match();
+});
+
+// --- Kết thúc lượt nói sớm ---
+//
+// Server không giữ danh sách lượt nên nó không tự tính được lịch trình; việc duy
+// nhất của nó là làm điểm phát chung, để hai máy rút ngắn cùng một lượt bằng cùng
+// một con số. Nếu chỗ này trả lời khác nhau cho hai lần hỏi về cùng một lượt thì
+// hai máy chạy lệch nhau suốt phần còn lại của buổi luyện.
+
+test('resolveEarlyTurnEnd bỏ qua payload không dùng được', () => {
+  assert.equal(resolveEarlyTurnEnd(null, undefined), null);
+  assert.equal(resolveEarlyTurnEnd({}, undefined), null);
+  assert.equal(resolveEarlyTurnEnd({ turnIndex: -1, spokenMs: 100 }, undefined), null);
+  assert.equal(resolveEarlyTurnEnd({ turnIndex: 1.5, spokenMs: 100 }, undefined), null);
+  assert.equal(resolveEarlyTurnEnd({ turnIndex: 'x', spokenMs: 100 }, undefined), null);
+  assert.equal(resolveEarlyTurnEnd({ turnIndex: 0, spokenMs: -1 }, undefined), null);
+  assert.equal(resolveEarlyTurnEnd({ turnIndex: 0, spokenMs: 'x' }, undefined), null);
+  assert.equal(resolveEarlyTurnEnd({ turnIndex: 0, spokenMs: Infinity }, undefined), null);
+});
+
+test('resolveEarlyTurnEnd chốt lượt chưa từng kết thúc sớm', () => {
+  assert.deepEqual(
+    resolveEarlyTurnEnd({ turnIndex: 2, spokenMs: 20400.7 }, undefined),
+    { turnIndex: 2, spokenMs: 20401, isNew: true }
+  );
+});
+
+test('lượt đã chốt thì tin sau không kéo dài nó ra', () => {
+  // Bấm lần hai, hoặc một tin tới muộn: phải nhận lại đúng con số đã chốt, và
+  // không được phát lại cho cả phòng.
+  assert.deepEqual(
+    resolveEarlyTurnEnd({ turnIndex: 2, spokenMs: 30000 }, 20000),
+    { turnIndex: 2, spokenMs: 20000, isNew: false }
+  );
+  assert.deepEqual(
+    resolveEarlyTurnEnd({ turnIndex: 2, spokenMs: 20000 }, 20000),
+    { turnIndex: 2, spokenMs: 20000, isNew: false }
+  );
+});
+
+test('một con số ngắn hơn vẫn được chấp nhận', () => {
+  // Chỉ có thể rút ngắn thêm. Trường hợp này hiếm nhưng vẫn nhất quán: lượt nói
+  // không bao giờ dài ra.
+  assert.deepEqual(
+    resolveEarlyTurnEnd({ turnIndex: 2, spokenMs: 15000 }, 20000),
+    { turnIndex: 2, spokenMs: 15000, isNew: true }
+  );
+});
+
+test('end_turn_early ngoài phòng luyện thì không làm gì cả', () => {
+  const { handlers, emitted } = createSocketHarness();
+
+  handlers.end_turn_early({ turnIndex: 0, spokenMs: 12000 });
+  handlers.device_declined();
+
+  assert.equal(emitted.length, 0);
 });

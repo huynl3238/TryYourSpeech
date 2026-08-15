@@ -169,3 +169,88 @@ test('chưa có mốc bắt đầu thì không đoán bừa', () => {
   assert.equal(getSyncedTimeline(TURNS, NaN, 0), null);
   assert.equal(getSyncedTimeline([], PRACTICE_START, PRACTICE_START), null);
 });
+
+// --- Kết thúc lượt nói sớm ---
+//
+// Rút ngắn một lượt là thay đổi nguy hiểm nhất có thể làm với hàm này: nếu hai
+// máy không rút cùng một lượt bằng cùng một con số, chúng lệch nhau ngay và lệch
+// mãi. Nên phần dưới đây kiểm đúng một điều — mọi mốc phía sau dịch lên đúng
+// bằng phần thời gian tiết kiệm được, không hơn không kém.
+
+function atWithEarlyEnds(elapsedMs, earlyTurnEnds) {
+  return getSyncedTimeline(TURNS, PRACTICE_START, PRACTICE_START + elapsedMs, earlyTurnEnds);
+}
+
+test('lượt kết thúc sớm thì mọi bước phía sau dịch lên đúng bằng phần tiết kiệm', () => {
+  // Lượt 0 bắt đầu sau 8 giây chờ đổi vai, dài 45 giây, nên bình thường kết thúc
+  // ở 53 giây. Nói 20 giây rồi bấm xong thì nó kết thúc ở 28 giây.
+  const earlyEnds = { 0: 20000 };
+
+  assert.equal(atWithEarlyEnds(27_999, earlyEnds).phase, 'speaking');
+  assert.equal(atWithEarlyEnds(27_999, earlyEnds).turnIndex, 0);
+
+  // Ngay sau đó là khoảng chờ của lượt 1 (cùng người nói, nên 5 giây).
+  const afterEarlyEnd = atWithEarlyEnds(28_000, earlyEnds);
+  assert.equal(afterEarlyEnd.phase, 'transition');
+  assert.equal(afterEarlyEnd.turnIndex, 1);
+  assert.equal(afterEarlyEnd.gapMs, NEXT_QUESTION_GAP_MS);
+
+  // 25 giây tiết kiệm được phải dịch nguyên vẹn sang mọi bước sau. Không kết thúc
+  // sớm thì lượt 1 nói từ 58 giây; giờ là 33 giây.
+  assert.equal(atWithEarlyEnds(33_000, earlyEnds).phase, 'speaking');
+  assert.equal(atWithEarlyEnds(33_000, earlyEnds).turnIndex, 1);
+  assert.equal(
+    atWithEarlyEnds(33_000, earlyEnds).stepStartedAtMs,
+    PRACTICE_START + 33_000
+  );
+});
+
+test('nhiều lượt kết thúc sớm thì phần tiết kiệm cộng dồn', () => {
+  const earlyEnds = { 0: 20000, 1: 15000 };
+
+  // Lượt 0: chờ 8 + nói 20 = 28. Lượt 1: chờ 5 + nói 15 = 48. Lượt 2 đổi người
+  // nên chờ 8 giây, tức bắt đầu nói ở 56 giây.
+  assert.equal(atWithEarlyEnds(48_000, earlyEnds).turnIndex, 2);
+  assert.equal(atWithEarlyEnds(48_000, earlyEnds).phase, 'transition');
+  assert.equal(atWithEarlyEnds(56_000, earlyEnds).phase, 'speaking');
+  assert.equal(atWithEarlyEnds(56_000, earlyEnds).turnIndex, 2);
+});
+
+test('kết thúc sớm không kéo dài được lượt nói', () => {
+  // Một con số lớn hơn thời lượng thật — do lỗi tính toán hoặc do một client
+  // khác gửi bừa — chỉ được phép bị bỏ qua. Nếu không, một máy có thể kéo dài
+  // buổi luyện của máy kia.
+  const tooLong = { 0: 999_999 };
+
+  assert.equal(atWithEarlyEnds(52_999, tooLong).phase, 'speaking');
+  assert.equal(atWithEarlyEnds(53_000, tooLong).phase, 'transition');
+  assert.equal(atWithEarlyEnds(53_000, tooLong).turnIndex, 1);
+
+  // Số âm và số rác cũng không được làm lệch lịch trình.
+  assert.equal(atWithEarlyEnds(53_000, { 0: -5000 }).phase, 'transition');
+  assert.equal(atWithEarlyEnds(52_999, { 0: Number.NaN }).phase, 'speaking');
+  assert.equal(atWithEarlyEnds(52_999, { 0: undefined }).phase, 'speaking');
+});
+
+test('kết thúc sớm lượt cuối thì phiên kết thúc luôn, không kẹt', () => {
+  // Lượt cuối (index 7) bình thường kết thúc ở 8+45+5+45+8+45+5+45+60+120+60+120
+  // +8+60+8+60. Thay vì cộng tay, lấy mốc kết thúc thật rồi trừ đi phần rút ngắn.
+  const normalEnd = at(10_000_000);
+  assert.equal(normalEnd.isComplete, true);
+
+  const fullLength = normalEnd.stepStartedAtMs - PRACTICE_START;
+  const earlyEnds = { 7: 10000 };
+  const savedMs = 60000 - 10000;
+
+  assert.equal(atWithEarlyEnds(fullLength - savedMs - 1, earlyEnds).isComplete, false);
+  assert.equal(atWithEarlyEnds(fullLength - savedMs, earlyEnds).isComplete, true);
+});
+
+test('không truyền gì thì lịch trình y hệt như trước', () => {
+  // Bảo hiểm cho toàn bộ phần còn lại của bộ kiểm tra: tham số mới không được
+  // đổi hành vi cũ khi không ai dùng tới nó.
+  for (const elapsedMs of [0, 7_999, 8_000, 53_000, 120_000, 400_000]) {
+    assert.deepEqual(atWithEarlyEnds(elapsedMs, null), at(elapsedMs));
+    assert.deepEqual(atWithEarlyEnds(elapsedMs, {}), at(elapsedMs));
+  }
+});

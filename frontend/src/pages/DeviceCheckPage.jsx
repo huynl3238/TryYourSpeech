@@ -19,6 +19,7 @@ const MATCH_FAILURE_TYPES = new Set([
   'partner_disconnected',
   'partner_not_ready',
   'partner_device_failed',
+  'partner_declined',
   'webrtc_failed',
 ]);
 
@@ -49,6 +50,7 @@ export default function DeviceCheckPage() {
     onBeginSignaling,
     notifyDeviceReady,
     notifyDeviceFailed,
+    notifyDeviceDeclined,
     notifyPeerConnected,
     leaveSession,
     disconnectSocket,
@@ -62,6 +64,8 @@ export default function DeviceCheckPage() {
   const [camStatus, setCamStatus] = useState('checking');
   const [permissionError, setPermissionError] = useState(null);
   const [isReady, setIsReady] = useState(false);
+  const [declineConfirming, setDeclineConfirming] = useState(false);
+  const declineTimerRef = useRef(null);
   const [sessionLoadStatus, setSessionLoadStatus] = useState('idle');
   const [sessionLoadError, setSessionLoadError] = useState('');
   const [sessionLoadRetry, setSessionLoadRetry] = useState(0);
@@ -166,10 +170,34 @@ export default function DeviceCheckPage() {
     }
   }, [state.error, refs]);
 
+  useEffect(() => () => clearTimeout(declineTimerRef.current), []);
+
   function handleReady() {
     if (sessionLoadStatus !== 'loaded') return;
     setIsReady(true);
     notifyDeviceReady();
+  }
+
+  // Đổi ý ở bước này là chuyện bình thường: đối tác lạ, chưa sẵn sàng nói, hoặc
+  // đơn giản là hết thời gian. Vẫn để bấm được cả sau khi đã bấm sẵn sàng — chờ
+  // đối tác xác nhận là lúc người ta hay đổi ý nhất.
+  //
+  // Phải báo cho server TRƯỚC khi đóng socket, để đối tác nhận đúng lý do thay vì
+  // ngồi chờ hết 60 giây rồi bị bảo là "đối tác chưa sẵn sàng kịp".
+  function handleDecline() {
+    if (!declineConfirming) {
+      setDeclineConfirming(true);
+      clearTimeout(declineTimerRef.current);
+      declineTimerRef.current = setTimeout(() => setDeclineConfirming(false), 5000);
+      return;
+    }
+
+    clearTimeout(declineTimerRef.current);
+    cleanupMediaSession(refs, [localVideoRef, remoteVideoRef]);
+    notifyDeviceDeclined();
+    disconnectSocket();
+    dispatch({ type: 'RESET' });
+    navigate('/', { replace: true });
   }
 
   if (MATCH_FAILURE_TYPES.has(state.error?.type)) {
@@ -389,6 +417,32 @@ export default function DeviceCheckPage() {
                 </>
               )}
             </Button>
+
+            <Button
+              id="decline-session-btn"
+              variant={declineConfirming ? 'destructive' : 'outline'}
+              size="lg"
+              className="w-full"
+              onClick={handleDecline}
+            >
+              {declineConfirming ? (
+                <>
+                  <span className="material-symbols-rounded" style={{ fontSize: 18 }}>help</span>
+                  Xác nhận rời phiên?
+                </>
+              ) : (
+                <>
+                  <span className="material-symbols-rounded" style={{ fontSize: 18 }}>close</span>
+                  Không tham gia phiên này
+                </>
+              )}
+            </Button>
+
+            {declineConfirming && (
+              <p className="text-xs text-zinc-500 -mt-2">
+                {state.partnerName} sẽ được báo là bạn không tiếp tục, và cả hai quay lại tìm đối tác mới.
+              </p>
+            )}
 
             {isReady && (
               <div className="rounded-lg bg-emerald-50 border border-emerald-100 px-4 py-3 animate-fade-in">

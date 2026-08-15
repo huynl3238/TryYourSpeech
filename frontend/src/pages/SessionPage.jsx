@@ -38,6 +38,7 @@ export default function SessionPage() {
     onSignal,
     notifyPracticeReady,
     notifyPracticeComplete,
+    endTurnEarly,
     leaveSession,
     disconnectSocket,
   } = useSocket();
@@ -72,8 +73,8 @@ export default function SessionPage() {
 
   const turns = state.turns;
   const syncedTimeline = useMemo(
-    () => getSyncedTimeline(turns, state.practiceStartLocalTime, timelineNow),
-    [turns, state.practiceStartLocalTime, timelineNow]
+    () => getSyncedTimeline(turns, state.practiceStartLocalTime, timelineNow, state.earlyTurnEnds),
+    [turns, state.practiceStartLocalTime, timelineNow, state.earlyTurnEnds]
   );
   const syncedTurnIndex = syncedTimeline && !syncedTimeline.isComplete
     ? syncedTimeline.turnIndex
@@ -312,6 +313,23 @@ export default function SessionPage() {
     setTimelineNow(performance.now());
   }
 
+  // Người nói xong sớm và không muốn ngồi im chờ hết giờ. Chỉ BÁO cho server chứ
+  // không tự rút ngắn lượt ở đây: lịch trình phải đổi ở cả hai máy bằng cùng một
+  // con số, mà nguồn phát con số đó là server. Máy này cũng sẽ nhận lại tin đó và
+  // đi tiếp cùng nhịp với đối tác.
+  //
+  // Không đụng gì tới máy ghi âm ở đây. Lượt ngắn lại thì `syncedTimeline` chuyển
+  // sang bước kế tiếp, hiệu ứng ghi âm thấy lượt đổi và tự dừng máy ghi đúng như
+  // khi hết giờ bình thường — cùng một đường đi, nên bản ghi được lưu y hệt.
+  function handleEndTurnEarly() {
+    if (!currentTurn || syncedTimeline?.phase !== 'speaking' || !iAmSpeaker) {
+      return;
+    }
+
+    const spokenMs = Math.max(0, Math.round(timelineNow - syncedTimeline.stepStartedAtMs));
+    endTurnEarly(syncedTurnIndex, spokenMs);
+  }
+
   function handlePrepEnd() {
     setTimelineNow(performance.now());
   }
@@ -495,6 +513,7 @@ export default function SessionPage() {
       roleBar={turnRoleBar}
       turnStartTime={turnStartTime}
       onTurnEnd={handleTurnEnd}
+      onEndTurnEarly={handleEndTurnEarly}
       onEndCall={handleEndCall}
     />
   ) : (

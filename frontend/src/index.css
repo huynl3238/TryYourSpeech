@@ -2580,6 +2580,53 @@ input[type="range"]::-webkit-slider-thumb:hover {
 
    Điều kiện dưới đây phải khớp với `isTouchPrimaryDevice` trong utils/haptics.js:
    cả hai cùng trả lời một câu hỏi — thiết bị này dùng ngón tay hay con trỏ. */
+/* Nút kết thúc lượt nói sớm. Cố ý là nút viền chứ không phải nút đặc: việc chính
+   ở màn này là nói, không phải bấm nút. Khi đang hỏi lại thì mới chuyển sang màu
+   cam đặc để thấy rõ là một lần bấm nữa sẽ cắt lượt thật. */
+.speaker-end-turn-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  height: 36px;
+  padding: 0 16px;
+  border: 1px solid #E7E5E4;
+  border-radius: 999px;
+  background: #fff;
+  color: #57534E;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.05s ease;
+}
+
+.speaker-end-turn-btn:hover:not(:disabled) {
+  border-color: #EAC7B9;
+  color: #8A4A33;
+  background: #FBF4EF;
+}
+
+.speaker-end-turn-btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.speaker-end-turn-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.speaker-end-turn-btn.is-confirming {
+  border-color: #D97757;
+  background: #D97757;
+  color: #fff;
+}
+
+.speaker-end-turn-btn.is-confirming:hover:not(:disabled) {
+  background: #C2643F;
+  border-color: #C2643F;
+  color: #fff;
+}
+
 .listener-mark-btn {
   display: none;
   align-items: center;

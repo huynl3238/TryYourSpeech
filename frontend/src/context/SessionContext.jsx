@@ -72,6 +72,11 @@ const initialState = {
   localAudioByTurnId: {},  // { [turnId]: Blob }
   remoteAudioByTurnId: {}, // { [turnId]: Blob }
 
+  // Lượt nói được người nói bấm kết thúc sớm: { [turnIndex]: số ms đã nói thật }.
+  // Do server phát cho cả hai máy nên hai bên rút ngắn cùng một lượt bằng cùng
+  // một con số, và lịch trình phía sau vẫn khớp nhau.
+  earlyTurnEnds: {},
+
   // Peer notes
   peerNotes: [],     // notes the current user marked while listening
 
@@ -122,6 +127,7 @@ function sessionReducer(state, action) {
         partnerCameraOff: false,
         localAudioByTurnId: {},
         remoteAudioByTurnId: {},
+        earlyTurnEnds: {},
         peerNotes: [],
         results: null,
         uploadStatus: {},
@@ -160,6 +166,26 @@ function sessionReducer(state, action) {
 
     case 'SET_CURRENT_TURN':
       return { ...state, currentTurnIndex: action.payload };
+
+    // Giữ con số NHỎ NHẤT nếu vì lý do nào đó có hai tin cho cùng một lượt: lượt
+    // nói chỉ được phép ngắn đi. Nếu để tin sau ghi đè, một tin tới muộn có thể
+    // kéo dài lại một lượt mà máy kia đã đi qua, và hai bên lệch nhau từ đó.
+    case 'SET_TURN_ENDED_EARLY': {
+      const { turnIndex, spokenMs } = action.payload;
+      if (!Number.isInteger(turnIndex) || !Number.isFinite(spokenMs) || spokenMs < 0) {
+        return state;
+      }
+
+      const current = state.earlyTurnEnds[turnIndex];
+      if (Number.isFinite(current) && current <= spokenMs) {
+        return state;
+      }
+
+      return {
+        ...state,
+        earlyTurnEnds: { ...state.earlyTurnEnds, [turnIndex]: spokenMs },
+      };
+    }
 
     case 'SET_MATCH_MODE':
       return { ...state, matchAutoMatch: action.payload };

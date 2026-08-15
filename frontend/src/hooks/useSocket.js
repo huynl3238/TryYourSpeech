@@ -130,6 +130,21 @@ export function useSocket() {
       'Hai máy không kết nối được với nhau, thường do tường lửa hoặc mạng hạn chế. Thử lại bằng mạng khác nếu lỗi lặp lại.'
     );
 
+    const handlePartnerDeclined = failMatch(
+      'partner_declined',
+      'Đối tác đã huỷ phiên luyện',
+      'Đối tác quyết định không tiếp tục phiên này. Thiết bị của bạn vẫn bình thường — hãy tìm một người khác.'
+    );
+
+    // Người nói đã bấm kết thúc lượt sớm. Con số này tới từ server nên hai máy
+    // nhận đúng một giá trị và lịch trình phía sau vẫn khớp nhau.
+    function handleTurnEndedEarly({ turnIndex, spokenMs }) {
+      dispatch({
+        type: 'SET_TURN_ENDED_EARLY',
+        payload: { turnIndex: Number(turnIndex), spokenMs: Number(spokenMs) },
+      });
+    }
+
     // A dropped socket is not the same thing as someone leaving. The server holds
     // the room open for 15 seconds, and because WebRTC runs browser-to-browser
     // the picture and sound usually never stop — so this must not tear anything
@@ -153,9 +168,18 @@ export function useSocket() {
     // This client is the one that came back, and the server has just put it into
     // the room it was already in. Clearing the error matters: the socket-level
     // 'disconnect' handler may have flagged one on the way down.
-    function handleSessionResumed() {
+    function handleSessionResumed(data) {
       dispatch({ type: 'SET_PARTNER_RECONNECTING', payload: false });
       dispatch({ type: 'CLEAR_ERROR' });
+
+      // Bắt kịp những lượt đã kết thúc sớm trong lúc mất kết nối. Reducer chỉ
+      // nhận con số nhỏ hơn nên áp lại những mốc đã biết là vô hại.
+      for (const [turnIndex, spokenMs] of Object.entries(data?.earlyTurnEnds || {})) {
+        dispatch({
+          type: 'SET_TURN_ENDED_EARLY',
+          payload: { turnIndex: Number(turnIndex), spokenMs: Number(spokenMs) },
+        });
+      }
     }
 
     function handlePartnerList({ partners }) {
@@ -204,6 +228,8 @@ export function useSocket() {
     socket.on('partner_not_ready', handlePartnerNotReady);
     socket.on('partner_device_failed', handlePartnerDeviceFailed);
     socket.on('webrtc_failed', handleWebrtcFailed);
+    socket.on('partner_declined', handlePartnerDeclined);
+    socket.on('turn_ended_early', handleTurnEndedEarly);
     socket.on('partner_reconnecting', handlePartnerReconnecting);
     socket.on('partner_reconnected', handlePartnerReconnected);
     socket.on('partner_left', handlePartnerLeft);
@@ -230,6 +256,8 @@ export function useSocket() {
       socket.off('partner_not_ready', handlePartnerNotReady);
       socket.off('partner_device_failed', handlePartnerDeviceFailed);
       socket.off('webrtc_failed', handleWebrtcFailed);
+      socket.off('partner_declined', handlePartnerDeclined);
+      socket.off('turn_ended_early', handleTurnEndedEarly);
       socket.off('partner_reconnecting', handlePartnerReconnecting);
       socket.off('partner_reconnected', handlePartnerReconnected);
       socket.off('partner_left', handlePartnerLeft);
@@ -307,6 +335,22 @@ export function useSocket() {
     socket.emit('device_failed');
   }, []);
 
+  // Người dùng chọn không vào phiên ở bước kiểm tra thiết bị. Phải gửi trước khi
+  // đóng socket, cùng lý do như `leaveSession`.
+  const notifyDeviceDeclined = useCallback(() => {
+    if (socket.connected) {
+      socket.emit('device_declined');
+    }
+  }, []);
+
+  // Người nói bấm kết thúc lượt sớm. KHÔNG tự rút ngắn lượt ở máy mình — chờ
+  // server phát lại, để hai bên áp đúng một con số.
+  const endTurnEarly = useCallback((turnIndex, spokenMs) => {
+    if (socket.connected) {
+      socket.emit('end_turn_early', { turnIndex, spokenMs });
+    }
+  }, []);
+
   // WebRTC reported `connected`: the media link is real and the session clock
   // may start. Nothing before this point proves the two browsers can talk.
   const notifyPeerConnected = useCallback(() => {
@@ -359,6 +403,8 @@ export function useSocket() {
     sendSignal,
     notifyDeviceReady,
     notifyDeviceFailed,
+    notifyDeviceDeclined,
+    endTurnEarly,
     notifyPeerConnected,
     notifyPracticeComplete,
     notifyPracticeReady,

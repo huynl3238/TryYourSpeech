@@ -72,7 +72,27 @@ export function getTurnBlockPosition(turns, turnIndex) {
 //
 // Hàm thuần, không đọc `performance.now()` — thời điểm được truyền vào qua `now`
 // để tính được cho bất kỳ mốc nào và kiểm chứng được bằng số cụ thể.
-export function getSyncedTimeline(turns, practiceStartLocalTime, now) {
+//
+// `earlyTurnEnds` là { [turnIndex]: số mili giây đã nói thật }. Người nói bấm kết
+// thúc sớm thì lượt đó ngắn lại, và MỌI bước phía sau dịch lên đúng bằng phần
+// tiết kiệm được. Nó là tham số chứ không phải trạng thái nội bộ vì đúng cái ràng
+// buộc ghi ở trên: hai máy phải tính ra cùng một kết quả. Server phát cùng một
+// con số cho cả hai bên, kể cả cho chính người vừa bấm, nên không bên nào tự suy
+// ra một mốc thời gian mà bên kia không có.
+export function getEffectiveSpeakDurationMs(turn, turnIndex, earlyTurnEnds) {
+  const plannedMs = Number(turn?.durationMs) || 0;
+  const spokenMs = Number(earlyTurnEnds?.[turnIndex]);
+
+  if (!Number.isFinite(spokenMs) || spokenMs < 0) {
+    return plannedMs;
+  }
+
+  // Không bao giờ dài hơn kế hoạch: một con số hỏng hoặc bị sửa từ client khác
+  // chỉ có thể rút ngắn lượt nói, không kéo dài buổi luyện ra được.
+  return Math.min(plannedMs, spokenMs);
+}
+
+export function getSyncedTimeline(turns, practiceStartLocalTime, now, earlyTurnEnds = null) {
   if (!Array.isArray(turns) || turns.length === 0 || !Number.isFinite(practiceStartLocalTime)) {
     return null;
   }
@@ -83,7 +103,7 @@ export function getSyncedTimeline(turns, practiceStartLocalTime, now) {
   for (let turnIndex = 0; turnIndex < turns.length; turnIndex += 1) {
     const turn = turns[turnIndex];
     const prepDurationMs = Number(turn.prepDurationMs) || 0;
-    const speakDurationMs = Number(turn.durationMs) || 0;
+    const speakDurationMs = getEffectiveSpeakDurationMs(turn, turnIndex, earlyTurnEnds);
 
     // Kể cả lượt đầu tiên. Trước đây lượt 0 bị loại trừ, nên người mở màn cả
     // buổi bị đẩy thẳng vào câu hỏi mà không có lấy một giây để đọc — đúng cái

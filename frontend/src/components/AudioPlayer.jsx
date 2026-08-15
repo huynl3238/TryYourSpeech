@@ -10,7 +10,21 @@ import {
   clampAudioTime,
   formatAudioTime,
   getPlayableDuration,
+  shouldProbeDuration,
 } from '../utils/audioPlayer';
+
+// Bản ghi do trình duyệt tạo ra không ghi độ dài vào phần đầu file — nó được ghi
+// theo kiểu phát trực tiếp, lúc bắt đầu ghi thì chưa biết sẽ dài bao nhiêu. Nên
+// `audio.duration` trả về vô cực cho tới khi trình duyệt đọc hết file.
+//
+// Cách chữa tiêu chuẩn: nhảy tới một mốc rất xa. Trình duyệt buộc phải quét tới
+// cuối, biết được độ dài thật rồi báo lại, sau đó ta trả kim về 0. Con số này chỉ
+// cần lớn hơn mọi lượt nói có thể có; dùng số quá lớn thì một số trình duyệt bỏ
+// qua luôn lệnh tua.
+const DURATION_PROBE_SECONDS = 24 * 60 * 60;
+// Dò không xong trong chừng này thì thôi, quay về dùng độ dài dự kiến. Không có
+// mốc bỏ cuộc thì một file hỏng sẽ treo thanh tiến độ mãi mãi.
+const DURATION_PROBE_TIMEOUT_MS = 2000;
 
 export const AudioPlayer = forwardRef(function AudioPlayer({
   src,
@@ -20,6 +34,8 @@ export const AudioPlayer = forwardRef(function AudioPlayer({
   const mediaRef = useRef(null);
   const fallbackUrlRef = useRef('');
   const fallbackAttemptedRef = useRef(false);
+  const probeStateRef = useRef('idle');
+  const probeTimerRef = useRef(null);
   const [resolvedSrc, setResolvedSrc] = useState(() => getBackendFileUrl(src));
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(() => getPlayableDuration(0, durationMs));
@@ -34,9 +50,16 @@ export const AudioPlayer = forwardRef(function AudioPlayer({
     }
   }
 
+  function stopDurationProbe(nextState) {
+    clearTimeout(probeTimerRef.current);
+    probeTimerRef.current = null;
+    probeStateRef.current = nextState;
+  }
+
   useEffect(() => {
     releaseFallbackUrl();
     fallbackAttemptedRef.current = false;
+    stopDurationProbe('idle');
     setResolvedSrc(getBackendFileUrl(src));
     setCurrentTime(0);
     setDuration(getPlayableDuration(0, durationMs));
@@ -44,12 +67,20 @@ export const AudioPlayer = forwardRef(function AudioPlayer({
     setIsLoadingFallback(false);
     setError('');
 
-    return releaseFallbackUrl;
+    return () => {
+      releaseFallbackUrl();
+      clearTimeout(probeTimerRef.current);
+    };
   }, [src, durationMs]);
 
   function seekTo(seconds) {
     const media = mediaRef.current;
     if (!media) return;
+
+    // Người dùng bấm một mốc lỗi ngay lúc đang dò độ dài: bỏ dở việc dò, nếu
+    // không thì vài trăm mili giây sau nó kéo kim về 0 và nuốt mất cú bấm đó.
+    // Độ dài thật vẫn được cập nhật bình thường qua `durationchange`.
+    stopDurationProbe('done');
 
     const nextTime = clampAudioTime(seconds, duration || media.duration);
     media.currentTime = nextTime;
@@ -73,6 +104,70 @@ export const AudioPlayer = forwardRef(function AudioPlayer({
     if (nextDuration > 0) {
       setDuration(nextDuration);
     }
+  }
+
+  function finishDurationProbe() {
+    stopDurationProbe('done');
+
+    const media = mediaRef.current;
+    if (!media) return;
+
+    // Kim đang nằm ở cuối file sau khi dò. Trả về 0 để người dùng bấm phát là
+    // nghe từ đầu, đúng như khi chưa dò gì.
+    try {
+      media.currentTime = 0;
+    } catch {
+      // Một số trình duyệt từ chối tua khi chưa nạp đủ; không sao, lần phát đầu
+      // vẫn bắt đầu từ 0.
+    }
+    setCurrentTime(0);
+  }
+
+  function handleLoadedMetadata() {
+    const media = mediaRef.current;
+    if (!media) return;
+
+    if (!shouldProbeDuration(media.duration, probeStateRef.current)) {
+      syncDuration();
+      return;
+    }
+
+    probeStateRef.current = 'probing';
+    // Mọi đường thoát đều đi qua `finishDurationProbe`, để kim luôn được trả về 0
+    // dù việc dò thành công, hết giờ, hay trình duyệt từ chối tua.
+    probeTimerRef.current = setTimeout(() => {
+      syncDuration();
+      finishDurationProbe();
+    }, DURATION_PROBE_TIMEOUT_MS);
+
+    try {
+      media.currentTime = DURATION_PROBE_SECONDS;
+    } catch {
+      syncDuration();
+      finishDurationProbe();
+    }
+  }
+
+  function handleDurationChange() {
+    const media = mediaRef.current;
+
+    if (probeStateRef.current === 'probing') {
+      if (media && Number.isFinite(media.duration) && media.duration > 0) {
+        syncDuration();
+        finishDurationProbe();
+      }
+      return;
+    }
+
+    syncDuration();
+  }
+
+  function handleTimeUpdate() {
+    // Trong lúc dò, kim bị đẩy tới cuối file. Con số đó không phải chỗ người dùng
+    // đang nghe, nên không được đưa lên thanh tiến độ.
+    if (probeStateRef.current === 'probing') return;
+
+    setCurrentTime(clampAudioTime(mediaRef.current?.currentTime, displayedDuration));
   }
 
   async function handleMediaError() {
@@ -122,9 +217,9 @@ export const AudioPlayer = forwardRef(function AudioPlayer({
         ref={mediaRef}
         src={resolvedSrc || undefined}
         preload="metadata"
-        onLoadedMetadata={syncDuration}
-        onDurationChange={syncDuration}
-        onTimeUpdate={() => setCurrentTime(clampAudioTime(mediaRef.current?.currentTime, displayedDuration))}
+        onLoadedMetadata={handleLoadedMetadata}
+        onDurationChange={handleDurationChange}
+        onTimeUpdate={handleTimeUpdate}
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
         onEnded={() => setIsPlaying(false)}

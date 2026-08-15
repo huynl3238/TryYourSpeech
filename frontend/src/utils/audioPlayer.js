@@ -12,6 +12,18 @@ export function getPlayableDuration(mediaDuration, expectedDurationMs = 0) {
   return hasExpectedDuration ? expectedSeconds : 0;
 }
 
+// Có nên đi dò độ dài thật của file không. Hai điều kiện, và cả hai đều quan
+// trọng: chỉ dò khi con số trình duyệt đưa ra không dùng được, và chỉ dò MỘT lần.
+// Thiếu vế thứ hai thì mỗi lần trình duyệt báo lại độ dài sẽ kích hoạt một lần
+// tua nữa, thành vòng lặp tự nuôi và thanh tiến độ không bao giờ đứng yên.
+export function shouldProbeDuration(mediaDuration, probeState) {
+  if (probeState !== 'idle') {
+    return false;
+  }
+
+  return !(Number.isFinite(mediaDuration) && mediaDuration > 0);
+}
+
 export function clampAudioTime(value, duration) {
   const safeValue = Number.isFinite(Number(value)) ? Number(value) : 0;
   if (!Number.isFinite(duration) || duration <= 0) {
