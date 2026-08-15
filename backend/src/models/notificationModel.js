@@ -51,6 +51,15 @@ function mapNotification(row) {
     body: row.body,
     entityType: row.entity_type,
     entityId: row.entity_id,
+    // Trạng thái HIỆN TẠI của thứ mà thông báo trỏ tới. Thông báo là bản ghi của
+    // một khoảnh khắc đã qua, còn thứ nó trỏ tới thì vẫn đổi: một yêu cầu đăng bài
+    // có thể đã được xử lý ở tab khác, ở lần đăng nhập trước, hoặc bởi một thông
+    // báo trùng được tạo ra trước khi luồng xin đăng bài trở nên idempotent.
+    // Thiếu trường này thì giao diện chỉ còn cách đoán — và nó đoán sai: nó hiện
+    // nút "Đồng ý đăng" cho một yêu cầu đã đóng, bấm vào chỉ nhận về lỗi.
+    // `null` nghĩa là không có gì để tra (thông báo không trỏ tới bài đăng, hoặc
+    // bài đã bị xoá).
+    entityStatus: row.entity_status ?? null,
     readAt: toIsoString(row.read_at),
     createdAt: toIsoString(row.created_at),
     isRead: row.read_at !== null,
@@ -162,9 +171,13 @@ export async function listNotificationsForUser({ userId, limit = 50 }) {
       `
         SELECT
           n.*,
-          actor.display_name AS actor_display_name
+          actor.display_name AS actor_display_name,
+          post.status AS entity_status
         FROM notifications n
         LEFT JOIN users actor ON actor.id = n.actor_id
+        LEFT JOIN classroom_posts post
+          ON n.entity_type = 'classroom_post'
+          AND post.id = n.entity_id
         WHERE n.recipient_id = $1
         ORDER BY n.created_at DESC
         LIMIT $2

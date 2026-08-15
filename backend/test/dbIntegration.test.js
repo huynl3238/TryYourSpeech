@@ -27,6 +27,7 @@ import {
 import {
   addClassroomComment,
   approveClassroomPost,
+  declineClassroomPost,
   getClassroomPost,
   listClassroomPosts,
   publishClassroomPost,
@@ -813,6 +814,10 @@ test('notifications are created for mentor reviews and classroom publishing', as
       (item) => item.type === 'classroom_consent_request'
     );
     assert.equal(consentRequest.title, 'Có người muốn đăng phiên luyện chung lên Lớp học');
+    // The panel decides whether to offer the accept/decline buttons from this
+    // field. Without it every consent notification stayed actionable forever and
+    // pressing it only ever returned "Yêu cầu đăng bài đã được xử lý".
+    assert.equal(consentRequest.entityStatus, 'pending');
     assert.equal(
       consentNotifications.notifications.filter(
         (item) => item.type === 'classroom_consent_request' && item.entityId === pendingPost.post.id
@@ -841,6 +846,9 @@ test('notifications are created for mentor reviews and classroom publishing', as
     );
     assert.equal(consentRequestsAfterApproval.length, 1);
     assert.equal(consentRequestsAfterApproval[0].isRead, true);
+    // The request is closed now, so the old notification must report the outcome
+    // instead of still looking like something waiting for an answer.
+    assert.equal(consentRequestsAfterApproval[0].entityStatus, 'published');
 
     // After consent, both participants get a "published" notification.
     const authorNotifications = await listNotificationsForUser({
@@ -853,6 +861,78 @@ test('notifications are created for mentor reviews and classroom publishing', as
 
     const readAll = await markAllNotificationsRead(session.userB.id);
     assert.equal(readAll.updated >= 1, true);
+  } finally {
+    await cleanupSession(session);
+  }
+});
+
+test('a declined consent request reports its outcome and either participant may ask again', async (t) => {
+  if (!(await canUseDatabase())) {
+    t.skip('PostgreSQL local database is not available');
+    return;
+  }
+
+  await prepareDatabase();
+
+  let session = null;
+
+  try {
+    session = await createMatchedSession(
+      'classroom-decline-room',
+      { userId: await createTestUser('Decline Student', 6), band: 6 },
+      { userId: await createTestUser('Decline Mentor', null, 'mentor'), band: null },
+      'mentor'
+    );
+    await markSessionActive(session.sessionId);
+    await saveMentorReview({
+      sessionId: session.sessionId,
+      mentorId: session.userB.id,
+      studentId: session.userA.id,
+      overallComment: 'Review so the session can be published.',
+    });
+
+    const pendingPost = await publishClassroomPost({
+      sessionId: session.sessionId,
+      userId: session.userA.id,
+      title: 'Decline flow post',
+      description: 'This request will be declined first.',
+    });
+
+    await declineClassroomPost({
+      postId: pendingPost.post.id,
+      userId: session.userB.id,
+    });
+
+    // The old notification still exists. It must now describe what happened
+    // rather than keep offering buttons that can only fail.
+    const afterDecline = await listNotificationsForUser({ userId: session.userB.id });
+    const declinedRequest = afterDecline.notifications.find(
+      (item) => item.type === 'classroom_consent_request' && item.entityId === pendingPost.post.id
+    );
+    assert.equal(declinedRequest.entityStatus, 'declined');
+
+    await assert.rejects(
+      approveClassroomPost({ postId: pendingPost.post.id, userId: session.userB.id }),
+      /đã bị từ chối/
+    );
+
+    // The person who declined may change their mind and ask themselves. This used
+    // to return success while silently doing nothing, because the retry only
+    // matched the original author.
+    const reRequested = await publishClassroomPost({
+      sessionId: session.sessionId,
+      userId: session.userB.id,
+      title: 'Decline flow post',
+      description: 'Asking again from the other side.',
+    });
+    assert.equal(reRequested.post.id, pendingPost.post.id);
+    assert.equal(reRequested.post.status, 'pending');
+
+    const authorNotifications = await listNotificationsForUser({ userId: session.userA.id });
+    const newConsentRequest = authorNotifications.notifications.find(
+      (item) => item.type === 'classroom_consent_request' && item.entityId === pendingPost.post.id
+    );
+    assert.equal(newConsentRequest.entityStatus, 'pending');
   } finally {
     await cleanupSession(session);
   }

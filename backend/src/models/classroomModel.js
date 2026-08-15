@@ -695,7 +695,12 @@ export async function publishClassroomPost({ sessionId, userId, title, descripti
     // Creating the request is idempotent. A repeated click, a slow response
     // followed by a retry, or two tabs submitting together must not turn an
     // already published post back into pending or create another notification.
-    // A declined request may be submitted again after the author revises it.
+    // A declined request may be submitted again — by EITHER participant, not just
+    // whoever asked the first time. Restricting the retry to the original author
+    // left the other person with a button that returned success and did nothing:
+    // no state change, no notification, no error. Both people sat in this session,
+    // so either may ask; the retry hands authorship to whoever is asking now and
+    // makes the other one the approver.
     let result = await client.query(
       `
         INSERT INTO classroom_posts (id, session_id, author_id, title, description, status, approver_id, approved_at)
@@ -721,7 +726,6 @@ export async function publishClassroomPost({ sessionId, userId, title, descripti
             approved_at = NULL,
             updated_at = NOW()
           WHERE session_id = $1
-            AND author_id = $2
             AND status = 'declined'
           RETURNING id
         `,
@@ -740,7 +744,14 @@ export async function publishClassroomPost({ sessionId, userId, title, descripti
         [sessionId]
       );
     }
-    const postId = result.rows[0].id;
+
+    // The insert only skipped because a row already exists, so this should never
+    // be empty. It can be if that row was removed between the two statements, and
+    // reading `.id` off nothing turns a rare race into an unexplainable 500.
+    const postId = result.rows[0]?.id;
+    if (!postId) {
+      throw new Error('Không tìm thấy bài đăng của phiên luyện này');
+    }
 
     if (shouldNotify) {
       await createNotification(client, {
@@ -776,6 +787,26 @@ async function getConsentPost(client, postId, approverId) {
   return result.rows[0] || null;
 }
 
+// Một yêu cầu không còn ở trạng thái chờ thì người bấm cần biết nó đã đi đâu, chứ
+// không phải chỉ biết "đã xử lý". Bốn trạng thái này dẫn tới bốn việc khác nhau:
+// đã đăng thì vào Lớp học mà xem, bị từ chối thì phải gửi lại yêu cầu mới, bị gỡ
+// thì không cứu được từ đây.
+function getConsentClosedMessage(status) {
+  if (status === 'published') {
+    return 'Bài này đã được đăng lên Lớp học rồi';
+  }
+
+  if (status === 'declined') {
+    return 'Yêu cầu này đã bị từ chối. Hãy vào Lịch sử luyện tập và gửi lại yêu cầu đăng bài';
+  }
+
+  if (status === 'hidden') {
+    return 'Bài này đã bị gỡ khỏi Lớp học';
+  }
+
+  return 'Yêu cầu đăng bài đã được xử lý';
+}
+
 export async function approveClassroomPost({ postId, userId }) {
   if (!isNonEmptyString(postId)) {
     throw new Error('postId is required');
@@ -793,7 +824,7 @@ export async function approveClassroomPost({ postId, userId }) {
       throw new Error('Consent request not found');
     }
     if (post.status !== 'pending') {
-      throw new Error('Yêu cầu đăng bài đã được xử lý');
+      throw new Error(getConsentClosedMessage(post.status));
     }
 
     await client.query(
@@ -852,7 +883,7 @@ export async function declineClassroomPost({ postId, userId }) {
       throw new Error('Consent request not found');
     }
     if (post.status !== 'pending') {
-      throw new Error('Yêu cầu đăng bài đã được xử lý');
+      throw new Error(getConsentClosedMessage(post.status));
     }
 
     await client.query(

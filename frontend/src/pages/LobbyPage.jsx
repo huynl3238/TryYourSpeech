@@ -1693,6 +1693,10 @@ function UserHistoryPanelReal() {
           const isPublished = item.publicStatus === 'published';
           const isPending = item.publicStatus === 'pending';
           const isHidden = item.publicStatus === 'hidden';
+          // Bị từ chối thì vẫn xin đăng lại được, nên nút để mở. Nhưng phải nói ra
+          // là đã bị từ chối — nếu không, thẻ này trông y hệt một phiên chưa từng
+          // xin đăng, và người dùng không hiểu vì sao thông báo cũ lại vô hiệu.
+          const isDeclined = item.publicStatus === 'declined';
           return (
             <article key={item.id} className="bg-white border border-[#EAE7E3] rounded-2xl shadow-sm p-5 flex flex-col sm:flex-row sm:items-center gap-4">
               <div className="flex-1 min-w-0">
@@ -1717,7 +1721,11 @@ function UserHistoryPanelReal() {
                   : isPending ? 'text-[#B45309] bg-[#FEF6E7] border border-[#FCD9A5]'
                   : 'text-[#78716C] bg-[#F1EEEA] border border-[#EAE7E3]'
                 }`}>
-                  {isPublished ? 'Đã public' : isPending ? 'Chờ đồng ý' : isHidden ? 'Đã ẩn' : getHistoryStatusLabel(item)}
+                  {isPublished ? 'Đã public'
+                    : isPending ? 'Chờ đồng ý'
+                    : isHidden ? 'Đã ẩn'
+                    : isDeclined ? 'Bị từ chối đăng'
+                    : getHistoryStatusLabel(item)}
                 </span>
               </div>
 
@@ -1734,7 +1742,12 @@ function UserHistoryPanelReal() {
                   disabled={publishingSessionId === item.id || isPublished || isPending || isHidden || item.status !== 'completed'}
                   className="h-10 px-3.5 rounded-lg bg-[#D97757] text-white text-[13px] font-semibold hover:brightness-105 disabled:opacity-45 disabled:hover:brightness-100 whitespace-nowrap"
                 >
-                  {isPublished ? 'Đã public' : isPending ? 'Đã gửi yêu cầu' : isHidden ? 'Bài đã ẩn' : publishingSessionId === item.id ? 'Đang gửi…' : 'Xin đăng bài'}
+                  {isPublished ? 'Đã public'
+                    : isPending ? 'Đã gửi yêu cầu'
+                    : isHidden ? 'Bài đã ẩn'
+                    : publishingSessionId === item.id ? 'Đang gửi…'
+                    : isDeclined ? 'Xin đăng lại'
+                    : 'Xin đăng bài'}
                 </button>
               </div>
             </article>
@@ -1797,6 +1810,15 @@ function formatNotificationDate(value) {
     hour: '2-digit',
     minute: '2-digit',
   }).format(date);
+}
+
+// Yêu cầu đăng bài không còn chờ nữa thì nói rõ nó đã đi đâu, thay vì để hai nút
+// bấm vào là báo lỗi. `null` là bài đã bị xoá khỏi hệ thống.
+function getConsentOutcomeLabel(status) {
+  if (status === 'published') return 'Yêu cầu này đã được đồng ý · bài đã lên Lớp học';
+  if (status === 'declined') return 'Yêu cầu này đã bị từ chối';
+  if (status === 'hidden') return 'Bài này đã bị gỡ khỏi Lớp học';
+  return 'Yêu cầu này không còn hiệu lực';
 }
 
 const NOTI_STYLE = {
@@ -1919,7 +1941,9 @@ function NotificationsPanelReal() {
   }
 
   const pendingConsent = notifications.filter(
-    (n) => n.type === 'classroom_consent_request' && !resolvedMap[n.id]
+    (n) => n.type === 'classroom_consent_request'
+      && n.entityStatus === 'pending'
+      && !resolvedMap[n.id]
   ).length;
 
   return (
@@ -1981,6 +2005,11 @@ function NotificationsPanelReal() {
           const style = NOTI_STYLE[item.type] || NOTI_STYLE.default;
           const isConsent = item.type === 'classroom_consent_request';
           const resolved = resolvedMap[item.id];
+          // Chỉ yêu cầu còn đang chờ mới bấm được. Trước đây mọi thông báo xin
+          // đăng bài đều hiện hai nút mãi mãi, kể cả yêu cầu đã xử lý từ lần đăng
+          // nhập trước hoặc thông báo trùng sinh ra từ lỗi cũ — bấm vào chỉ nhận
+          // về "Yêu cầu đăng bài đã được xử lý" mà không hiểu vì sao.
+          const consentOpen = isConsent && item.entityStatus === 'pending';
           const isChosen = item.type === 'mentor_session_chosen';
           const unread = !item.isRead;
 
@@ -2002,7 +2031,14 @@ function NotificationsPanelReal() {
                 </div>
                 {item.body && <p className="text-[12.5px] text-[#78716C] leading-relaxed mt-1">{item.body}</p>}
 
-                {isConsent && !resolved && (
+                {isConsent && !resolved && !consentOpen && (
+                  <div className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg border border-[#EAE7E3] bg-[#F1EEEA] px-3 py-1.5 text-[12.5px] font-semibold text-[#78716C]">
+                    <span className="material-symbols-rounded" style={{ fontSize: 15 }}>history</span>
+                    {getConsentOutcomeLabel(item.entityStatus)}
+                  </div>
+                )}
+
+                {consentOpen && !resolved && (
                   <div className="flex gap-2 mt-3" onClick={(e) => e.stopPropagation()}>
                     <button
                       onClick={() => handleConsent(item, 'approve')}
