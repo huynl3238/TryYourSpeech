@@ -282,10 +282,15 @@ export function useSocket() {
     dispatch({ type: 'SET_USER', payload: { displayName, band } });
     dispatch({ type: 'SET_MATCH_MODE', payload: autoMatch });
     dispatch({ type: 'CLEAR_MATCHMAKING' });
-    if (socket.connected) {
-      socket.disconnect();
+
+    // KHÔNG ngắt rồi nối lại. Bản trước làm vậy, và với server thì một lần ngắt
+    // giữa phiên nghĩa là "giữ chỗ 15 giây chờ người này quay lại" — nên cú nối
+    // lại ngay sau đó bị nhét thẳng về đúng cái phòng vừa rời. `find_match` gửi
+    // tiếp theo thấy socket đang ở trong phòng nên bị bỏ, không một lời hồi đáp,
+    // và nút "Bắt đầu ghép" trông như hỏng. Bấm lại chỉ gia hạn thêm 15 giây nữa.
+    if (!socket.connected) {
+      socket.connect();
     }
-    socket.connect();
     socket.emit('find_match', { band, autoMatch, focus });
   }, [dispatch]);
 

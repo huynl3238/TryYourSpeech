@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { resolveEarlyTurnEnd, setupSocket } from '../src/socket/index.js';
+import { resolveEarlyTurnEnd, resolveSearchWhileInRoom, setupSocket } from '../src/socket/index.js';
 
 let accountCounter = 0;
 
@@ -184,4 +184,26 @@ test('end_turn_early ngoài phòng luyện thì không làm gì cả', () => {
   handlers.device_declined();
 
   assert.equal(emitted.length, 0);
+});
+
+// --- Bam "Bat dau ghep" khi socket con dinh mot phong ---
+//
+// Nhanh nay tung la mot cau `return` im lang, va do la ly do nut "Bat dau ghep"
+// trong nhu hong: client khong nhan duoc gi ca nen man hinh dung im.
+
+test('phòng đã luyện xong thì thả ra để tìm bạn mới', () => {
+  // Sau khi xem kết quả xong và bấm "Phiên mới": phòng vẫn còn nhưng chỉ là cái
+  // vỏ. Chặn ở đây thì không ai bắt đầu phiên thứ hai được.
+  assert.equal(resolveSearchWhileInRoom({ phase: 'done' }), 'release');
+});
+
+test('bản đồ phòng trỏ vào khoảng không thì cũng thả ra', () => {
+  assert.equal(resolveSearchWhileInRoom(undefined), 'release');
+  assert.equal(resolveSearchWhileInRoom(null), 'release');
+});
+
+test('phiên đang chạy thật thì chặn, để còn báo lý do', () => {
+  for (const phase of ['devices', 'signaling', 'active']) {
+    assert.equal(resolveSearchWhileInRoom({ phase }), 'block');
+  }
 });

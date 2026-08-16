@@ -748,9 +748,52 @@ async function handleFindMentorMatch(io, socket, user) {
   socket.emit('waiting');
 }
 
+// Bấm tìm bạn trong khi socket vẫn được ghi nhận là đang ở một phòng. Ba tình
+// huống khác hẳn nhau, mà bản trước gộp cả ba thành một câu `return` im lặng —
+// client không nhận được gì nên màn hình đứng im, và cái nút trông như hỏng.
+export function resolveSearchWhileInRoom(room) {
+  // Bản đồ phòng còn trỏ tới một phòng đã biến mất. Dọn rồi cho đi tiếp.
+  if (!room) return 'release';
+
+  // Phần nói đã xong, phòng chỉ còn cái vỏ trong lúc hai bên viết nhận xét. Tìm
+  // bạn mới lúc này là chuyện bình thường — thả ra thay vì chặn. Thiếu nhánh này
+  // thì bấm "Phiên mới" sau khi xem kết quả xong cũng kẹt y hệt.
+  if (room.phase === 'done') return 'release';
+
+  // Phiên đang chạy thật. Vẫn chặn, nhưng phải nói ra lý do.
+  return 'block';
+}
+
 async function handleFindMatch(io, socket, data) {
-  if (userRoom.has(socket.id)) return;
-  if (isSocketQueued(socket.id)) return;
+  const currentRoomId = userRoom.get(socket.id);
+  if (currentRoomId) {
+    const room = rooms.get(currentRoomId);
+
+    if (resolveSearchWhileInRoom(room) === 'block') {
+      socket.emit('match_error', {
+        error: 'Bạn vẫn đang trong một phiên luyện. Hãy thoát phiên đó rồi thử lại.',
+      });
+      return;
+    }
+
+    if (room) {
+      // Giống hệt cách xử lý khi socket đóng ở một phòng đã luyện xong: người còn
+      // lại nhận một dòng báo, còn phiên và kết quả không bị ảnh hưởng gì.
+      const partnerSocketId = getPartnerSocketId(currentRoomId, socket.id);
+      if (partnerSocketId) io.to(partnerSocketId).emit('partner_left');
+      deleteRoom(currentRoomId);
+    } else {
+      userRoom.delete(socket.id);
+    }
+  }
+
+  // Đã nằm trong hàng chờ rồi. Gửi lại 'waiting' thay vì im lặng, để một client
+  // bị lệch trạng thái tự quay về đúng màn chờ thay vì nhìn một cái nút không
+  // phản hồi. Client không đọc payload của sự kiện này.
+  if (isSocketQueued(socket.id)) {
+    socket.emit('waiting');
+    return;
+  }
 
   const matchRequest = validateMatchRequest(data, socket.data.user);
   if (matchRequest.error) {

@@ -1,4 +1,5 @@
 import { getAudioFileExtension } from '../utils/audioFormat';
+import { resolveBackendFileUrl } from '../utils/backendUrl';
 
 function getBaseUrl() {
   const configuredUrl = import.meta.env.VITE_BACKEND_URL;
@@ -10,9 +11,7 @@ const BASE_URL = getBaseUrl();
 let refreshSessionInFlight = null;
 
 export function getBackendFileUrl(path) {
-  if (!path) return '';
-  if (path.startsWith('http://') || path.startsWith('https://')) return path;
-  return `${BASE_URL}${path}`;
+  return resolveBackendFileUrl(BASE_URL, path);
 }
 
 async function request(path, options = {}) {
