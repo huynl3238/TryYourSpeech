@@ -152,7 +152,7 @@ function SignUpForm() {
         label="Tên hiển thị"
         value={displayName}
         onChange={setDisplayName}
-        placeholder="Nguyễn Lê Huy"
+        placeholder="Nguyễn Văn A"
         maxLength={100}
         autoComplete="name"
         required
@@ -163,7 +163,7 @@ function SignUpForm() {
         type="email"
         value={email}
         onChange={setEmail}
-        placeholder="ban@example.com"
+        placeholder="user@gmail.com"
         autoComplete="email"
         required
       />
@@ -175,7 +175,6 @@ function SignUpForm() {
         onChange={setPassword}
         placeholder={`Ít nhất ${MIN_PASSWORD_LENGTH} ký tự`}
         autoComplete="new-password"
-        hint="Nên dùng một cụm từ dài, dễ nhớ với bạn nhưng khó đoán với người khác."
         required
       />
       <AuthField
