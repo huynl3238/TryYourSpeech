@@ -2,8 +2,6 @@
 
 Try Your Speech is a web application for Vietnamese IELTS learners to practise Speaking with a real partner. Two learners are matched by band level, take timed turns answering IELTS questions, mark mistakes while listening, and receive peer and AI-assisted feedback after the session.
 
-![Peer review screen](review-full-presentation.png)
-
 ## Highlights
 
 - Band-based partner matching with manual invitations or random matching
@@ -19,7 +17,7 @@ Try Your Speech is a web application for Vietnamese IELTS learners to practise S
 - **Frontend:** React, Vite, Tailwind CSS, Socket.IO Client, WebRTC, MediaRecorder
 - **Backend:** Node.js, Express, Socket.IO, PostgreSQL, Redis
 - **AI:** OpenAI transcription and feedback, optional Azure Pronunciation Assessment
-- **Testing:** Node.js test runner and Playwright
+- **Testing:** Node.js test runner
 
 ## Run locally
 
@@ -65,8 +63,6 @@ Database-backed tests run when the local PostgreSQL service is available and the
 ```text
 backend/   Express API, Socket.IO server, database, and AI pipeline
 frontend/  React application and browser media logic
-e2e/       Playwright end-to-end tests
-ops/       Deployment and monitoring scripts
 ```
 
 The core product is human-to-human speaking practice. AI feedback complements the peer review after a session; it does not replace the conversation partner.

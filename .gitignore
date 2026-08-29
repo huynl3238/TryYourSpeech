@@ -3,4 +3,3 @@
 .claude/
 .pnpm-store/
 *.log
-e2e/node_modules/

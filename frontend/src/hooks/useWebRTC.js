@@ -53,12 +53,6 @@ export function useWebRTC({ sendSignal, onSignal, onRemoteStream, onConnectionSt
     const pc = new RTCPeerConnection({ iceServers });
     refs.current.peerConnection = pc;
 
-    // Cho bộ kiểm thử đầu-cuối đọc getStats() — cách duy nhất chứng minh audio
-    // thật sự chảy qua ở CẢ HAI chiều, thay vì tin vào việc người dùng nói là
-    // nghe được. Chỉ ở bản dev; Vite loại khối này khỏi bản build.
-    if (import.meta.env.DEV) {
-      window.__tysPeerConnection = pc;
-    }
     refs.current.pendingIceCandidates = [];
     // Nothing may be applied to this connection until startCall has put the
     // microphone on it — see the note there.
