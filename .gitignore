@@ -1,3 +1,6 @@
 
-# Playwright tải Chromium vào đây, không đưa vào git
+# Local tooling and generated output
+.claude/
+.pnpm-store/
+*.log
 e2e/node_modules/

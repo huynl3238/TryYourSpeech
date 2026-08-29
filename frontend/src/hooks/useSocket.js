@@ -3,16 +3,7 @@ import { socket } from '../services/socket';
 import { useSession } from '../context/SessionContext';
 import { cleanupMediaSession } from '../utils/mediaCleanup';
 
-// The timeline is driven from performance.now(), which no clock change can move.
-// The server timestamp is used only to recover the delivery delay, and that is
-// where the machine's wall clock leaks in: Date.now() - serverTimestamp is the
-// delay plus whatever the two clocks disagree by.
-//
-// The tolerance is deliberately small. It used to be five minutes, so a laptop
-// running a minute behind the server started the session a minute into the
-// timeline — a wrong turn, or straight into the partner's speaking slot. A
-// websocket event does not take ten seconds to arrive; anything larger is a
-// clock difference, and ignoring it costs only the real delivery delay.
+// Ignore implausible delivery delays caused by different client/server clocks.
 const MAX_PLAUSIBLE_DELIVERY_DELAY_MS = 10 * 1000;
 
 function getSessionStartLocalTime(serverTimestamp) {
@@ -37,16 +28,7 @@ export function useSocket() {
       socket.connect();
     }
 
-    function handleConnect() {
-      console.log('[Socket] Connected:', socket.id);
-    }
-
-    // Socket của CHÍNH MÌNH đóng. Lúc đó không còn đường nào nhận tin "đối tác đã
-    // nối lại" hay "đối tác đi hẳn" nữa, nên nếu để nguyên thì vòng xoay chờ đứng
-    // lại vĩnh viễn — nó gắn ở khung ngoài cùng của app nên còn đi theo sang cả
-    // trang chủ. Ngừng nghe được thì phải thôi nói là đang chờ.
     function handleDisconnect() {
-      console.log('[Socket] Disconnected');
       dispatch({ type: 'SET_PARTNER_RECONNECTING', payload: false });
     }
 
@@ -55,7 +37,6 @@ export function useSocket() {
     }
 
     function handleMatched(data) {
-      console.log('[Socket] Matched:', data);
       dispatch({ type: 'SET_MATCHED', payload: data });
       dispatch({ type: 'SET_PHASE', payload: 'matched' });
     }
@@ -66,7 +47,6 @@ export function useSocket() {
     }
 
     function handleSessionStart({ timestamp }) {
-      console.log('[Socket] Session start:', timestamp);
       dispatch({
         type: 'SET_SESSION_START',
         payload: {
@@ -81,7 +61,6 @@ export function useSocket() {
     }
 
     function handlePracticeStart({ timestamp }) {
-      console.log('[Socket] Practice start:', timestamp);
       dispatch({
         type: 'SET_PRACTICE_START',
         payload: {
@@ -216,7 +195,6 @@ export function useSocket() {
       dispatch({ type: 'SET_INVITE_ERROR', payload: error });
     }
 
-    socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
     socket.on('waiting', handleWaiting);
     socket.on('matched', handleMatched);
@@ -244,7 +222,6 @@ export function useSocket() {
     socket.on('invite_error', handleInviteError);
 
     return () => {
-      socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
       socket.off('waiting', handleWaiting);
       socket.off('matched', handleMatched);

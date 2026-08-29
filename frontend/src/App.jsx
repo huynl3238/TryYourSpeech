@@ -25,38 +25,34 @@ function App() {
   return (
     <ErrorBoundary>
       <AuthProvider>
-      <SessionProvider>
-        <NotificationToaster />
-        <PartnerReconnectingBanner />
-        <Routes>
-        {/* Everything except the login screen needs an account: practising,
-            reviewing and results all belong to a specific person now, and the
-            API refuses anonymous calls anyway. */}
-        <Route path="/" element={<RequireRole><LobbyPage /></RequireRole>} />
-        <Route path="/device-check" element={<RequireRole><DeviceCheckPage /></RequireRole>} />
-        <Route path="/session" element={<RequireRole><SessionPage /></RequireRole>} />
-        <Route path="/review" element={<RequireRole><ReviewPage /></RequireRole>} />
-        <Route path="/waiting-review" element={<RequireRole><WaitingAIPage /></RequireRole>} />
-        <Route path="/results" element={<RequireRole><ResultsPage /></RequireRole>} />
-        <Route path="/mentor" element={<RequireRole><MentorLearnerPage /></RequireRole>} />
-        <Route path="/mentor/host" element={<RequireRole roles={['mentor', 'admin']}><MentorHostPage /></RequireRole>} />
-        <Route path="/mentor/review" element={<RequireRole><MentorReviewPage /></RequireRole>} />
-        {/* Reached from links in email, so they must work while signed out. */}
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/verify-email" element={<VerifyEmailPage />} />
-        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-        <Route path="/reset-password" element={<ResetPasswordPage />} />
-        <Route
-          path="/admin"
-          element={(
-            <RequireRole roles={['admin']}>
-              <AdminDashboardPage />
-            </RequireRole>
-          )}
-        />
-        <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </SessionProvider>
+        <SessionProvider>
+          <NotificationToaster />
+          <PartnerReconnectingBanner />
+          <Routes>
+            <Route path="/" element={<RequireRole><LobbyPage /></RequireRole>} />
+            <Route path="/device-check" element={<RequireRole><DeviceCheckPage /></RequireRole>} />
+            <Route path="/session" element={<RequireRole><SessionPage /></RequireRole>} />
+            <Route path="/review" element={<RequireRole><ReviewPage /></RequireRole>} />
+            <Route path="/waiting-review" element={<RequireRole><WaitingAIPage /></RequireRole>} />
+            <Route path="/results" element={<RequireRole><ResultsPage /></RequireRole>} />
+            <Route path="/mentor" element={<RequireRole><MentorLearnerPage /></RequireRole>} />
+            <Route path="/mentor/host" element={<RequireRole roles={['mentor', 'admin']}><MentorHostPage /></RequireRole>} />
+            <Route path="/mentor/review" element={<RequireRole><MentorReviewPage /></RequireRole>} />
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/verify-email" element={<VerifyEmailPage />} />
+            <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+            <Route path="/reset-password" element={<ResetPasswordPage />} />
+            <Route
+              path="/admin"
+              element={(
+                <RequireRole roles={['admin']}>
+                  <AdminDashboardPage />
+                </RequireRole>
+              )}
+            />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </SessionProvider>
       </AuthProvider>
     </ErrorBoundary>
   );

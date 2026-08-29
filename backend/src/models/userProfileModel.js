@@ -1,4 +1,3 @@
-import { randomUUID } from 'crypto';
 import pool from '../config/db.js';
 import { parseBandOrThrow } from '../utils/band.js';
 
@@ -164,30 +163,6 @@ export async function getUserProfile(userId) {
   }
 }
 
-// Create a user identity (student or mentor) for the current device.
-// Used by the lightweight "sign in" flow so the app has a real user row + role.
-export async function createIdentity({ displayName, band, userRole }) {
-  if (!isNonEmptyString(displayName) || displayName.trim().length > 100) {
-    throw new Error('displayName is invalid');
-  }
-
-  const role = ['student', 'mentor', 'admin'].includes(userRole) ? userRole : 'student';
-
-  // Lúc tạo danh tính thì chưa khai band là được — cột `band` cho phép NULL.
-  const parsedBand = parseBandOrThrow(band);
-
-  const result = await pool.query(
-    `
-      INSERT INTO users (id, display_name, band, user_role)
-      VALUES ($1, $2, $3, $4)
-      RETURNING id, display_name, band, user_role, created_at
-    `,
-    [randomUUID(), displayName.trim(), parsedBand, role]
-  );
-
-  return { user: mapUser(result.rows[0]) };
-}
-
 export async function updateUserProfile({ userId, displayName, band }) {
   if (!isNonEmptyString(userId)) {
     throw new Error('userId is required');
@@ -197,9 +172,7 @@ export async function updateUserProfile({ userId, displayName, band }) {
     throw new Error('displayName is invalid');
   }
 
-  // `required: true` vì đây là màn hình người dùng tự khai trình độ, và band là
-  // đầu vào của ghép cặp. Bản trước dùng `Number(band)` nên band null thành 0 —
-  // người dùng bị gán band 0 mà không ai báo gì.
+  // Band is required here because matchmaking depends on it.
   const parsedBand = parseBandOrThrow(band, { required: true });
 
   const client = await pool.connect();

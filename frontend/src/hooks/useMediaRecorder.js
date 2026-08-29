@@ -84,13 +84,11 @@ export function useMediaRecorder() {
         return;
       }
       dispatch({ type: 'SAVE_LOCAL_AUDIO', payload: { turnId, blob } });
-      console.log(`[Recorder] Local audio saved for turn ${turnId}, size: ${blob.size} bytes`);
     };
 
     try {
       recorder.start(1000); // collect in 1s chunks
       refs.current.localRecorder = recorder;
-      console.log(`[Recorder] Started local recording for turn ${turnId}`);
     } catch (err) {
       console.error(`[Recorder] Cannot start local recorder for turn ${turnId}:`, err.message);
     }
@@ -139,13 +137,11 @@ export function useMediaRecorder() {
         return;
       }
       dispatch({ type: 'SAVE_REMOTE_AUDIO', payload: { turnId, blob } });
-      console.log(`[Recorder] Remote audio saved for turn ${turnId}, size: ${blob.size} bytes`);
     };
 
     try {
       recorder.start(1000);
       refs.current.remoteRecorder = recorder;
-      console.log(`[Recorder] Started remote recording for turn ${turnId}`);
     } catch (err) {
       console.error(`[Recorder] Cannot start remote recorder for turn ${turnId}:`, err.message);
     }

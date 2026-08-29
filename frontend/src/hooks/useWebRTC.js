@@ -41,7 +41,6 @@ export function useWebRTC({ sendSignal, onSignal, onRemoteStream, onConnectionSt
   }, [sendSignal, refs]);
 
   const buildPeerConnection = useCallback(async () => {
-    // Fetch ICE config from backend
     let iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
     try {
       const config = await getConfig();
@@ -66,14 +65,12 @@ export function useWebRTC({ sendSignal, onSignal, onRemoteStream, onConnectionSt
     refs.current.readyForSignals = false;
     refs.current.pendingSignals = [];
 
-    // Forward ICE candidates to partner
     pc.onicecandidate = (event) => {
       if (event.candidate) {
         sendSignal('ice-candidate', event.candidate);
       }
     };
 
-    // Receive remote stream
     pc.ontrack = (event) => {
       const remoteStream = event.streams[0];
       refs.current.remoteStream = remoteStream;
@@ -84,8 +81,6 @@ export function useWebRTC({ sendSignal, onSignal, onRemoteStream, onConnectionSt
     };
 
     pc.onconnectionstatechange = () => {
-      console.log('[WebRTC] Connection state:', pc.connectionState);
-
       // Đối tác mất mạng thì chính kết nối này biết trước server rất nhiều.
       // Server chỉ phát hiện qua nhịp tim của Socket.IO, mà mặc định là 25s nhịp
       // + 20s chờ — đo thật trên máy là 44 giây. Suốt 44 giây đó người còn lại
